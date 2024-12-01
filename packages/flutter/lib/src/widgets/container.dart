@@ -413,13 +413,7 @@ class ContainerState extends State<Container> with AnimatedStateMixin {
     super.initState();
 
     _constructTweens();
-    // Schedule adding a listener to the ancestor after the widget is built.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      animatedState = getAnimateState(context);
-      animation = animatedState?.animation;
-      controller = animatedState?.controller;
-      controller?.addListener(_handleAnimationChanged);
-    });
+
   }
 
   bool _constructTweens() {
@@ -457,14 +451,26 @@ class ContainerState extends State<Container> with AnimatedStateMixin {
   }
 
   void _handleAnimationChanged() {
+    setState(() {
+
+
     print('debug setState');
-    setState(() {/* The animation ticked. Rebuild with new animation value */});
+      /* The animation ticked. Rebuild with new animation value */});
   }
 
   @override
   Widget build(BuildContext context) {
-    //final animationValue = controller?.value ?? 0.0;
 
+        // Schedule adding a listener to the ancestor after the widget is built.
+   if(animatedState==null){
+      animatedState = getAnimateState(context);
+      animation = animatedState?.animation;
+      controller = animatedState?.controller;
+      controller?.addListener(_handleAnimationChanged);
+    };
+
+    //final animationValue = controller?.value ?? 0.0;
+        print('L470 build');
     final constraints = animation != null
         ? _constraints?.evaluate(animation!)
         : widget.constraints;

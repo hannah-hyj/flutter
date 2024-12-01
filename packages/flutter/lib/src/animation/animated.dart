@@ -23,7 +23,7 @@ class Animated extends StatefulWidget {
 class AnimatedState extends State<Animated>
     with SingleTickerProviderStateMixin {
   late AnimationController controller = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 300));
+      vsync: this, duration: const Duration(milliseconds: 20));
   @override
   void initState() {
     super.initState();
