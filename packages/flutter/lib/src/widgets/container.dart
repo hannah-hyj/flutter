@@ -388,12 +388,15 @@ class ContainerState extends State<Container> with AnimatedStateMixin {
   }
 
   void _updateTween(Tween<dynamic>? tween, dynamic targetValue) {
+    print('L391 updateTween: $tween');
     if (tween == null) {
       return;
     }
     tween
       ..begin = tween.evaluate(animation!)
       ..end = targetValue;
+
+    print('L398 updateTween: $tween');
   }
 
   EdgeInsetsGeometry? get _paddingIncludingDecoration {
@@ -421,6 +424,7 @@ class ContainerState extends State<Container> with AnimatedStateMixin {
     forEachTween((Tween<dynamic>? tween, dynamic targetValue,
         TweenConstructor<dynamic> constructor) {
       if (targetValue != null) {
+      print('L423 targetValue != null, it is $targetValue');
         tween ??= constructor(targetValue);
         if (_shouldAnimateTween(tween, targetValue)) {
           shouldStartAnimation = true;
@@ -428,8 +432,10 @@ class ContainerState extends State<Container> with AnimatedStateMixin {
           tween.end ??= tween.begin;
         }
       } else {
+        print('L432 tween = null');
         tween = null;
       }
+      print('L435 tween: $tween');
       return tween;
     });
     return shouldStartAnimation;
@@ -440,7 +446,7 @@ class ContainerState extends State<Container> with AnimatedStateMixin {
     print('debug didUpdateWidget');
     super.didUpdateWidget(oldWidget);
     if (_constructTweens()) {
-      print('debug _constructTweens');
+      print('debug finish _constructTweens');
       forEachTween((Tween<dynamic>? tween, dynamic targetValue,
           TweenConstructor<dynamic> constructor) {
         _updateTween(tween, targetValue);
