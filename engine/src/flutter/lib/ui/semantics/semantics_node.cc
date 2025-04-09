@@ -24,6 +24,10 @@ bool SemanticsNode::HasFlag(SemanticsFlags flag) const {
   return (flags & static_cast<int32_t>(flag)) != 0;
 }
 
+bool SemanticsNode::HasFlag(SemanticsFlags2 flag) const {
+  return (flags2 & static_cast<int64_t>(flag)) != 0;
+}
+
 bool SemanticsNode::IsPlatformViewNode() const {
   return platformViewId > kMinPlatformViewId;
 }

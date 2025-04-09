@@ -4824,6 +4824,7 @@ void updateNode(
   ui.SemanticsUpdateBuilder builder, {
   int id = 0,
   int flags = 0,
+  int flags2 = 0,
   int actions = 0,
   int maxValueLength = 0,
   int currentValueLength = 0,

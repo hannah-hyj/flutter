@@ -258,6 +258,11 @@ typedef enum {
   kFlutterSemanticsFlagIsRequired = 1 << 30,
 } FlutterSemanticsFlag;
 
+typedef enum : int64_t {
+  kPlaceHolder = 0LL,
+
+} FlutterSemanticsFlag2;
+
 typedef enum {
   /// Text has unknown text direction.
   kFlutterTextDirectionUnknown = 0,
@@ -1511,6 +1516,7 @@ typedef struct {
   int32_t id;
   /// The set of semantics flags associated with this node.
   FlutterSemanticsFlag flags;
+  FlutterSemanticsFlag2 flags2;
   /// The set of semantics actions applicable to this node.
   FlutterSemanticsAction actions;
   /// The position at which the text selection originates.

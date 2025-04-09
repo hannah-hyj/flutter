@@ -162,6 +162,7 @@ class AccessibilityBridge
   typedef struct {
     int32_t id;
     FlutterSemanticsFlag flags;
+    FlutterSemanticsFlag2 flags2;
     FlutterSemanticsAction actions;
     int32_t text_selection_base;
     int32_t text_selection_extent;

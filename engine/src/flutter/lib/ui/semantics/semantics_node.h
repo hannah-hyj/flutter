@@ -152,6 +152,10 @@ enum class SemanticsFlags : int32_t {
   kIsRequired = 1 << 30,
 };
 
+enum class SemanticsFlags2 : int64_t {
+
+};
+
 const int kScrollableSemanticsFlags =
     static_cast<int32_t>(SemanticsFlags::kHasImplicitScrolling);
 
@@ -164,12 +168,14 @@ struct SemanticsNode {
 
   bool HasAction(SemanticsAction action) const;
   bool HasFlag(SemanticsFlags flag) const;
+  bool HasFlag(SemanticsFlags2 flag) const;
 
   // Whether this node is for embedded platform views.
   bool IsPlatformViewNode() const;
 
   int32_t id = 0;
   int32_t flags = 0;
+  int64_t flags2 = 0;
   int32_t actions = 0;
   int32_t maxValueLength = -1;
   int32_t currentValueLength = -1;

@@ -73,17 +73,21 @@ void PlatformViewAndroidDelegate::UpdateSemantics(
     // If any of the encoding structure or length is changed, those locations
     // must be updated (at a minimum).
     std::vector<uint8_t> buffer(num_bytes);
+    int64_t* buffer_int64 = reinterpret_cast<int64_t*>(&buffer[0]);
     int32_t* buffer_int32 = reinterpret_cast<int32_t*>(&buffer[0]);
     float* buffer_float32 = reinterpret_cast<float*>(&buffer[0]);
 
     std::vector<std::string> strings;
     std::vector<std::vector<uint8_t>> string_attribute_args;
+    // Position for int32_t.
     size_t position = 0;
     for (const auto& value : update) {
       // If you edit this code, make sure you update kBytesPerNode
       // and/or kBytesPerChild above to match the number of values you are
       // sending.
       const flutter::SemanticsNode& node = value.second;
+      buffer_int64[position / 2] = node.flags2;
+      position += 2;
       buffer_int32[position++] = node.id;
       buffer_int32[position++] = node.flags;
       buffer_int32[position++] = node.actions;

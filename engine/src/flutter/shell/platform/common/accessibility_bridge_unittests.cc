@@ -22,6 +22,7 @@ FlutterSemanticsNode2 CreateSemanticsNode(
   return {
       .id = id,
       .flags = static_cast<FlutterSemanticsFlag>(0),
+      .flags2 = static_cast<FlutterSemanticsFlag2>(0),
       .actions = static_cast<FlutterSemanticsAction>(0),
       .text_selection_base = -1,
       .text_selection_extent = -1,

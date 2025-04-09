@@ -143,6 +143,7 @@ void EmbedderSemanticsUpdate2::AddNode(const SemanticsNode& node) {
       sizeof(FlutterSemanticsNode2),
       node.id,
       static_cast<FlutterSemanticsFlag>(node.flags),
+      static_cast<FlutterSemanticsFlag2>(node.flags2),
       static_cast<FlutterSemanticsAction>(node.actions),
       node.textSelectionBase,
       node.textSelectionExtent,

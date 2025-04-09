@@ -27,9 +27,12 @@ TEST(PlatformViewShell, UpdateSemanticsDoesFlutterViewUpdateSemantics) {
       PlatformViewAndroidDelegate::kBytesPerNode);
   std::vector<std::vector<uint8_t>> expected_string_attribute_args(0);
   size_t position = 0;
+  int64_t* buffer_int64 = reinterpret_cast<int64_t*>(&expected_buffer[0]);
   int32_t* buffer_int32 = reinterpret_cast<int32_t*>(&expected_buffer[0]);
   float* buffer_float32 = reinterpret_cast<float*>(&expected_buffer[0]);
   std::vector<std::string> expected_strings;
+  buffer_int64[position / 2] = node0.flags2;
+  position += 2;
   buffer_int32[position++] = node0.id;
   buffer_int32[position++] = node0.flags;
   buffer_int32[position++] = node0.actions;
@@ -93,8 +96,11 @@ TEST(PlatformViewShell, UpdateSemanticsDoesUpdatelinkUrl) {
   std::vector<std::vector<uint8_t>> expected_string_attribute_args(0);
   size_t position = 0;
   int32_t* buffer_int32 = reinterpret_cast<int32_t*>(&expected_buffer[0]);
+  int64_t* buffer_int64 = reinterpret_cast<int64_t*>(&expected_buffer[0]);
   float* buffer_float32 = reinterpret_cast<float*>(&expected_buffer[0]);
   std::vector<std::string> expected_strings;
+  buffer_int64[position / 2] = node0.flags2;
+  position += 2;
   buffer_int32[position++] = node0.id;
   buffer_int32[position++] = node0.flags;
   buffer_int32[position++] = node0.actions;
@@ -174,8 +180,11 @@ TEST(PlatformViewShell,
   std::vector<std::vector<uint8_t>> expected_string_attribute_args;
   size_t position = 0;
   int32_t* buffer_int32 = reinterpret_cast<int32_t*>(&expected_buffer[0]);
+  int64_t* buffer_int64 = reinterpret_cast<int64_t*>(&expected_buffer[0]);
   float* buffer_float32 = reinterpret_cast<float*>(&expected_buffer[0]);
   std::vector<std::string> expected_strings;
+  buffer_int64[position / 2] = node0.flags2;
+  position += 2;
   buffer_int32[position++] = node0.id;
   buffer_int32[position++] = node0.flags;
   buffer_int32[position++] = node0.actions;
