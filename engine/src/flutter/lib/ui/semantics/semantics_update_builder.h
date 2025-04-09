@@ -6,6 +6,7 @@
 #define FLUTTER_LIB_UI_SEMANTICS_SEMANTICS_UPDATE_BUILDER_H_
 
 #include <any>
+#include <cstdint>
 #include <list>
 
 #include "flutter/lib/ui/dart_wrapper.h"
@@ -31,7 +32,7 @@ class SemanticsUpdateBuilder
 
   void updateNode(
       int id,
-      int flags,
+      int64_t flags2,
       int actions,
       int maxValueLength,
       int currentValueLength,

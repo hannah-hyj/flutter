@@ -112,13 +112,13 @@ enum class SemanticsValidationResult : int32_t {
   kInvalid = 2,
 };
 
-/// C/C++ representation of `SemanticsFlags` defined in
+/// C/C++ representation of `SemanticsFlags2` defined in
 /// `lib/ui/semantics.dart`.
-///\warning This must match the `SemanticsFlags` enum in
+///\warning This must match the `SemanticsFlags2` enum in
 ///         `lib/ui/semantics.dart`.
 /// See also:
 ///   - file://./../../../lib/ui/semantics.dart
-enum class SemanticsFlags : int32_t {
+enum class SemanticsFlags2 : int32_t {
   kHasCheckedState = 1 << 0,
   kIsChecked = 1 << 1,
   kIsSelected = 1 << 2,
@@ -152,8 +152,8 @@ enum class SemanticsFlags : int32_t {
   kIsRequired = 1 << 30,
 };
 
-const int kScrollableSemanticsFlags =
-    static_cast<int32_t>(SemanticsFlags::kHasImplicitScrolling);
+const int kScrollableSemanticsFlags2 =
+    static_cast<int32_t>(SemanticsFlags2::kHasImplicitScrolling);
 
 struct SemanticsNode {
   SemanticsNode();
@@ -163,13 +163,14 @@ struct SemanticsNode {
   ~SemanticsNode();
 
   bool HasAction(SemanticsAction action) const;
-  bool HasFlag(SemanticsFlags flag) const;
+
+  bool HasFlag(SemanticsFlags2 flag) const;
 
   // Whether this node is for embedded platform views.
   bool IsPlatformViewNode() const;
 
   int32_t id = 0;
-  int32_t flags = 0;
+  int64_t flags2 = 0;
   int32_t actions = 0;
   int32_t maxValueLength = -1;
   int32_t currentValueLength = -1;

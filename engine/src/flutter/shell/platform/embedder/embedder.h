@@ -1510,7 +1510,8 @@ typedef struct {
   /// The unique identifier for this node.
   int32_t id;
   /// The set of semantics flags associated with this node.
-  FlutterSemanticsFlag flags;
+  FlutterSemanticsFlag flags2;
+
   /// The set of semantics actions applicable to this node.
   FlutterSemanticsAction actions;
   /// The position at which the text selection originates.

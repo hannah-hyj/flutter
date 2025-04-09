@@ -18,22 +18,22 @@ import 'semantics.dart';
 
 /// The specific type of checkable control.
 enum _CheckableKind {
-  /// A checkbox. An element, which has [ui.SemanticsFlag.hasCheckedState] set
-  /// and does not have [ui.SemanticsFlag.isInMutuallyExclusiveGroup] or
-  /// [ui.SemanticsFlag.hasToggledState] state, is marked as a checkbox.
+  /// A checkbox. An element, which has [ui.SemanticsFlag2.hasCheckedState] set
+  /// and does not have [ui.SemanticsFlag2.isInMutuallyExclusiveGroup] or
+  /// [ui.SemanticsFlag2.hasToggledState] state, is marked as a checkbox.
   checkbox,
 
-  /// A radio button, defined by [ui.SemanticsFlag.isInMutuallyExclusiveGroup].
+  /// A radio button, defined by [ui.SemanticsFlag2.isInMutuallyExclusiveGroup].
   radio,
 
-  /// A switch, defined by [ui.SemanticsFlag.hasToggledState].
+  /// A switch, defined by [ui.SemanticsFlag2.hasToggledState].
   toggle,
 }
 
-_CheckableKind _checkableKindFromSemanticsFlag(SemanticsObject semanticsObject) {
-  if (semanticsObject.hasFlag(ui.SemanticsFlag.isInMutuallyExclusiveGroup)) {
+_CheckableKind _checkableKindFromSemanticsFlag2(SemanticsObject semanticsObject) {
+  if (semanticsObject.hasFlag(ui.SemanticsFlag2.isInMutuallyExclusiveGroup)) {
     return _CheckableKind.radio;
-  } else if (semanticsObject.hasFlag(ui.SemanticsFlag.hasToggledState)) {
+  } else if (semanticsObject.hasFlag(ui.SemanticsFlag2.hasToggledState)) {
     return _CheckableKind.toggle;
   } else {
     return _CheckableKind.checkbox;
@@ -43,7 +43,7 @@ _CheckableKind _checkableKindFromSemanticsFlag(SemanticsObject semanticsObject) 
 /// Renders semantics objects that contain a group of radio buttons.
 ///
 /// Radio buttons in the group have the [SemanticCheckable] role and must have
-/// the [ui.SemanticsFlag.isInMutuallyExclusiveGroup] flag.
+/// the [ui.SemanticsFlag2.isInMutuallyExclusiveGroup] flag.
 class SemanticRadioGroup extends SemanticRole {
   SemanticRadioGroup(SemanticsObject semanticsObject)
     : super.withBasics(
@@ -63,15 +63,15 @@ class SemanticRadioGroup extends SemanticRole {
 /// Three objects which are implemented by this class are checkboxes, radio
 /// buttons and switches.
 ///
-/// See also [ui.SemanticsFlag.hasCheckedState], [ui.SemanticsFlag.isChecked],
-/// [ui.SemanticsFlag.isInMutuallyExclusiveGroup], [ui.SemanticsFlag.isToggled],
-/// [ui.SemanticsFlag.hasToggledState].
+/// See also [ui.SemanticsFlag2.hasCheckedState], [ui.SemanticsFlag2.isChecked],
+/// [ui.SemanticsFlag2.isInMutuallyExclusiveGroup], [ui.SemanticsFlag2.isToggled],
+/// [ui.SemanticsFlag2.hasToggledState].
 ///
 /// See also [Selectable] behavior, which expresses a similar but different
 /// boolean state of being "selected".
 class SemanticCheckable extends SemanticRole {
   SemanticCheckable(SemanticsObject semanticsObject)
-    : _kind = _checkableKindFromSemanticsFlag(semanticsObject),
+    : _kind = _checkableKindFromSemanticsFlag2(semanticsObject),
       super.withBasics(
         EngineSemanticsRole.checkable,
         semanticsObject,
@@ -102,8 +102,8 @@ class SemanticCheckable extends SemanticRole {
 
       setAttribute(
         'aria-checked',
-        (semanticsObject.hasFlag(ui.SemanticsFlag.isChecked) ||
-                semanticsObject.hasFlag(ui.SemanticsFlag.isToggled))
+        (semanticsObject.hasFlag(ui.SemanticsFlag2.isChecked) ||
+                semanticsObject.hasFlag(ui.SemanticsFlag2.isToggled))
             ? 'true'
             : 'false',
       );

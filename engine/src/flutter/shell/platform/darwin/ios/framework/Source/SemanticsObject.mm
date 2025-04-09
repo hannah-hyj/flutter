@@ -123,8 +123,8 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
 }
 
 - (NSString*)accessibilityValue {
-  self.nativeSwitch.on = self.node.HasFlag(flutter::SemanticsFlags::kIsToggled) ||
-                         self.node.HasFlag(flutter::SemanticsFlags::kIsChecked);
+  self.nativeSwitch.on = self.node.HasFlag(flutter::SemanticsFlags2::kIsToggled) ||
+                         self.node.HasFlag(flutter::SemanticsFlags2::kIsChecked);
 
   if (![self isAccessibilityBridgeAlive]) {
     return nil;
@@ -134,7 +134,7 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
 }
 
 - (UIAccessibilityTraits)accessibilityTraits {
-  self.nativeSwitch.enabled = self.node.HasFlag(flutter::SemanticsFlags::kIsEnabled);
+  self.nativeSwitch.enabled = self.node.HasFlag(flutter::SemanticsFlags2::kIsEnabled);
 
   return self.nativeSwitch.accessibilityTraits;
 }
@@ -358,12 +358,12 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
  */
 - (BOOL)nodeShouldTriggerAnnouncement:(const flutter::SemanticsNode*)node {
   // The node dropped the live region flag, if it ever had one.
-  if (!node || !node->HasFlag(flutter::SemanticsFlags::kIsLiveRegion)) {
+  if (!node || !node->HasFlag(flutter::SemanticsFlags2::kIsLiveRegion)) {
     return NO;
   }
 
   // The node has gained a new live region flag, always announce.
-  if (!self.node.HasFlag(flutter::SemanticsFlags::kIsLiveRegion)) {
+  if (!self.node.HasFlag(flutter::SemanticsFlags2::kIsLiveRegion)) {
     return YES;
   }
 
@@ -381,7 +381,7 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
 - (NSString*)routeName {
   // Returns the first non-null and non-empty semantic label of a child
   // with an NamesRoute flag. Otherwise returns nil.
-  if (self.node.HasFlag(flutter::SemanticsFlags::kNamesRoute)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kNamesRoute)) {
     NSString* newName = self.accessibilityLabel;
     if (newName != nil && [newName length] > 0) {
       return newName;
@@ -449,7 +449,7 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
   // entire element tree looking for such a hit.
 
   //  We enforce in the framework that no other useful semantics are merged with these nodes.
-  if (self.node.HasFlag(flutter::SemanticsFlags::kScopesRoute)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kScopesRoute)) {
     return false;
   }
 
@@ -465,14 +465,14 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
   // hidden but still is a valid target for a11y focus in the tree, e.g. a list
   // item that is currently off screen but the a11y navigation needs to know
   // about.
-  return ((self.node.flags & flutter::kScrollableSemanticsFlags) != 0 &&
-          (self.node.flags & static_cast<int32_t>(flutter::SemanticsFlags::kIsHidden)) != 0) ||
+  return ((self.node.flags2 & flutter::kScrollableSemanticsFlags2) != 0 &&
+          (self.node.flags2 & static_cast<int32_t>(flutter::SemanticsFlags2::kIsHidden)) != 0) ||
          !self.node.label.empty() || !self.node.value.empty() || !self.node.hint.empty() ||
          (self.node.actions & ~flutter::kScrollableSemanticsActions) != 0;
 }
 
 - (void)collectRoutes:(NSMutableArray<SemanticsObject*>*)edges {
-  if (self.node.HasFlag(flutter::SemanticsFlags::kScopesRoute)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kScopesRoute)) {
     [edges addObject:self];
   }
   if ([self hasChildren]) {
@@ -611,15 +611,15 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
   }
 
   // iOS does not announce values of native radio buttons.
-  if (self.node.HasFlag(flutter::SemanticsFlags::kIsInMutuallyExclusiveGroup)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kIsInMutuallyExclusiveGroup)) {
     return nil;
   }
 
   // FlutterSwitchSemanticsObject should supercede these conditionals.
-  if (self.node.HasFlag(flutter::SemanticsFlags::kHasToggledState) ||
-      self.node.HasFlag(flutter::SemanticsFlags::kHasCheckedState)) {
-    if (self.node.HasFlag(flutter::SemanticsFlags::kIsToggled) ||
-        self.node.HasFlag(flutter::SemanticsFlags::kIsChecked)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kHasToggledState) ||
+      self.node.HasFlag(flutter::SemanticsFlags2::kHasCheckedState)) {
+    if (self.node.HasFlag(flutter::SemanticsFlags2::kIsToggled) ||
+        self.node.HasFlag(flutter::SemanticsFlags2::kIsChecked)) {
       return @"1";
     } else {
       return @"0";
@@ -642,7 +642,7 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
     return CGRectMake(0, 0, 0, 0);
   }
 
-  if (self.node.HasFlag(flutter::SemanticsFlags::kIsHidden)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kIsHidden)) {
     return [super accessibilityFrame];
   }
   return [self globalRect];
@@ -701,7 +701,7 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
     //
     // This is needed because it causes slider to select to middle if it
     // does not have a semantics tap.
-    if (self.node.HasFlag(flutter::SemanticsFlags::kIsSlider)) {
+    if (self.node.HasFlag(flutter::SemanticsFlags2::kIsSlider)) {
       return YES;
     }
     return NO;
@@ -760,8 +760,8 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
     return;
   }
   self.bridge->AccessibilityObjectDidBecomeFocused(self.uid);
-  if (self.node.HasFlag(flutter::SemanticsFlags::kIsHidden) ||
-      self.node.HasFlag(flutter::SemanticsFlags::kIsHeader)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kIsHidden) ||
+      self.node.HasFlag(flutter::SemanticsFlags2::kIsHeader)) {
     [self showOnScreen];
   }
   if (self.node.HasAction(flutter::SemanticsAction::kDidGainAccessibilityFocus)) {
@@ -815,35 +815,35 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
     traits |= UIAccessibilityTraitAdjustable;
   }
   // This should also capture radio buttons.
-  if (self.node.HasFlag(flutter::SemanticsFlags::kHasToggledState) ||
-      self.node.HasFlag(flutter::SemanticsFlags::kHasCheckedState)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kHasToggledState) ||
+      self.node.HasFlag(flutter::SemanticsFlags2::kHasCheckedState)) {
     traits |= UIAccessibilityTraitButton;
   }
-  if (self.node.HasFlag(flutter::SemanticsFlags::kIsSelected)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kIsSelected)) {
     traits |= UIAccessibilityTraitSelected;
   }
-  if (self.node.HasFlag(flutter::SemanticsFlags::kIsButton)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kIsButton)) {
     traits |= UIAccessibilityTraitButton;
   }
-  if (self.node.HasFlag(flutter::SemanticsFlags::kHasEnabledState) &&
-      !self.node.HasFlag(flutter::SemanticsFlags::kIsEnabled)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kHasEnabledState) &&
+      !self.node.HasFlag(flutter::SemanticsFlags2::kIsEnabled)) {
     traits |= UIAccessibilityTraitNotEnabled;
   }
-  if (self.node.HasFlag(flutter::SemanticsFlags::kIsHeader)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kIsHeader)) {
     traits |= UIAccessibilityTraitHeader;
   }
-  if (self.node.HasFlag(flutter::SemanticsFlags::kIsImage)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kIsImage)) {
     traits |= UIAccessibilityTraitImage;
   }
-  if (self.node.HasFlag(flutter::SemanticsFlags::kIsLiveRegion)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kIsLiveRegion)) {
     traits |= UIAccessibilityTraitUpdatesFrequently;
   }
-  if (self.node.HasFlag(flutter::SemanticsFlags::kIsLink)) {
+  if (self.node.HasFlag(flutter::SemanticsFlags2::kIsLink)) {
     traits |= UIAccessibilityTraitLink;
   }
   if (traits == UIAccessibilityTraitNone && ![self hasChildren] &&
       self.accessibilityLabel.length != 0 &&
-      !self.node.HasFlag(flutter::SemanticsFlags::kIsTextField)) {
+      !self.node.HasFlag(flutter::SemanticsFlags2::kIsTextField)) {
     traits = UIAccessibilityTraitStaticText;
   }
   return traits;

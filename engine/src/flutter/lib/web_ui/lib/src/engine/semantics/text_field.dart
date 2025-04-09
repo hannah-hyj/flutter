@@ -232,7 +232,7 @@ class SemanticTextField extends SemanticRole {
   DomHTMLTextAreaElement _createMultiLineField() {
     final textArea = createMultilineTextArea();
 
-    if (semanticsObject.hasFlag(ui.SemanticsFlag.isObscured)) {
+    if (semanticsObject.hasFlag(ui.SemanticsFlag2.isObscured)) {
       // -webkit-text-security is not standard, but it's the best we can do.
       // Another option would be to create a single-line <input type="password">
       // but that may have layout quirks, since it cannot represent multi-line
@@ -247,7 +247,7 @@ class SemanticTextField extends SemanticRole {
 
   void _initializeEditableElement() {
     editableElement =
-        semanticsObject.hasFlag(ui.SemanticsFlag.isMultiline)
+        semanticsObject.hasFlag(ui.SemanticsFlag2.isMultiline)
             ? _createMultiLineField()
             : _createSingleLineField();
     _updateEnabledState();
@@ -346,12 +346,12 @@ class SemanticTextField extends SemanticRole {
   }
 
   void _updateInputType() {
-    if (semanticsObject.hasFlag(ui.SemanticsFlag.isMultiline)) {
+    if (semanticsObject.hasFlag(ui.SemanticsFlag2.isMultiline)) {
       // text area can't be annotated with input type
       return;
     }
     final DomHTMLInputElement input = editableElement as DomHTMLInputElement;
-    if (semanticsObject.hasFlag(ui.SemanticsFlag.isObscured)) {
+    if (semanticsObject.hasFlag(ui.SemanticsFlag2.isObscured)) {
       input.type = 'password';
     } else {
       switch (semanticsObject.inputType) {

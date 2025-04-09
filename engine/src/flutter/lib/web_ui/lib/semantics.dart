@@ -125,8 +125,8 @@ class SemanticsAction {
   String toString() => 'SemanticsAction.$name';
 }
 
-class SemanticsFlag {
-  const SemanticsFlag._(this.index, this.name);
+class SemanticsFlag2 {
+  const SemanticsFlag2._(this.index, this.name);
 
   final int index;
   final String name;
@@ -164,66 +164,69 @@ class SemanticsFlag {
   static const int _kIsRequiredIndex = 1 << 30;
   // WARNING: JavaScript can only go up to 32 bits!
 
-  static const SemanticsFlag hasCheckedState = SemanticsFlag._(
+  static const SemanticsFlag2 hasCheckedState = SemanticsFlag2._(
     _kHasCheckedStateIndex,
     'hasCheckedState',
   );
-  static const SemanticsFlag isChecked = SemanticsFlag._(_kIsCheckedIndex, 'isChecked');
-  static const SemanticsFlag hasSelectedState = SemanticsFlag._(
+  static const SemanticsFlag2 isChecked = SemanticsFlag2._(_kIsCheckedIndex, 'isChecked');
+  static const SemanticsFlag2 hasSelectedState = SemanticsFlag2._(
     _kHasSelectedStateIndex,
     'hasSelectedState',
   );
-  static const SemanticsFlag isSelected = SemanticsFlag._(_kIsSelectedIndex, 'isSelected');
-  static const SemanticsFlag isButton = SemanticsFlag._(_kIsButtonIndex, 'isButton');
-  static const SemanticsFlag isTextField = SemanticsFlag._(_kIsTextFieldIndex, 'isTextField');
-  static const SemanticsFlag isSlider = SemanticsFlag._(_kIsSliderIndex, 'isSlider');
-  static const SemanticsFlag isKeyboardKey = SemanticsFlag._(_kIsKeyboardKeyIndex, 'isKeyboardKey');
-  static const SemanticsFlag isReadOnly = SemanticsFlag._(_kIsReadOnlyIndex, 'isReadOnly');
-  static const SemanticsFlag isLink = SemanticsFlag._(_kIsLinkIndex, 'isLink');
-  static const SemanticsFlag isFocusable = SemanticsFlag._(_kIsFocusableIndex, 'isFocusable');
-  static const SemanticsFlag isFocused = SemanticsFlag._(_kIsFocusedIndex, 'isFocused');
-  static const SemanticsFlag hasEnabledState = SemanticsFlag._(
+  static const SemanticsFlag2 isSelected = SemanticsFlag2._(_kIsSelectedIndex, 'isSelected');
+  static const SemanticsFlag2 isButton = SemanticsFlag2._(_kIsButtonIndex, 'isButton');
+  static const SemanticsFlag2 isTextField = SemanticsFlag2._(_kIsTextFieldIndex, 'isTextField');
+  static const SemanticsFlag2 isSlider = SemanticsFlag2._(_kIsSliderIndex, 'isSlider');
+  static const SemanticsFlag2 isKeyboardKey = SemanticsFlag2._(
+    _kIsKeyboardKeyIndex,
+    'isKeyboardKey',
+  );
+  static const SemanticsFlag2 isReadOnly = SemanticsFlag2._(_kIsReadOnlyIndex, 'isReadOnly');
+  static const SemanticsFlag2 isLink = SemanticsFlag2._(_kIsLinkIndex, 'isLink');
+  static const SemanticsFlag2 isFocusable = SemanticsFlag2._(_kIsFocusableIndex, 'isFocusable');
+  static const SemanticsFlag2 isFocused = SemanticsFlag2._(_kIsFocusedIndex, 'isFocused');
+  static const SemanticsFlag2 hasEnabledState = SemanticsFlag2._(
     _kHasEnabledStateIndex,
     'hasEnabledState',
   );
-  static const SemanticsFlag isEnabled = SemanticsFlag._(_kIsEnabledIndex, 'isEnabled');
-  static const SemanticsFlag isInMutuallyExclusiveGroup = SemanticsFlag._(
+  static const SemanticsFlag2 isEnabled = SemanticsFlag2._(_kIsEnabledIndex, 'isEnabled');
+  static const SemanticsFlag2 isInMutuallyExclusiveGroup = SemanticsFlag2._(
     _kIsInMutuallyExclusiveGroupIndex,
     'isInMutuallyExclusiveGroup',
   );
-  static const SemanticsFlag isHeader = SemanticsFlag._(_kIsHeaderIndex, 'isHeader');
-  static const SemanticsFlag isObscured = SemanticsFlag._(_kIsObscuredIndex, 'isObscured');
-  static const SemanticsFlag isMultiline = SemanticsFlag._(_kIsMultilineIndex, 'isMultiline');
-  static const SemanticsFlag scopesRoute = SemanticsFlag._(_kScopesRouteIndex, 'scopesRoute');
-  static const SemanticsFlag namesRoute = SemanticsFlag._(_kNamesRouteIndex, 'namesRoute');
-  static const SemanticsFlag isHidden = SemanticsFlag._(_kIsHiddenIndex, 'isHidden');
-  static const SemanticsFlag isImage = SemanticsFlag._(_kIsImageIndex, 'isImage');
-  static const SemanticsFlag isLiveRegion = SemanticsFlag._(_kIsLiveRegionIndex, 'isLiveRegion');
-  static const SemanticsFlag hasToggledState = SemanticsFlag._(
+  static const SemanticsFlag2 isHeader = SemanticsFlag2._(_kIsHeaderIndex, 'isHeader');
+  static const SemanticsFlag2 isObscured = SemanticsFlag2._(_kIsObscuredIndex, 'isObscured');
+  static const SemanticsFlag2 isMultiline = SemanticsFlag2._(_kIsMultilineIndex, 'isMultiline');
+  static const SemanticsFlag2 scopesRoute = SemanticsFlag2._(_kScopesRouteIndex, 'scopesRoute');
+  static const SemanticsFlag2 namesRoute = SemanticsFlag2._(_kNamesRouteIndex, 'namesRoute');
+  static const SemanticsFlag2 isHidden = SemanticsFlag2._(_kIsHiddenIndex, 'isHidden');
+  static const SemanticsFlag2 isImage = SemanticsFlag2._(_kIsImageIndex, 'isImage');
+  static const SemanticsFlag2 isLiveRegion = SemanticsFlag2._(_kIsLiveRegionIndex, 'isLiveRegion');
+  static const SemanticsFlag2 hasToggledState = SemanticsFlag2._(
     _kHasToggledStateIndex,
     'hasToggledState',
   );
-  static const SemanticsFlag isToggled = SemanticsFlag._(_kIsToggledIndex, 'isToggled');
-  static const SemanticsFlag hasImplicitScrolling = SemanticsFlag._(
+  static const SemanticsFlag2 isToggled = SemanticsFlag2._(_kIsToggledIndex, 'isToggled');
+  static const SemanticsFlag2 hasImplicitScrolling = SemanticsFlag2._(
     _kHasImplicitScrollingIndex,
     'hasImplicitScrolling',
   );
-  static const SemanticsFlag isCheckStateMixed = SemanticsFlag._(
+  static const SemanticsFlag2 isCheckStateMixed = SemanticsFlag2._(
     _kIsCheckStateMixedIndex,
     'isCheckStateMixed',
   );
-  static const SemanticsFlag hasExpandedState = SemanticsFlag._(
+  static const SemanticsFlag2 hasExpandedState = SemanticsFlag2._(
     _kHasExpandedStateIndex,
     'hasExpandedState',
   );
-  static const SemanticsFlag isExpanded = SemanticsFlag._(_kIsExpandedIndex, 'isExpanded');
-  static const SemanticsFlag hasRequiredState = SemanticsFlag._(
+  static const SemanticsFlag2 isExpanded = SemanticsFlag2._(_kIsExpandedIndex, 'isExpanded');
+  static const SemanticsFlag2 hasRequiredState = SemanticsFlag2._(
     _kHasRequiredStateIndex,
     'hasRequiredState',
   );
-  static const SemanticsFlag isRequired = SemanticsFlag._(_kIsRequiredIndex, 'isRequired');
+  static const SemanticsFlag2 isRequired = SemanticsFlag2._(_kIsRequiredIndex, 'isRequired');
 
-  static const Map<int, SemanticsFlag> _kFlagById = <int, SemanticsFlag>{
+  static const Map<int, SemanticsFlag2> _kFlagById = <int, SemanticsFlag2>{
     _kHasCheckedStateIndex: hasCheckedState,
     _kIsCheckedIndex: isChecked,
     _kHasSelectedStateIndex: hasSelectedState,
@@ -257,12 +260,12 @@ class SemanticsFlag {
     _kIsRequiredIndex: isRequired,
   };
 
-  static List<SemanticsFlag> get values => _kFlagById.values.toList(growable: false);
+  static List<SemanticsFlag2> get values => _kFlagById.values.toList(growable: false);
 
-  static SemanticsFlag? fromIndex(int index) => _kFlagById[index];
+  static SemanticsFlag2? fromIndex(int index) => _kFlagById[index];
 
   @override
-  String toString() => 'SemanticsFlag.$name';
+  String toString() => 'SemanticsFlag2.$name';
 }
 
 // Mirrors engine/src/flutter/lib/ui/semantics.dart

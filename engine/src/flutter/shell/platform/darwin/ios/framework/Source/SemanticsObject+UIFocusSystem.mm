@@ -75,7 +75,7 @@ FLUTTER_ASSERT_ARC
 #pragma mark - UIFocusItem Conformance
 
 - (BOOL)canBecomeFocused {
-  if ((self.node.flags & static_cast<int32_t>(flutter::SemanticsFlags::kIsHidden)) != 0) {
+  if ((self.node.flags2 & static_cast<int32_t>(flutter::SemanticsFlags2::kIsHidden)) != 0) {
     return NO;
   }
   // Currently only supports SemanticsObjects that handle

@@ -100,7 +100,7 @@ TEST_F(AccessibilityBridgeMacWindowTest, SendsAccessibilityCreateNotificationFlu
       viewController.accessibilityBridge.lock());
   FlutterSemanticsNode2 root;
   root.id = 0;
-  root.flags = static_cast<FlutterSemanticsFlag>(0);
+  // root.flags = static_cast<FlutterSemanticsFlag>(0);
   root.actions = static_cast<FlutterSemanticsAction>(0);
   root.text_selection_base = -1;
   root.text_selection_extent = -1;
@@ -159,7 +159,7 @@ TEST_F(AccessibilityBridgeMacWindowTest, NonZeroRootNodeId) {
   FlutterSemanticsNode2 node1;
   std::vector<int32_t> node1_children{2};
   node1.id = 1;
-  node1.flags = static_cast<FlutterSemanticsFlag>(0);
+  // node1.flags = static_cast<FlutterSemanticsFlag>(0);
   node1.actions = static_cast<FlutterSemanticsAction>(0);
   node1.text_selection_base = -1;
   node1.text_selection_extent = -1;
@@ -176,7 +176,7 @@ TEST_F(AccessibilityBridgeMacWindowTest, NonZeroRootNodeId) {
 
   FlutterSemanticsNode2 node2;
   node2.id = 2;
-  node2.flags = static_cast<FlutterSemanticsFlag>(0);
+  //  node2.flags = static_cast<FlutterSemanticsFlag>(0);
   node2.actions = static_cast<FlutterSemanticsAction>(0);
   node2.text_selection_base = -1;
   node2.text_selection_extent = -1;
@@ -221,7 +221,7 @@ TEST_F(AccessibilityBridgeMacTest, DoesNotSendAccessibilityCreateNotificationWhe
       viewController.accessibilityBridge.lock());
   FlutterSemanticsNode2 root;
   root.id = 0;
-  root.flags = static_cast<FlutterSemanticsFlag>(0);
+  //  root.flags = static_cast<FlutterSemanticsFlag>(0);
   root.actions = static_cast<FlutterSemanticsAction>(0);
   root.text_selection_base = -1;
   root.text_selection_extent = -1;
@@ -267,7 +267,7 @@ TEST_F(AccessibilityBridgeMacTest, DoesNotSendAccessibilityCreateNotificationWhe
       viewController.accessibilityBridge.lock());
   FlutterSemanticsNode2 root;
   root.id = 0;
-  root.flags = static_cast<FlutterSemanticsFlag>(0);
+  // root.flags = static_cast<FlutterSemanticsFlag>(0);
   root.actions = static_cast<FlutterSemanticsAction>(0);
   root.text_selection_base = -1;
   root.text_selection_extent = -1;

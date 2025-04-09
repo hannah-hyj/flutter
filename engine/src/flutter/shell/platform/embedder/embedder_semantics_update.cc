@@ -41,7 +41,7 @@ void EmbedderSemanticsUpdate::AddNode(const SemanticsNode& node) {
   nodes_.push_back({
       sizeof(FlutterSemanticsNode),
       node.id,
-      static_cast<FlutterSemanticsFlag>(node.flags),
+      static_cast<FlutterSemanticsFlag>(node.flags2),
       static_cast<FlutterSemanticsAction>(node.actions),
       node.textSelectionBase,
       node.textSelectionExtent,
@@ -142,7 +142,7 @@ void EmbedderSemanticsUpdate2::AddNode(const SemanticsNode& node) {
   nodes_.push_back({
       sizeof(FlutterSemanticsNode2),
       node.id,
-      static_cast<FlutterSemanticsFlag>(node.flags),
+      static_cast<FlutterSemanticsFlag>(node.flags2),
       static_cast<FlutterSemanticsAction>(node.actions),
       node.textSelectionBase,
       node.textSelectionExtent,

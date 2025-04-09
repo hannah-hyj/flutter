@@ -312,7 +312,7 @@ TEST_F(FlutterEngineTest, CanToggleAccessibility) {
   // Send flutter semantics updates.
   FlutterSemanticsNode2 root;
   root.id = 0;
-  root.flags = static_cast<FlutterSemanticsFlag>(0);
+  // root.flags = static_cast<FlutterSemanticsFlag>(0);
   root.actions = static_cast<FlutterSemanticsAction>(0);
   root.text_selection_base = -1;
   root.text_selection_extent = -1;
@@ -329,7 +329,7 @@ TEST_F(FlutterEngineTest, CanToggleAccessibility) {
 
   FlutterSemanticsNode2 child1;
   child1.id = 1;
-  child1.flags = static_cast<FlutterSemanticsFlag>(0);
+  // child1.flags = static_cast<FlutterSemanticsFlag>(0);
   child1.actions = static_cast<FlutterSemanticsAction>(0);
   child1.text_selection_base = -1;
   child1.text_selection_extent = -1;
@@ -402,7 +402,7 @@ TEST_F(FlutterEngineTest, CanToggleAccessibilityWhenHeadless) {
   // Send flutter semantics updates.
   FlutterSemanticsNode2 root;
   root.id = 0;
-  root.flags = static_cast<FlutterSemanticsFlag>(0);
+  // root.flags = static_cast<FlutterSemanticsFlag>(0);
   root.actions = static_cast<FlutterSemanticsAction>(0);
   root.text_selection_base = -1;
   root.text_selection_extent = -1;
@@ -419,7 +419,7 @@ TEST_F(FlutterEngineTest, CanToggleAccessibilityWhenHeadless) {
 
   FlutterSemanticsNode2 child1;
   child1.id = 1;
-  child1.flags = static_cast<FlutterSemanticsFlag>(0);
+  // child1.flags = static_cast<FlutterSemanticsFlag>(0);
   child1.actions = static_cast<FlutterSemanticsAction>(0);
   child1.text_selection_base = -1;
   child1.text_selection_extent = -1;

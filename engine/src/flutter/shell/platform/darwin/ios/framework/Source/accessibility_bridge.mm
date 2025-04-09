@@ -267,15 +267,15 @@ static void ReplaceSemanticsObject(SemanticsObject* oldObject,
 
 static SemanticsObject* CreateObject(const flutter::SemanticsNode& node,
                                      const fml::WeakPtr<AccessibilityBridge>& weak_ptr) {
-  if (node.HasFlag(flutter::SemanticsFlags::kIsTextField) &&
-      !node.HasFlag(flutter::SemanticsFlags::kIsReadOnly)) {
+  if (node.HasFlag(flutter::SemanticsFlags2::kIsTextField) &&
+      !node.HasFlag(flutter::SemanticsFlags2::kIsReadOnly)) {
     // Text fields are backed by objects that implement UITextInput.
     return [[TextInputSemanticsObject alloc] initWithBridge:weak_ptr uid:node.id];
-  } else if (!node.HasFlag(flutter::SemanticsFlags::kIsInMutuallyExclusiveGroup) &&
-             (node.HasFlag(flutter::SemanticsFlags::kHasToggledState) ||
-              node.HasFlag(flutter::SemanticsFlags::kHasCheckedState))) {
+  } else if (!node.HasFlag(flutter::SemanticsFlags2::kIsInMutuallyExclusiveGroup) &&
+             (node.HasFlag(flutter::SemanticsFlags2::kHasToggledState) ||
+              node.HasFlag(flutter::SemanticsFlags2::kHasCheckedState))) {
     return [[FlutterSwitchSemanticsObject alloc] initWithBridge:weak_ptr uid:node.id];
-  } else if (node.HasFlag(flutter::SemanticsFlags::kHasImplicitScrolling)) {
+  } else if (node.HasFlag(flutter::SemanticsFlags2::kHasImplicitScrolling)) {
     return [[FlutterScrollableSemanticsObject alloc] initWithBridge:weak_ptr uid:node.id];
   } else if (node.IsPlatformViewNode()) {
     FlutterPlatformViewsController* platformViewsController =
@@ -292,7 +292,7 @@ static SemanticsObject* CreateObject(const flutter::SemanticsNode& node,
 
 static bool DidFlagChange(const flutter::SemanticsNode& oldNode,
                           const flutter::SemanticsNode& newNode,
-                          SemanticsFlags flag) {
+                          SemanticsFlags2 flag) {
   return oldNode.HasFlag(flag) != newNode.HasFlag(flag);
 }
 
@@ -308,11 +308,11 @@ SemanticsObject* AccessibilityBridge::GetOrCreateObject(int32_t uid,
     if (nodeEntry != updates.end()) {
       // There's an update for this node
       flutter::SemanticsNode node = nodeEntry->second;
-      if (DidFlagChange(object.node, node, flutter::SemanticsFlags::kIsTextField) ||
-          DidFlagChange(object.node, node, flutter::SemanticsFlags::kIsReadOnly) ||
-          DidFlagChange(object.node, node, flutter::SemanticsFlags::kHasCheckedState) ||
-          DidFlagChange(object.node, node, flutter::SemanticsFlags::kHasToggledState) ||
-          DidFlagChange(object.node, node, flutter::SemanticsFlags::kHasImplicitScrolling)) {
+      if (DidFlagChange(object.node, node, flutter::SemanticsFlags2::kIsTextField) ||
+          DidFlagChange(object.node, node, flutter::SemanticsFlags2::kIsReadOnly) ||
+          DidFlagChange(object.node, node, flutter::SemanticsFlags2::kHasCheckedState) ||
+          DidFlagChange(object.node, node, flutter::SemanticsFlags2::kHasToggledState) ||
+          DidFlagChange(object.node, node, flutter::SemanticsFlags2::kHasImplicitScrolling)) {
         // The node changed its type. In this case, we cannot reuse the existing
         // SemanticsObject implementation. Instead, we replace it with a new
         // instance.

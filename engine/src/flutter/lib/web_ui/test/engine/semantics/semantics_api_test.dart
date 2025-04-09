@@ -18,13 +18,13 @@ void main() {
 
 void testMain() {
   // This must match the number of flags in lib/ui/semantics.dart
-  const int numSemanticsFlags = 31;
-  test('SemanticsFlag.values refers to all flags.', () async {
-    expect(SemanticsFlag.values.length, equals(numSemanticsFlags));
-    for (int index = 0; index < numSemanticsFlags; ++index) {
+  const int numSemanticsFlag2s = 31;
+  test('SemanticsFlag2.values refers to all flags.', () async {
+    expect(SemanticsFlag2.values.length, equals(numSemanticsFlag2s));
+    for (int index = 0; index < numSemanticsFlag2s; ++index) {
       final int flag = 1 << index;
-      expect(SemanticsFlag.fromIndex(flag), isNotNull);
-      expect(SemanticsFlag.fromIndex(flag).toString(), startsWith('SemanticsFlag.'));
+      expect(SemanticsFlag2.fromIndex(flag), isNotNull);
+      expect(SemanticsFlag2.fromIndex(flag).toString(), startsWith('SemanticsFlag2.'));
     }
   });
 

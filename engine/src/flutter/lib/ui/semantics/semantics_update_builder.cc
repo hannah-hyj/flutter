@@ -32,7 +32,7 @@ SemanticsUpdateBuilder::~SemanticsUpdateBuilder() = default;
 
 void SemanticsUpdateBuilder::updateNode(
     int id,
-    int flags,
+    int64_t flags2,
     int actions,
     int maxValueLength,
     int currentValueLength,
@@ -78,7 +78,7 @@ void SemanticsUpdateBuilder::updateNode(
          "childrenInHitTestOrder";
   SemanticsNode node;
   node.id = id;
-  node.flags = flags;
+  node.flags2 = flags2;
   node.actions = actions;
   node.maxValueLength = maxValueLength;
   node.currentValueLength = currentValueLength;
