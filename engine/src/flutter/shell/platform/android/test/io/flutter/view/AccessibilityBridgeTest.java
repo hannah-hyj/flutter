@@ -2468,7 +2468,10 @@ public class AccessibilityBridgeTest {
     testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
     AccessibilityNodeInfo nodeInfo = accessibilityBridge.createAccessibilityNodeInfo(0);
     assertEquals("android.widget.SeekBar", nodeInfo.getClassName().toString());
-    assertTrue(nodeInfo.getActionList().contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS));
+    assertTrue(
+        nodeInfo
+            .getActionList()
+            .contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS));
   }
 
   @Test
@@ -2482,7 +2485,10 @@ public class AccessibilityBridgeTest {
     testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
     AccessibilityNodeInfo nodeInfo = accessibilityBridge.createAccessibilityNodeInfo(0);
     assertEquals("android.widget.ProgressBar", nodeInfo.getClassName().toString());
-    assertFalse(nodeInfo.getActionList().contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS));
+    assertFalse(
+        nodeInfo
+            .getActionList()
+            .contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS));
   }
 
   @Test

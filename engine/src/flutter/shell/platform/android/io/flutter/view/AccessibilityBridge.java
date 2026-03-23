@@ -879,7 +879,8 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
           }
           try {
             String valueString = semanticsNode.value;
-            boolean isPercentage = role == Role.SLIDER && valueString != null && valueString.endsWith("%");
+            boolean isPercentage =
+                role == Role.SLIDER && valueString != null && valueString.endsWith("%");
             if (isPercentage) {
               valueString = valueString.substring(0, valueString.length() - 1);
             }
