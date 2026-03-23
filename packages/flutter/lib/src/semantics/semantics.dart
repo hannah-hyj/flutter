@@ -268,30 +268,28 @@ sealed class _DebugSemanticsRoleChecks {
 
     // Validate that value is within min and max range
     try {
-      final double? currentValue = double.tryParse(data.value.replaceAll('%', ''));
-      final double? minVal = double.tryParse(data.minValue!.replaceAll('%', ''));
-      final double? maxVal = double.tryParse(data.maxValue!.replaceAll('%', ''));
+      final double currentValue = double.parse(data.value.replaceAll('%', ''));
+      final double minVal = double.parse(data.minValue!);
+      final double maxVal = double.parse(data.maxValue!);
 
-      if (currentValue != null && minVal != null && maxVal != null) {
-        if (minVal >= maxVal) {
-          return FlutterError('Slider minValue ($minVal) must be less than maxValue ($maxVal)');
+      if (minVal >= maxVal) {
+        return FlutterError('Slider minValue ($minVal) must be less than maxValue ($maxVal)');
+      }
+
+      if (data.value.contains('%')) {
+        if (currentValue < 0.0 || currentValue > 100.0) {
+          return FlutterError(
+            'Slider percentage value ($currentValue%) must be between 0% and 100%',
+          );
         }
-
-        if (data.value.contains('%')) {
-          if (currentValue < 0.0 || currentValue > 100.0) {
-            return FlutterError(
-              'Slider percentage value ($currentValue%) must be between 0% and 100%',
-            );
-          }
-        } else {
-          if (currentValue < minVal || currentValue > maxVal) {
-            return FlutterError(
-              'Slider value ($currentValue) must be between minValue ($minVal) and maxValue ($maxVal)',
-            );
-          }
+      } else {
+        if (currentValue < minVal || currentValue > maxVal) {
+          return FlutterError(
+            'Slider value ($currentValue) must be between minValue ($minVal) and maxValue ($maxVal)',
+          );
         }
       }
-    } catch (e) {
+    } on FormatException {
       return FlutterError(
         'Slider value, minValue, and maxValue must be valid numbers. '
         'value: "${data.value}", minValue: "${data.minValue}", maxValue: "${data.maxValue}"',

@@ -1164,6 +1164,25 @@ void main() {
       expect(error.message, 'Slider minValue (100.0) must be less than maxValue (0.0)');
     });
 
+    testWidgets('failure case, invalid value', (WidgetTester tester) async {
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Semantics(
+            role: SemanticsRole.slider,
+            value: 'not-a-number',
+            minValue: '0',
+            maxValue: '100',
+            child: const SizedBox.square(dimension: 1),
+          ),
+        ),
+      );
+      final Object? exception = tester.takeException();
+      expect(exception, isFlutterError);
+      final error = exception! as FlutterError;
+      expect(error.message, contains('must be valid numbers'));
+    });
+
     testWidgets('success case', (WidgetTester tester) async {
       await tester.pumpWidget(
         Directionality(
