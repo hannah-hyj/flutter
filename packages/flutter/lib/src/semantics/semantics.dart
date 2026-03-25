@@ -210,7 +210,9 @@ sealed class _DebugSemanticsRoleChecks {
     final SemanticsData data = node.getSemanticsData();
 
     // Check if value is present
-    if (data.value.isEmpty ||(data.minValue?.isEmpty ?? true)||(data.maxValue?.isEmpty ?? true)) {
+    if (data.value.isEmpty ||
+        (data.minValue?.isEmpty ?? true) ||
+        (data.maxValue?.isEmpty ?? true)) {
       return FlutterError('A progress bar must have a value, a minValue, a maxValue.');
     }
 

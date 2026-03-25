@@ -1079,10 +1079,7 @@ void main() {
       await tester.pumpWidget(
         Directionality(
           textDirection: TextDirection.ltr,
-          child: Semantics(
-            role: SemanticsRole.progressBar,
-            child: const SizedBox(),
-          ),
+          child: Semantics(role: SemanticsRole.progressBar, child: const SizedBox()),
         ),
       );
       final Object? exception = tester.takeException();
@@ -1113,11 +1110,7 @@ void main() {
       await tester.pumpWidget(
         Directionality(
           textDirection: TextDirection.ltr,
-          child: Semantics(
-            role: SemanticsRole.progressBar,
-            value: '5',
-            child: const SizedBox(),
-          ),
+          child: Semantics(role: SemanticsRole.progressBar, value: '5', child: const SizedBox()),
         ),
       );
       final Object? exception = tester.takeException();
@@ -1149,7 +1142,9 @@ void main() {
       );
     });
 
-    testWidgets('failure case, min and max are percentages, invalid value', (WidgetTester tester) async {
+    testWidgets('failure case, min and max are percentages, invalid value', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(
         Directionality(
           textDirection: TextDirection.ltr,
@@ -1211,10 +1206,7 @@ void main() {
       final Object? exception = tester.takeException();
       expect(exception, isFlutterError);
       final error = exception! as FlutterError;
-      expect(
-        error.message,
-        'Progress bar minValue (10.0) must be less than maxValue (0.0)',
-      );
+      expect(error.message, 'Progress bar minValue (10.0) must be less than maxValue (0.0)');
     });
 
     testWidgets('failure case, value out of range (number)', (WidgetTester tester) async {
@@ -1255,10 +1247,7 @@ void main() {
       final Object? exception = tester.takeException();
       expect(exception, isFlutterError);
       final error = exception! as FlutterError;
-      expect(
-        error.message,
-        'Progress bar percentage value (150%) must be between 0% and 100%',
-      );
+      expect(error.message, 'Progress bar percentage value (150%) must be between 0% and 100%');
     });
 
     testWidgets('success case, value is a valid number', (WidgetTester tester) async {
