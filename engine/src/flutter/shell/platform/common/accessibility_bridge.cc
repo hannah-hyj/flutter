@@ -443,7 +443,7 @@ void AccessibilityBridge::SetBooleanAttributesFromFlutterUpdate(
   node_data.AddBoolAttribute(ax::mojom::BoolAttribute::kClipsChildren,
                              !node.children_in_traversal_order.empty());
   node_data.AddBoolAttribute(ax::mojom::BoolAttribute::kSelected,
-                             flags->is_selected);
+                             flags->is_selected == FlutterTristate::kFlutterTristateTrue);
   node_data.AddBoolAttribute(ax::mojom::BoolAttribute::kEditableRoot,
                              flags->is_text_field && !flags->is_read_only);
   // Mark nodes as line breaking so that screen readers don't
