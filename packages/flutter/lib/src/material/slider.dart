@@ -1901,6 +1901,9 @@ class _RenderSlider extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   /// Calculates the local coordinate center of the [Slider] thumb given its
   /// physical placement on the track from 0.0 (left) to 1.0 (right).
+  ///
+  /// The [visualPosition] is provided by the caller so semantics can use the
+  /// raw logical value while paint can use the smoothly animated value.
   Offset _calcThumbCenter({ required Rect trackRect, required double visualPosition }) {
     final double padding = _sliderTheme.trackShape!.isRounded ? trackRect.height : 0.0;
     final double thumbPosition = isDiscrete
