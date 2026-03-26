@@ -596,7 +596,8 @@ TEST(AccessibilityBridgeTest, IsSelectedAttribute) {
   std::shared_ptr<TestAccessibilityBridge> bridge =
       std::make_shared<TestAccessibilityBridge>();
 
-  FlutterSemanticsNode2 node0 = CreateSemanticsNode(0, "node 0");
+  std::vector<int32_t> children{1, 2};
+  FlutterSemanticsNode2 node0 = CreateSemanticsNode(0, "node 0", &children);
   auto flags0 = FlutterSemanticsFlags{
       .is_selected = FlutterTristate::kFlutterTristateNone,
   };
