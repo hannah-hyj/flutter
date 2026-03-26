@@ -1206,7 +1206,7 @@ void main() {
       final Object? exception = tester.takeException();
       expect(exception, isFlutterError);
       final error = exception! as FlutterError;
-      expect(error.message, 'Progress bar minValue (10.0) must be less than maxValue (0.0)');
+      expect(error.message, 'Progress bar minValue (10) must be less than maxValue (0)');
     });
 
     testWidgets('failure case, value out of range (number)', (WidgetTester tester) async {
@@ -1227,7 +1227,7 @@ void main() {
       final error = exception! as FlutterError;
       expect(
         error.message,
-        'Progress bar value (20.0) must be between minValue (0.0) and maxValue (10.0)',
+        'Progress bar value (20) must be between minValue (0) and maxValue (10)',
       );
     });
 

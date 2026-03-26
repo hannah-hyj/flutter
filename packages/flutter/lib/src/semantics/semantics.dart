@@ -234,13 +234,13 @@ sealed class _DebugSemanticsRoleChecks {
 
     // Validate min/max relation since both are guaranteed to be valid numbers.
     if (minVal >= maxVal) {
-      return FlutterError('Progress bar minValue ($minVal) must be less than maxValue ($maxVal)');
+      return FlutterError('Progress bar minValue (${data.minValue}) must be less than maxValue (${data.maxValue})');
     }
     // If the value is a number, it must be between min and max.
     if (currentValue != null) {
       if (currentValue < minVal || currentValue > maxVal) {
         return FlutterError(
-          'Progress bar value ($currentValue) must be between minValue ($minVal) and maxValue ($maxVal)',
+          'Progress bar value (${data.value}) must be between minValue (${data.minValue}) and maxValue (${data.maxValue})',
         );
       }
       return null;
