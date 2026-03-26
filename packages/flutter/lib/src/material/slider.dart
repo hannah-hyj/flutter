@@ -1904,7 +1904,7 @@ class _RenderSlider extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   ///
   /// The [visualPosition] is provided by the caller so semantics can use the
   /// raw logical value while paint can use the smoothly animated value.
-  Offset _calcThumbCenter({ required Rect trackRect, required double visualPosition }) {
+  Offset _calcThumbCenter({required Rect trackRect, required double visualPosition}) {
     final double padding = _sliderTheme.trackShape!.isRounded ? trackRect.height : 0.0;
     final double thumbPosition = isDiscrete
         ? trackRect.left + visualPosition * (trackRect.width - padding) + padding / 2
