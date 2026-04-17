@@ -2433,6 +2433,28 @@ public class AccessibilityBridgeTest {
   }
 
   @Test
+  public void itAddsListViewToClassName() {
+    AccessibilityBridge accessibilityBridge = setUpBridge();
+    TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
+    testSemanticsNode.role = 18; // SemanticsRole::kList
+    TestSemanticsUpdate testSemanticsUpdate = testSemanticsNode.toUpdate();
+    testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
+    AccessibilityNodeInfo nodeInfo = accessibilityBridge.createAccessibilityNodeInfo(0);
+    assertEquals("android.widget.ListView", nodeInfo.getClassName().toString());
+  }
+
+  @Test
+  public void itAddsRadioGroupToClassName() {
+    AccessibilityBridge accessibilityBridge = setUpBridge();
+    TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
+    testSemanticsNode.role = 25; // SemanticsRole::kRadioGroup
+    TestSemanticsUpdate testSemanticsUpdate = testSemanticsNode.toUpdate();
+    testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
+    AccessibilityNodeInfo nodeInfo = accessibilityBridge.createAccessibilityNodeInfo(0);
+    assertEquals("android.widget.RadioGroup", nodeInfo.getClassName().toString());
+  }
+
+  @Test
   public void itAddsRangeInfoToProgressBar() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();

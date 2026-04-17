@@ -894,6 +894,12 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
       case COMBO_BOX:
         result.setClassName("android.widget.Spinner");
         break;
+      case LIST:
+        result.setClassName("android.widget.ListView");
+        break;
+      case RADIO_GROUP:
+        result.setClassName("android.widget.RadioGroup");
+        break;
       default:
         break;
     }
