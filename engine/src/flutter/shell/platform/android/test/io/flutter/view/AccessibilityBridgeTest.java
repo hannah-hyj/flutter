@@ -2430,6 +2430,7 @@ public class AccessibilityBridgeTest {
     testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
     AccessibilityNodeInfo nodeInfo = accessibilityBridge.createAccessibilityNodeInfo(0);
     assertEquals("android.widget.Spinner", nodeInfo.getClassName().toString());
+    assertTrue(nodeInfo.canOpenPopup());
   }
 
   @Test

@@ -893,6 +893,7 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
         break;
       case COMBO_BOX:
         result.setClassName("android.widget.Spinner");
+        result.setCanOpenPopup(true);
         break;
       case LIST:
         result.setClassName("android.widget.ListView");
