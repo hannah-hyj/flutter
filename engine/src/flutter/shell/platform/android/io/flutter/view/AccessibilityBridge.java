@@ -891,6 +891,9 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
           }
         }
         break;
+      case COMBO_BOX:
+        result.setClassName("android.widget.Spinner");
+        break;
       default:
         break;
     }
