@@ -2414,7 +2414,7 @@ public class AccessibilityBridgeTest {
   public void itAddsProgressBarToClassName() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
-    testSemanticsNode.role = 23; // SemanticsRole::kProgressBar
+    testSemanticsNode.role = AccessibilityBridge.Role.PROGRESS_BAR.value;
     TestSemanticsUpdate testSemanticsUpdate = testSemanticsNode.toUpdate();
     testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
     AccessibilityNodeInfo nodeInfo = accessibilityBridge.createAccessibilityNodeInfo(0);
@@ -2425,7 +2425,7 @@ public class AccessibilityBridgeTest {
   public void itAddsComboBoxToClassName() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
-    testSemanticsNode.role = 12; // SemanticsRole::kComboBox
+    testSemanticsNode.role = AccessibilityBridge.Role.COMBO_BOX.value;
     TestSemanticsUpdate testSemanticsUpdate = testSemanticsNode.toUpdate();
     testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
     AccessibilityNodeInfo nodeInfo = accessibilityBridge.createAccessibilityNodeInfo(0);
@@ -2436,7 +2436,7 @@ public class AccessibilityBridgeTest {
   public void itAddsListViewToClassName() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
-    testSemanticsNode.role = 18; // SemanticsRole::kList
+    testSemanticsNode.role = AccessibilityBridge.Role.LIST.value;
     TestSemanticsUpdate testSemanticsUpdate = testSemanticsNode.toUpdate();
     testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
     AccessibilityNodeInfo nodeInfo = accessibilityBridge.createAccessibilityNodeInfo(0);
@@ -2447,7 +2447,7 @@ public class AccessibilityBridgeTest {
   public void itAddsRadioGroupToClassName() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
-    testSemanticsNode.role = 25; // SemanticsRole::kRadioGroup
+    testSemanticsNode.role = AccessibilityBridge.Role.RADIO_GROUP.value;
     TestSemanticsUpdate testSemanticsUpdate = testSemanticsNode.toUpdate();
     testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
     AccessibilityNodeInfo nodeInfo = accessibilityBridge.createAccessibilityNodeInfo(0);
@@ -2458,7 +2458,7 @@ public class AccessibilityBridgeTest {
   public void itAddsRangeInfoToProgressBar() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
-    testSemanticsNode.role = 23; // SemanticsRole::kProgressBar
+    testSemanticsNode.role = AccessibilityBridge.Role.PROGRESS_BAR.value;
     testSemanticsNode.value = "50";
     testSemanticsNode.minValue = "0";
     testSemanticsNode.maxValue = "100";
@@ -2476,7 +2476,7 @@ public class AccessibilityBridgeTest {
   public void itAddsRangeInfoToProgressBar_missingMinAndMaxValue() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
-    testSemanticsNode.role = 23; // SemanticsRole::kProgressBar
+    testSemanticsNode.role = AccessibilityBridge.Role.PROGRESS_BAR.value;
     testSemanticsNode.value = "50";
     TestSemanticsUpdate testSemanticsUpdate = testSemanticsNode.toUpdate();
     testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
@@ -2492,7 +2492,7 @@ public class AccessibilityBridgeTest {
   public void itAddsRangeInfoToProgressBar_unparseableMinValue() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
-    testSemanticsNode.role = 23; // SemanticsRole::kProgressBar
+    testSemanticsNode.role = AccessibilityBridge.Role.PROGRESS_BAR.value;
     testSemanticsNode.value = "50";
     testSemanticsNode.minValue = "a";
     testSemanticsNode.maxValue = "100";
@@ -2510,7 +2510,7 @@ public class AccessibilityBridgeTest {
   public void itAddsRangeInfoToProgressBar_unparseableMaxValue() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
-    testSemanticsNode.role = 23; // SemanticsRole::kProgressBar
+    testSemanticsNode.role = AccessibilityBridge.Role.PROGRESS_BAR.value;
     testSemanticsNode.value = "50";
     testSemanticsNode.minValue = "0";
     testSemanticsNode.maxValue = "a";
@@ -2530,7 +2530,7 @@ public class AccessibilityBridgeTest {
   public void itAddsRangeInfoToProgressBar_unparseableValue() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
-    testSemanticsNode.role = 23; // SemanticsRole::kProgressBar
+    testSemanticsNode.role = AccessibilityBridge.Role.PROGRESS_BAR.value;
     testSemanticsNode.value = "a";
     testSemanticsNode.minValue = "0";
     testSemanticsNode.maxValue = "100";
@@ -2552,7 +2552,7 @@ public class AccessibilityBridgeTest {
   public void itAddsRangeInfoToProgressBar_unparseableValueAPI36() {
     AccessibilityBridge accessibilityBridge = setUpBridge();
     TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
-    testSemanticsNode.role = 23; // SemanticsRole::kProgressBar
+    testSemanticsNode.role = AccessibilityBridge.Role.PROGRESS_BAR.value;
     testSemanticsNode.value = "a";
     testSemanticsNode.minValue = "0";
     testSemanticsNode.maxValue = "100";
