@@ -892,6 +892,7 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
         }
         break;
       case COMBO_BOX:
+      case MENU:
         result.setClassName("android.widget.Spinner");
         result.setCanOpenPopup(true);
         break;
@@ -900,6 +901,11 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
         break;
       case RADIO_GROUP:
         result.setClassName("android.widget.RadioGroup");
+        break;
+      case MENU_ITEM:
+      case MENU_ITEM_CHECKBOX:
+      case MENU_ITEM_RADIO:
+        result.setClassName("android.view.MenuItem");
         break;
       default:
         break;
