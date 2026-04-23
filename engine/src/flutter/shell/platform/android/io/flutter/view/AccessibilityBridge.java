@@ -903,6 +903,7 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
         result.addAction(AccessibilityNodeInfo.ACTION_CLICK);
         result.setClickable(true);
       }
+    }
 
     if (semanticsNode.hasAction(Action.LONG_PRESS)) {
       if (semanticsNode.onLongPressOverride != null) {
