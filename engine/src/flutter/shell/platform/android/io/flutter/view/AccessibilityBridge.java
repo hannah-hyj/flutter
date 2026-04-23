@@ -2946,9 +2946,7 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
     void configure(AccessibilityNodeInfo result, SemanticsNode node);
   }
 
-  /**
-   * Factory for creating {@link AccessibilityNodeConfigurator} instances based on fRole}.
-   */
+  /** Factory for creating {@link AccessibilityNodeConfigurator} instances based on fRole}. */
   public static class RoleConfiguratorFactory {
     public static AccessibilityNodeConfigurator getConfigurator(Role role) {
       switch (role) {
@@ -2972,9 +2970,7 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
     }
   }
 
-  /**
-   * Configurator that simply sets the class name of the accessibility node.
-   */
+  /** Configurator that simply sets the class name of the accessibility node. */
   public static class ClassNameRoleConfigurator implements AccessibilityNodeConfigurator {
     private final String className;
 
@@ -2989,8 +2985,8 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
   }
 
   /**
-   * Configurator for the {@link Role#COMBO_BOX} role.
-   * Sets the class name to Spinner and indicates it can open a popup.
+   * Configurator for the {@link Role#COMBO_BOX} role. Sets the class name to Spinner and indicates
+   * it can open a popup.
    */
   public static class ComboBoxRoleConfigurator implements AccessibilityNodeConfigurator {
     @Override
@@ -3001,8 +2997,8 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
   }
 
   /**
-   * Configurator for the {@link Role#MENU} role.
-   * Sets the class name to Spinner and indicates it can open a popup.
+   * Configurator for the {@link Role#MENU} role. Sets the class name to Spinner and indicates it
+   * can open a popup.
    */
   public static class MenuRoleConfigurator implements AccessibilityNodeConfigurator {
     @Override
@@ -3013,8 +3009,8 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
   }
 
   /**
-   * Configurator for the {@link Role#PROGRESS_BAR} role.
-   * Sets the class name to ProgressBar and handles range info.
+   * Configurator for the {@link Role#PROGRESS_BAR} role. Sets the class name to ProgressBar and
+   * handles range info.
    */
   public static class ProgressBarRoleConfigurator implements AccessibilityNodeConfigurator {
     @Override
@@ -3057,9 +3053,7 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
     }
   }
 
-  /**
-   * Behavior that configures scrollability and collection info for the node.
-   */
+  /** Behavior that configures scrollability and collection info for the node. */
   public static class ScrollableBehavior implements AccessibilityNodeConfigurator {
     @Override
     public void configure(AccessibilityNodeInfo result, SemanticsNode node) {
@@ -3069,8 +3063,7 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
           || node.hasAction(Action.SCROLL_DOWN)) {
         result.setScrollable(true);
         if (node.hasFlag(Flag.HAS_IMPLICIT_SCROLLING)) {
-          if (node.hasAction(Action.SCROLL_LEFT)
-              || node.hasAction(Action.SCROLL_RIGHT)) {
+          if (node.hasAction(Action.SCROLL_LEFT) || node.hasAction(Action.SCROLL_RIGHT)) {
             result.setClassName("android.widget.HorizontalScrollView");
           } else {
             result.setClassName("android.widget.ScrollView");
@@ -3081,14 +3074,12 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
       if (node.hasAction(Action.SCROLL_LEFT) || node.hasAction(Action.SCROLL_UP)) {
         result.addAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
       }
-      if (node.hasAction(Action.SCROLL_RIGHT)
-          || node.hasAction(Action.SCROLL_DOWN)) {
+      if (node.hasAction(Action.SCROLL_RIGHT) || node.hasAction(Action.SCROLL_DOWN)) {
         result.addAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
       }
 
       if (node.accessibilityBridge.shouldSetCollectionInfo(node)) {
-        if (node.hasAction(Action.SCROLL_LEFT)
-            || node.hasAction(Action.SCROLL_RIGHT)) {
+        if (node.hasAction(Action.SCROLL_LEFT) || node.hasAction(Action.SCROLL_RIGHT)) {
           if (Build.VERSION.SDK_INT < API_LEVELS.API_33) {
             result.setCollectionInfo(
                 AccessibilityNodeInfo.CollectionInfo.obtain(
@@ -3174,9 +3165,7 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
     }
   }
 
-  /**
-   * Behavior that configures checked and toggled states for the node.
-   */
+  /** Behavior that configures checked and toggled states for the node. */
   public static class CheckableBehavior implements AccessibilityNodeConfigurator {
     @Override
     public void configure(AccessibilityNodeInfo result, SemanticsNode node) {
@@ -3216,9 +3205,7 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
     }
   }
 
-  /**
-   * Behavior that configures expanded state and related actions for the node.
-   */
+  /** Behavior that configures expanded state and related actions for the node. */
   public static class ExpandableBehavior implements AccessibilityNodeConfigurator {
     @Override
     public void configure(AccessibilityNodeInfo result, SemanticsNode node) {
@@ -3240,9 +3227,7 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
     }
   }
 
-  /**
-   * Behavior that configures text, hint, content description, and tooltip for the node.
-   */
+  /** Behavior that configures text, hint, content description, and tooltip for the node. */
   public static class LabelAndTooltipBehavior implements AccessibilityNodeConfigurator {
     @Override
     public void configure(AccessibilityNodeInfo result, SemanticsNode node) {
@@ -3288,8 +3273,8 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
   /**
    * Behavior that configures SeekBar/Slider specific properties and actions.
    *
-   * TODO(hangyujin): Use the slider role instead of flag or action for seekbar/slider
-   * once the slider role is adopted in the Flutter framework.
+   * <p>TODO(hangyujin): Use the slider role instead of flag or action for seekbar/slider once the
+   * slider role is adopted in the Flutter framework.
    */
   public static class SeekBarBehavior implements AccessibilityNodeConfigurator {
     @Override
