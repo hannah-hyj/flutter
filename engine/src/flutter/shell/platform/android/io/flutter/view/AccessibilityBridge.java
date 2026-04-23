@@ -916,6 +916,8 @@ public class AccessibilityBridge extends AccessibilityNodeProvider {
       }
     }
     new ScrollableBehavior().configure(result, semanticsNode);
+    // TODO(hangyujin): Merge this into the role behavior once the slider role is
+    // adopted in the Flutter framework.
     new SeekBarBehavior().configure(result, semanticsNode);
     if (semanticsNode.hasFlag(Flag.IS_LIVE_REGION)) {
       result.setLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
