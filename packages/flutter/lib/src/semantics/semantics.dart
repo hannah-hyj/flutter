@@ -3356,7 +3356,7 @@ class SemanticsNode with DiagnosticableTreeMixin {
         _traversalParentIdentifier != config._traversalParentIdentifier ||
         _minValue != config._minValue ||
         _maxValue != config._maxValue ||
-        !const MapEquality<CustomSemanticsAction, VoidCallback>().equals(
+        !mapEquals<CustomSemanticsAction, VoidCallback>(
           _customSemanticsActions,
           config._customSemanticsActions,
         );
