@@ -53,7 +53,6 @@ class MainWidgetState extends State<MainWidget> {
         padding: const EdgeInsets.all(20),
         content: const Text('Hello, I am a Material Banner'),
         leading: const Icon(Icons.agriculture_outlined),
-        backgroundColor: Colors.yellowAccent,
         actions: <Widget>[
           TextButton(
             focusNode: dismissButtonFocusNode,
