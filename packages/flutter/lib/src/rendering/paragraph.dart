@@ -26,11 +26,13 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import 'box.dart';
+import 'custom_paint.dart';
 import 'debug.dart';
 import 'layer.dart';
 import 'layout_helper.dart';
 import 'object.dart';
 import 'selection.dart';
+import 'text_plugin.dart';
 
 /// The start and end positions for a text boundary.
 typedef _TextBoundaryRecord = ({TextPosition boundaryStart, TextPosition boundaryEnd});
@@ -355,6 +357,7 @@ class RenderParagraph extends RenderBox
     List<RenderBox>? children,
     this._selectionColor,
     SelectionRegistrar? registrar,
+    List<TextPlugin>? textPlugins,
     this._devicePixelRatio = 1.0,
   }) : assert(text.debugAssertIsValid()),
        assert(maxLines == null || maxLines > 0),
@@ -379,6 +382,7 @@ class RenderParagraph extends RenderBox
        ) {
     addAll(children);
     this.registrar = registrar;
+    this.textPlugins = textPlugins;
   }
 
   static final String _placeholderCharacter = String.fromCharCode(
@@ -417,6 +421,9 @@ class RenderParagraph extends RenderBox
   InlineSpan get text => _textPainter.text!;
 
   set text(InlineSpan value) {
+    final String? oldPlainText = (_textPluginDelegates?.isNotEmpty ?? false)
+        ? _textPainter.text!.toPlainText(includeSemanticsLabels: false)
+        : null;
     switch (_textPainter.text!.compareTo(value)) {
       case RenderComparison.identical:
         return;
@@ -439,6 +446,10 @@ class RenderParagraph extends RenderBox
         _removeSelectionRegistrarSubscription();
         _disposeSelectableFragments();
         _updateSelectionRegistrarSubscription();
+    }
+    if (oldPlainText != null &&
+        oldPlainText != _textPainter.text!.toPlainText(includeSemanticsLabels: false)) {
+      _notifyTextPluginsDidUpdateText();
     }
   }
 
@@ -548,6 +559,119 @@ class RenderParagraph extends RenderBox
     _lastSelectableFragments = null;
   }
 
+  /// The [TextPlugin]s that this paragraph is registered with, in installation
+  /// order (outermost to innermost).
+  List<TextPlugin>? get textPlugins => _textPlugins;
+  List<TextPlugin>? _textPlugins;
+  Map<TextPlugin, TextDelegate>? _textPluginDelegates;
+
+  set textPlugins(List<TextPlugin>? value) {
+    if (listEquals(_textPlugins, value)) {
+      return;
+    }
+    final List<TextPlugin> oldPlugins = _textPlugins ?? const <TextPlugin>[];
+    final newPlugins = value != null ? List<TextPlugin>.unmodifiable(value) : const <TextPlugin>[];
+    _textPlugins = value != null ? newPlugins : null;
+
+    if (_textPluginDelegates != null) {
+      final Set<TextPlugin> newPluginSet = newPlugins.toSet();
+      final List<TextPlugin> removedPlugins = _textPluginDelegates!.keys
+          .where((TextPlugin plugin) => !newPluginSet.contains(plugin))
+          .toList(growable: false);
+      var needsRepaint = false;
+      for (final plugin in removedPlugins) {
+        final TextDelegate delegate = _textPluginDelegates!.remove(plugin)!;
+        if (delegate.backgroundPainter != null || delegate.foregroundPainter != null) {
+          needsRepaint = true;
+        }
+        delegate.detachPainters();
+        plugin.didRemoveText(delegate);
+        delegate.dispose();
+      }
+      if (needsRepaint) {
+        markNeedsPaint();
+      }
+    }
+
+    if (newPlugins.isEmpty) {
+      _textPluginDelegates = null;
+      return;
+    }
+
+    final Map<TextPlugin, TextDelegate> existingDelegates =
+        _textPluginDelegates ?? <TextPlugin, TextDelegate>{};
+    final orderedDelegates = <TextPlugin, TextDelegate>{};
+    final newlyAddedDelegates = <TextDelegate>[];
+    for (final plugin in newPlugins) {
+      if (orderedDelegates.containsKey(plugin)) {
+        continue;
+      }
+      final TextDelegate? existing = existingDelegates[plugin];
+      if (existing != null) {
+        orderedDelegates[plugin] = existing;
+      } else {
+        final delegate = TextDelegate(this, plugin);
+        orderedDelegates[plugin] = delegate;
+        newlyAddedDelegates.add(delegate);
+      }
+    }
+    _textPluginDelegates = orderedDelegates;
+
+    for (final delegate in newlyAddedDelegates) {
+      delegate.plugin.didAddText(delegate);
+      if (hasSize && !debugNeedsLayout) {
+        delegate.plugin.didLayoutText(delegate);
+      }
+    }
+    if (!listEquals(oldPlugins, newPlugins)) {
+      markNeedsPaint();
+    }
+  }
+
+  void _notifyTextPluginsDidUpdateText() {
+    if (_textPluginDelegates == null || _textPluginDelegates!.isEmpty) {
+      return;
+    }
+    for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
+      delegate.notifyChanged();
+      delegate.plugin.didUpdateText(delegate);
+    }
+  }
+
+  void _disposeTextPluginDelegates() {
+    if (_textPluginDelegates == null) {
+      return;
+    }
+    final List<TextDelegate> delegates = _textPluginDelegates!.values.toList(growable: false);
+    _textPluginDelegates = null;
+    _textPlugins = null;
+    for (final delegate in delegates) {
+      delegate.detachPainters();
+      delegate.plugin.didRemoveText(delegate);
+      delegate.dispose();
+    }
+  }
+
+  @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    if (_textPluginDelegates != null) {
+      for (final TextDelegate delegate in _textPluginDelegates!.values) {
+        delegate.attachPainters();
+      }
+    }
+  }
+
+  @override
+  void detach() {
+    if (_textPluginDelegates != null) {
+      for (final TextDelegate delegate in _textPluginDelegates!.values) {
+        delegate.detachPainters();
+      }
+    }
+    super.detach();
+  }
+
   @override
   bool get alwaysNeedsCompositing => _lastSelectableFragments?.isNotEmpty ?? false;
 
@@ -561,6 +685,7 @@ class RenderParagraph extends RenderBox
 
   @override
   void dispose() {
+    _disposeTextPluginDelegates();
     _removeSelectionRegistrarSubscription();
     _disposeSelectableFragments();
     _textPainter.dispose();
@@ -867,6 +992,17 @@ class RenderParagraph extends RenderBox
     }
   }
 
+  @override
+  void handleEvent(PointerEvent event, BoxHitTestEntry entry) {
+    assert(debugHandleEvent(event, entry));
+    if (_textPluginDelegates != null && _textPluginDelegates!.isNotEmpty) {
+      for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
+        delegate.onPointerEvent?.call(event);
+        delegate.plugin.handlePointerEvent(delegate, event);
+      }
+    }
+  }
+
   bool _needsClipping = false;
   ui.Shader? _overflowShader;
 
@@ -1016,6 +1152,61 @@ class RenderParagraph extends RenderBox
       _needsClipping = false;
       _overflowShader = null;
     }
+
+    if (_textPluginDelegates != null && _textPluginDelegates!.isNotEmpty) {
+      for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
+        delegate.notifyChanged();
+        delegate.plugin.didLayoutText(delegate);
+      }
+    }
+  }
+
+  void _paintWithCustomPainter(Canvas canvas, Offset offset, CustomPainter painter) {
+    late int debugPreviousCanvasSaveCount;
+    canvas.save();
+    assert(() {
+      debugPreviousCanvasSaveCount = canvas.getSaveCount();
+      return true;
+    }());
+    if (offset != Offset.zero) {
+      canvas.translate(offset.dx, offset.dy);
+    }
+    painter.paint(canvas, size);
+    assert(() {
+      final int debugNewCanvasSaveCount = canvas.getSaveCount();
+      if (debugNewCanvasSaveCount > debugPreviousCanvasSaveCount) {
+        throw FlutterError.fromParts(<DiagnosticsNode>[
+          ErrorSummary(
+            'The $painter custom painter called canvas.save() or canvas.saveLayer() at least '
+            '${debugNewCanvasSaveCount - debugPreviousCanvasSaveCount} more '
+            'time${debugNewCanvasSaveCount - debugPreviousCanvasSaveCount == 1 ? '' : 's'} '
+            'than it called canvas.restore().',
+          ),
+          ErrorDescription(
+            'This leaves the canvas in an inconsistent state and will probably result in a broken display.',
+          ),
+          ErrorHint(
+            'You must pair each call to save()/saveLayer() with a later matching call to restore().',
+          ),
+        ]);
+      }
+      if (debugNewCanvasSaveCount < debugPreviousCanvasSaveCount) {
+        throw FlutterError.fromParts(<DiagnosticsNode>[
+          ErrorSummary(
+            'The $painter custom painter called canvas.restore() '
+            '${debugPreviousCanvasSaveCount - debugNewCanvasSaveCount} more '
+            'time${debugPreviousCanvasSaveCount - debugNewCanvasSaveCount == 1 ? '' : 's'} '
+            'than it called canvas.save() or canvas.saveLayer().',
+          ),
+          ErrorDescription(
+            'This leaves the canvas in an inconsistent state and will result in a broken display.',
+          ),
+          ErrorHint('You should only call restore() if you first called save() or saveLayer().'),
+        ]);
+      }
+      return debugNewCanvasSaveCount == debugPreviousCanvasSaveCount;
+    }());
+    canvas.restore();
   }
 
   @override
@@ -1036,6 +1227,25 @@ class RenderParagraph extends RenderBox
       }
       return true;
     }());
+
+    if (_textPluginDelegates != null &&
+        _textPluginDelegates!.values.any(
+          (TextDelegate delegate) => delegate.backgroundPainter != null,
+        )) {
+      if (_needsClipping) {
+        context.canvas.save();
+        context.canvas.clipRect(offset & size);
+      }
+      for (final TextDelegate delegate in _textPluginDelegates!.values) {
+        final CustomPainter? backgroundPainter = delegate.backgroundPainter;
+        if (backgroundPainter != null) {
+          _paintWithCustomPainter(context.canvas, offset, backgroundPainter);
+        }
+      }
+      if (_needsClipping) {
+        context.canvas.restore();
+      }
+    }
 
     if (_lastSelectableFragments != null) {
       if (_needsClipping) {
@@ -1080,6 +1290,25 @@ class RenderParagraph extends RenderBox
         context.canvas.drawRect(Offset.zero & size, paint);
       }
       context.canvas.restore();
+    }
+
+    if (_textPluginDelegates != null &&
+        _textPluginDelegates!.values.any(
+          (TextDelegate delegate) => delegate.foregroundPainter != null,
+        )) {
+      if (_needsClipping) {
+        context.canvas.save();
+        context.canvas.clipRect(offset & size);
+      }
+      for (final TextDelegate delegate in _textPluginDelegates!.values) {
+        final CustomPainter? foregroundPainter = delegate.foregroundPainter;
+        if (foregroundPainter != null) {
+          _paintWithCustomPainter(context.canvas, offset, foregroundPainter);
+        }
+      }
+      if (_needsClipping) {
+        context.canvas.restore();
+      }
     }
 
     if (_lastSelectableFragments != null) {

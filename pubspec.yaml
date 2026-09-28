@@ -71,6 +71,7 @@ workspace:
   - examples/platform_channel_swift
   - examples/platform_view
   - examples/splash
+  - examples/text_plugins
   - examples/texture
   - packages/flutter
   - packages/flutter_driver

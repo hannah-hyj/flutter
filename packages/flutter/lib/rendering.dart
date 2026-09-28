@@ -78,6 +78,7 @@ export 'src/rendering/sliver_tree.dart';
 export 'src/rendering/stack.dart';
 export 'src/rendering/table.dart';
 export 'src/rendering/table_border.dart';
+export 'src/rendering/text_plugin.dart';
 export 'src/rendering/texture.dart';
 export 'src/rendering/tweens.dart';
 export 'src/rendering/view.dart';

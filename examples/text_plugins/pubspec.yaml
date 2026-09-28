@@ -1,0 +1,18 @@
+name: text_plugins
+description: Demo application showcasing the Flutter TextPlugin architecture.
+
+environment:
+  sdk: ^3.13.0-0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

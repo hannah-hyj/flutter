@@ -16,7 +16,7 @@ export 'package:characters/characters.dart';
 export 'package:vector_math/vector_math_64.dart' show Matrix4;
 
 export 'foundation.dart' show Brightness, UniqueKey;
-export 'rendering.dart' show TextSelectionHandleType;
+export 'rendering.dart' show TextDelegate, TextPlugin, TextSelectionHandleType;
 export 'src/widgets/actions.dart';
 export 'src/widgets/adapter.dart';
 export 'src/widgets/animated_cross_fade.dart';
@@ -167,6 +167,7 @@ export 'src/widgets/table.dart';
 export 'src/widgets/tap_region.dart';
 export 'src/widgets/text.dart';
 export 'src/widgets/text_editing_intents.dart';
+export 'src/widgets/text_plugin.dart';
 export 'src/widgets/text_selection.dart';
 export 'src/widgets/text_selection_toolbar_anchors.dart';
 export 'src/widgets/text_selection_toolbar_layout_delegate.dart';

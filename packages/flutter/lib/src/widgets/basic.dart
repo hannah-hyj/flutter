@@ -25,6 +25,7 @@ import 'framework.dart';
 import 'indexed_stack.dart';
 import 'localizations.dart';
 import 'media_query.dart';
+import 'text_plugin.dart';
 import 'view.dart';
 import 'widget_span.dart';
 
@@ -6534,6 +6535,7 @@ class RichText extends MultiChildRenderObjectWidget {
     this.textHeightBehavior,
     this.selectionRegistrar,
     this.selectionColor,
+    this.textPlugins,
   }) : assert(maxLines == null || maxLines > 0),
        assert(selectionRegistrar == null || selectionColor != null),
        assert(
@@ -6643,6 +6645,12 @@ class RichText extends MultiChildRenderObjectWidget {
   /// widgets.
   final Color? selectionColor;
 
+  /// The list of [TextPlugin]s this rich text is registered with.
+  ///
+  /// If null, [TextPluginScope.maybeOf] is used to obtain the active
+  /// [TextPlugin]s from the ambient [BuildContext].
+  final List<TextPlugin>? textPlugins;
+
   double _getDevicePixelRatio(BuildContext context) =>
       MediaQuery.maybeDevicePixelRatioOf(context) ?? View.maybeOf(context)?.devicePixelRatio ?? 1.0;
 
@@ -6663,6 +6671,7 @@ class RichText extends MultiChildRenderObjectWidget {
       locale: locale ?? Localizations.maybeLocaleOf(context),
       registrar: selectionRegistrar,
       selectionColor: selectionColor,
+      textPlugins: textPlugins ?? TextPluginScope.maybeOf(context),
       devicePixelRatio: _getDevicePixelRatio(context),
     );
   }
@@ -6684,6 +6693,7 @@ class RichText extends MultiChildRenderObjectWidget {
       ..locale = locale ?? Localizations.maybeLocaleOf(context)
       ..registrar = selectionRegistrar
       ..selectionColor = selectionColor
+      ..textPlugins = textPlugins ?? TextPluginScope.maybeOf(context)
       ..devicePixelRatio = _getDevicePixelRatio(context);
   }
 
