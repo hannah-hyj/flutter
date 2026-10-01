@@ -5,6 +5,7 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -380,6 +381,161 @@ void main() {
     SemanticsUpdateBuilderSpy.observations.clear();
     handle.dispose();
   }, skip: kIsWeb); // intended: the web engine handles the traversal order itself.
+
+  // Regression test for https://github.com/flutter/flutter/issues/193235.
+  testWidgets(
+    'Semantics update includes previously merged child nodes when parent stops merging descendants',
+    (WidgetTester tester) async {
+      final SemanticsHandle handle = tester.ensureSemantics();
+      await tester.pumpWidget(const Placeholder(), phase: EnginePhase.build);
+      SemanticsUpdateBuilderSpy.observations.clear();
+
+      const Widget childSubtree = Semantics.fromProperties(
+        container: true,
+        properties: SemanticsProperties(label: 'inner'),
+        child: SizedBox(width: 100, height: 40, child: Text('text')),
+      );
+
+      await tester.pumpWidget(
+        const Directionality(
+          textDirection: TextDirection.ltr,
+          child: _ToggleableMergeSemantics(isMerging: true, child: childSubtree),
+        ),
+      );
+
+      // While merging is true, only root (#0) and parent (#1) are sent; child (#2) is suppressed.
+      expect(SemanticsUpdateBuilderSpy.observations.keys, unorderedEquals(<int>[0, 1]));
+      expect(SemanticsUpdateBuilderSpy.observations[1]!.childrenInTraversalOrder, isEmpty);
+      SemanticsUpdateBuilderSpy.observations.clear();
+
+      // Stop merging descendants on the parent without modifying the child subtree.
+      await tester.pumpWidget(
+        const Directionality(
+          textDirection: TextDirection.ltr,
+          child: _ToggleableMergeSemantics(isMerging: false, child: childSubtree),
+        ),
+      );
+
+      // Parent (#1) now lists child (#2) in childrenInTraversalOrder, so child (#2)
+      // must also be included in the same SemanticsUpdate batch.
+      expect(SemanticsUpdateBuilderSpy.observations.containsKey(1), isTrue);
+      final Int32List parentChildren =
+          SemanticsUpdateBuilderSpy.observations[1]!.childrenInTraversalOrder;
+      expect(parentChildren, isNotEmpty);
+      for (final int childId in parentChildren) {
+        expect(
+          SemanticsUpdateBuilderSpy.observations.containsKey(childId),
+          isTrue,
+          reason: 'Child #$childId referenced by parent #1 must be included in SemanticsUpdate',
+        );
+      }
+
+      SemanticsUpdateBuilderSpy.observations.clear();
+      handle.dispose();
+    },
+  );
+
+  // Regression test for https://github.com/flutter/flutter/issues/193235.
+  testWidgets(
+    'Semantics update rebuilds sibling node when sibling configuration conflict toggles',
+    (WidgetTester tester) async {
+      final SemanticsHandle handle = tester.ensureSemantics();
+      await tester.pumpWidget(const Placeholder(), phase: EnginePhase.build);
+      SemanticsUpdateBuilderSpy.observations.clear();
+
+      const Widget siblingA = Semantics.fromProperties(
+        container: false,
+        properties: SemanticsProperties(focused: false, label: 'Sibling A'),
+        child: Semantics.fromProperties(
+          container: true,
+          properties: SemanticsProperties(label: 'Nested Boundary C'),
+          child: SizedBox(width: 100, height: 28),
+        ),
+      );
+
+      Widget buildTree({required bool hasConflict}) {
+        return Directionality(
+          textDirection: TextDirection.ltr,
+          child: Semantics.fromProperties(
+            container: true,
+            properties: const SemanticsProperties(label: 'Parent'),
+            child: Column(
+              children: <Widget>[
+                siblingA,
+                Semantics(
+                  container: false,
+                  focused: hasConflict ? false : null,
+                  label: hasConflict ? 'Sibling B' : null,
+                  child: const SizedBox(width: 100, height: 28),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(buildTree(hasConflict: true));
+      SemanticsUpdateBuilderSpy.observations.clear();
+
+      // Step 1: Remove conflict (Sibling A merges into Parent, C elevates to Parent).
+      await tester.pumpWidget(buildTree(hasConflict: false));
+      SemanticsUpdateBuilderSpy.observations.clear();
+
+      // Step 2: Restore conflict (Sibling A forms its own node again and re-adopts C).
+      await tester.pumpWidget(buildTree(hasConflict: true));
+      SemanticsUpdateBuilderSpy.observations.clear();
+
+      // Step 3: Remove conflict again (Parent re-adopts C without assertion failure or missing child ID).
+      await tester.pumpWidget(buildTree(hasConflict: false));
+      expect(tester.takeException(), isNull);
+
+      SemanticsUpdateBuilderSpy.observations.clear();
+      handle.dispose();
+    },
+  );
+}
+
+class _ToggleableMergeSemantics extends SingleChildRenderObjectWidget {
+  const _ToggleableMergeSemantics({required this.isMerging, super.child});
+
+  final bool isMerging;
+
+  @override
+  _RenderToggleableMergeSemantics createRenderObject(BuildContext context) {
+    return _RenderToggleableMergeSemantics(isMerging: isMerging);
+  }
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderToggleableMergeSemantics renderObject,
+  ) {
+    renderObject.isMerging = isMerging;
+  }
+}
+
+class _RenderToggleableMergeSemantics extends RenderProxyBox {
+  _RenderToggleableMergeSemantics({required bool isMerging}) : _isMerging = isMerging;
+
+  bool _isMerging;
+  bool get isMerging => _isMerging;
+  set isMerging(bool value) {
+    if (_isMerging == value) {
+      return;
+    }
+    _isMerging = value;
+    markNeedsSemanticsUpdate();
+  }
+
+  @override
+  void describeSemanticsConfiguration(SemanticsConfiguration config) {
+    super.describeSemanticsConfiguration(config);
+    config
+      ..isSemanticBoundary = true
+      ..isMergingSemanticsOfDescendants = _isMerging
+      ..label = 'outer'
+      ..textDirection = TextDirection.ltr;
+  }
 }
 
 class SemanticsUpdateTestBinding extends AutomatedTestWidgetsFlutterBinding {

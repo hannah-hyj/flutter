@@ -26,8 +26,20 @@ class SearchMatch {
     }
     return delegate.getBoxesForSelection(
       TextSelection(baseOffset: range.start, extentOffset: range.end),
+      includePlaceholders: false,
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    return other is SearchMatch && other.delegate == delegate && other.range == range;
+  }
+
+  @override
+  int get hashCode => Object.hash(delegate, range);
 }
 
 /// A [TextPlugin] that implements browser-style "Find in Page" search and
@@ -39,6 +51,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     this.matchHighlightColor = const Color(0x66FFEB3B),
     this.activeMatchBackgroundColor = const Color(0x99FF9800),
     this.activeMatchBorderColor = const Color(0xFFE65100),
+    this._eagerLoadOffscreenText = false,
   });
 
   /// Background highlight color for all matches.
@@ -55,9 +68,26 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
 
   String _query = '';
   bool _caseSensitive = false;
+  bool _eagerLoadOffscreenText;
   int _activeMatchIndex = -1;
+  bool _pendingScrollToActiveMatch = false;
   bool _notificationScheduled = false;
   bool _disposed = false;
+
+  @override
+  bool get disableLazyLoading => _eagerLoadOffscreenText;
+
+  /// Whether enclosing scrollable viewports should cancel lazy loading and
+  /// eagerly build offscreen sliver items so all text in the scroll view can
+  /// be searched and scrolled to.
+  bool get eagerLoadOffscreenText => _eagerLoadOffscreenText;
+  set eagerLoadOffscreenText(bool value) {
+    if (_eagerLoadOffscreenText == value) {
+      return;
+    }
+    _eagerLoadOffscreenText = value;
+    _notifyListenersSafely();
+  }
 
   @override
   void dispose() {
@@ -91,6 +121,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
       return;
     }
     _query = value;
+    _activeMatchIndex = -1;
     _rebuildMatches();
   }
 
@@ -104,7 +135,8 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     _rebuildMatches();
   }
 
-  /// All current matches across the scoped subtree.
+  /// All current matches across the scoped subtree, ordered in logical
+  /// document order.
   List<SearchMatch> get matches => List<SearchMatch>.unmodifiable(_matches);
 
   /// The index of the currently focused match in [matches], or `-1` if there
@@ -123,7 +155,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     }
     _activeMatchIndex = (_activeMatchIndex + 1) % _matches.length;
     _updatePainters();
-    _scrollToActiveMatch();
+    scrollToActiveMatch();
     _notifyListenersSafely();
   }
 
@@ -134,26 +166,26 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     }
     _activeMatchIndex = (_activeMatchIndex - 1 + _matches.length) % _matches.length;
     _updatePainters();
-    _scrollToActiveMatch();
+    scrollToActiveMatch();
     _notifyListenersSafely();
   }
 
-  void _scrollToActiveMatch() {
+  /// Scrolls any enclosing viewport so that [activeMatch] is visible on screen.
+  void scrollToActiveMatch({
+    Duration duration = const Duration(milliseconds: 250),
+    Curve curve = Curves.easeInOut,
+  }) {
     final SearchMatch? current = activeMatch;
-    if (current == null || !current.delegate.hasLayout) {
+    if (current == null) {
+      _pendingScrollToActiveMatch = false;
       return;
     }
-    final List<ui.TextBox> boxes = current.getBoxes();
-    Rect? targetRect;
-    for (final box in boxes) {
-      final Rect rect = box.toRect().inflate(8.0);
-      targetRect = targetRect == null ? rect : targetRect.expandToInclude(rect);
+    if (!current.delegate.hasLayout) {
+      _pendingScrollToActiveMatch = true;
+      return;
     }
-    current.delegate.showOnScreen(
-      rect: targetRect,
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeInOut,
-    );
+    _pendingScrollToActiveMatch = false;
+    current.delegate.ensureVisible(current.range, duration: duration, curve: curve);
   }
 
   @override
@@ -170,6 +202,18 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   @override
   void didLayoutText(TextDelegate delegate) {
     delegate.markNeedsPaint();
+    if (_pendingScrollToActiveMatch && activeMatch?.delegate == delegate) {
+      _pendingScrollToActiveMatch = false;
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (!_disposed && activeMatch?.delegate == delegate && delegate.hasLayout) {
+          delegate.ensureVisible(
+            activeMatch!.range,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeInOut,
+          );
+        }
+      });
+    }
   }
 
   @override
@@ -181,10 +225,12 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   }
 
   void _rebuildMatches() {
+    final SearchMatch? previousActive = activeMatch;
     _matches.clear();
     if (_query.isNotEmpty) {
       final String needle = _caseSensitive ? _query : _query.toLowerCase();
-      for (final TextDelegate delegate in _delegates) {
+      final List<TextDelegate> sortedDelegates = _delegates.toList()..sort();
+      for (final delegate in sortedDelegates) {
         final String rawText = delegate.text;
         final String haystack = _caseSensitive ? rawText : rawText.toLowerCase();
         var start = 0;
@@ -206,6 +252,13 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
 
     if (_matches.isEmpty) {
       _activeMatchIndex = -1;
+    } else if (previousActive != null) {
+      final int preservedIndex = _matches.indexOf(previousActive);
+      if (preservedIndex != -1) {
+        _activeMatchIndex = preservedIndex;
+      } else if (_activeMatchIndex < 0 || _activeMatchIndex >= _matches.length) {
+        _activeMatchIndex = 0;
+      }
     } else if (_activeMatchIndex < 0 || _activeMatchIndex >= _matches.length) {
       _activeMatchIndex = 0;
     }

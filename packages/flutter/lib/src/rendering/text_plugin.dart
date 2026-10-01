@@ -46,6 +46,24 @@ abstract class TextPlugin {
   /// const constructors so that they can be used in const expressions.
   const TextPlugin();
 
+  /// Whether scrollable viewports within the enclosing [TextPluginScope]
+  /// should disable lazy loading and eagerly lay out all sliver children.
+  ///
+  /// When `true`, viewports (such as [ListView], [CustomScrollView], and
+  /// [Viewport]) within the [TextPluginScope] expand their cache extent so
+  /// that offscreen children in finite lazy lists are built and laid out
+  /// immediately. This allows plugins such as "Find in Page" (`Ctrl+F`) to
+  /// discover, highlight, and scroll to text matches in items that have not
+  /// yet been scrolled into view.
+  ///
+  /// If a [TextPlugin] also implements [Listenable] (for example, by extending
+  /// or mixing in [ChangeNotifier]), [TextPluginScope] automatically listens
+  /// to the plugin and updates enclosing viewports whenever
+  /// [disableLazyLoading] changes.
+  ///
+  /// Defaults to `false`.
+  bool get disableLazyLoading => false;
+
   /// Called whenever a new [Text] or [RichText] widget appears in the subtree
   /// covered by this plugin.
   void didAddText(TextDelegate delegate) {}
@@ -79,11 +97,15 @@ abstract class TextPlugin {
 ///  * Query the plain text ([text]) or rich [InlineSpan] ([textSpan]).
 ///  * Query layout metrics after layout has completed (e.g.,
 ///    [getBoxesForSelection], [getPositionForOffset], [getWordBoundary]).
+///  * Scroll enclosing viewports to reveal a specific [ui.TextRange] via
+///    [ensureVisible] or a local [Rect] via [showOnScreen].
+///  * Sort delegates in logical document order using [compareTo]
+///    ([Comparable]).
 ///  * Provide a [backgroundPainter] or [foregroundPainter] to paint behind or
 ///    in front of the text.
 ///  * Listen for text or layout updates via [addListener], or register an
 ///    [onPointerEvent] callback.
-class TextDelegate extends ChangeNotifier {
+class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// Creates a [TextDelegate] for the given [RenderParagraph] and [TextPlugin].
   @internal
   TextDelegate(this._paragraph, this.plugin) {
@@ -105,6 +127,30 @@ class TextDelegate extends ChangeNotifier {
   /// represented by this delegate.
   InlineSpan get textSpan => _paragraph.text;
 
+  /// Returns the character ranges occupied by [PlaceholderSpan]s (such as
+  /// [WidgetSpan]s) within [text].
+  ///
+  /// Each [PlaceholderSpan] is represented in [text] by a single
+  /// `0xFFFC` ([PlaceholderSpan.placeholderCodeUnit]) character.
+  List<ui.TextRange> get placeholderRanges {
+    final String plainText = text;
+    final ranges = <ui.TextRange>[];
+    var index = 0;
+    while (index < plainText.length) {
+      if (plainText.codeUnitAt(index) == PlaceholderSpan.placeholderCodeUnit) {
+        final start = index;
+        while (index < plainText.length &&
+            plainText.codeUnitAt(index) == PlaceholderSpan.placeholderCodeUnit) {
+          index += 1;
+        }
+        ranges.add(ui.TextRange(start: start, end: index));
+      } else {
+        index += 1;
+      }
+    }
+    return ranges;
+  }
+
   /// The directionality of the text.
   ui.TextDirection get textDirection => _paragraph.textDirection;
 
@@ -118,7 +164,7 @@ class TextDelegate extends ChangeNotifier {
 
   /// Whether the underlying [RenderParagraph] has a valid, up-to-date layout.
   ///
-  /// Layout query methods such as [getBoxesForSelection] and
+  /// Layout query methods such as [getBoxesForSelection], [ensureVisible], and
   /// [getPositionForOffset] may only be called when [hasLayout] is true (such
   /// as inside [TextPlugin.didLayoutText], [CustomPainter.paint], or
   /// [TextPlugin.handlePointerEvent]).
@@ -179,17 +225,53 @@ class TextDelegate extends ChangeNotifier {
   /// Returns a list of [ui.TextBox]es that bound the given [selection] in the
   /// local coordinate space of the text widget.
   ///
+  /// When [includePlaceholders] is `false`, boxes corresponding to embedded
+  /// [PlaceholderSpan]s (such as [WidgetSpan]s) are excluded from the returned
+  /// list.
+  ///
   /// Valid only after layout (see [hasLayout]).
   List<ui.TextBox> getBoxesForSelection(
     TextSelection selection, {
     ui.BoxHeightStyle boxHeightStyle = ui.BoxHeightStyle.tight,
     ui.BoxWidthStyle boxWidthStyle = ui.BoxWidthStyle.tight,
+    bool includePlaceholders = true,
   }) {
-    return _paragraph.getBoxesForSelection(
-      selection,
-      boxHeightStyle: boxHeightStyle,
-      boxWidthStyle: boxWidthStyle,
-    );
+    if (includePlaceholders || !selection.isValid || selection.isCollapsed) {
+      return _paragraph.getBoxesForSelection(
+        selection,
+        boxHeightStyle: boxHeightStyle,
+        boxWidthStyle: boxWidthStyle,
+      );
+    }
+    final String plainText = text;
+    final int start = selection.start.clamp(0, plainText.length);
+    final int end = selection.end.clamp(0, plainText.length);
+    final boxes = <ui.TextBox>[];
+    var segmentStart = start;
+    for (var i = start; i < end; i += 1) {
+      if (plainText.codeUnitAt(i) == PlaceholderSpan.placeholderCodeUnit) {
+        if (segmentStart < i) {
+          boxes.addAll(
+            _paragraph.getBoxesForSelection(
+              TextSelection(baseOffset: segmentStart, extentOffset: i),
+              boxHeightStyle: boxHeightStyle,
+              boxWidthStyle: boxWidthStyle,
+            ),
+          );
+        }
+        segmentStart = i + 1;
+      }
+    }
+    if (segmentStart < end) {
+      boxes.addAll(
+        _paragraph.getBoxesForSelection(
+          TextSelection(baseOffset: segmentStart, extentOffset: end),
+          boxHeightStyle: boxHeightStyle,
+          boxWidthStyle: boxWidthStyle,
+        ),
+      );
+    }
+    return boxes;
   }
 
   /// Returns the [ui.TextPosition] within the text for the given local pixel
@@ -242,10 +324,114 @@ class TextDelegate extends ChangeNotifier {
     return _paragraph.globalToLocal(point, ancestor: ancestor);
   }
 
-  /// Scrolls any enclosing scrollable viewport so that this text widget (or the
-  /// specified local [rect] within it) is visible on screen.
+  /// Scrolls any enclosing scrollable viewports so that this text widget (or
+  /// the specified local [rect] within it) is visible on screen.
   void showOnScreen({Rect? rect, Duration duration = Duration.zero, Curve curve = Curves.ease}) {
     _paragraph.showOnScreen(descendant: _paragraph, rect: rect, duration: duration, curve: curve);
+  }
+
+  /// Scrolls any enclosing scrollable viewports so that the given character
+  /// [range] within this text widget is visible on screen.
+  ///
+  /// Computes the bounding rectangle of the glyphs in [range] (or the caret
+  /// rect if [range] is collapsed) and delegates to [showOnScreen].
+  ///
+  /// Valid only after layout (see [hasLayout]).
+  void ensureVisible(
+    ui.TextRange range, {
+    Duration duration = Duration.zero,
+    Curve curve = Curves.ease,
+  }) {
+    assert(hasLayout);
+    final List<ui.TextBox> boxes = getBoxesForSelection(
+      TextSelection(baseOffset: range.start, extentOffset: range.end),
+      boxHeightStyle: ui.BoxHeightStyle.max,
+      includePlaceholders: false,
+    );
+    if (boxes.isNotEmpty) {
+      Rect targetRect = boxes.first.toRect();
+      for (var i = 1; i < boxes.length; i += 1) {
+        targetRect = targetRect.expandToInclude(boxes[i].toRect());
+      }
+      showOnScreen(rect: targetRect, duration: duration, curve: curve);
+      return;
+    }
+    final position = ui.TextPosition(offset: range.start);
+    final Offset caretOffset = getOffsetForCaret(position, Rect.zero);
+    final double caretHeight = getFullHeightForCaret(position);
+    showOnScreen(
+      rect: Rect.fromLTWH(caretOffset.dx, caretOffset.dy, 1.0, caretHeight),
+      duration: duration,
+      curve: curve,
+    );
+  }
+
+  /// Compares this [TextDelegate] with [other] according to their logical
+  /// document order in the render tree.
+  ///
+  /// Returns a negative integer if this delegate's [RenderParagraph] precedes
+  /// [other]'s in a pre-order traversal of the render tree, zero if they
+  /// represent the same [RenderParagraph], or a positive integer if this
+  /// delegate follows [other].
+  ///
+  /// This is useful when scrollable lists mount items out of document order
+  /// (for example, when scrolling upward in a lazy [ListView]).
+  @override
+  int compareTo(TextDelegate other) {
+    if (identical(this, other) || identical(_paragraph, other._paragraph)) {
+      return 0;
+    }
+
+    final thisAncestors = <RenderObject>[];
+    for (RenderObject? node = _paragraph; node != null; node = node.parent) {
+      thisAncestors.add(node);
+    }
+
+    final otherAncestors = <RenderObject>[];
+    for (RenderObject? node = other._paragraph; node != null; node = node.parent) {
+      otherAncestors.add(node);
+    }
+
+    int thisIndex = thisAncestors.length - 1;
+    int otherIndex = otherAncestors.length - 1;
+
+    if (!identical(thisAncestors[thisIndex], otherAncestors[otherIndex])) {
+      // The two paragraphs do not share a common root (e.g., one is detached).
+      return identityHashCode(_paragraph).compareTo(identityHashCode(other._paragraph));
+    }
+
+    while (thisIndex >= 0 &&
+        otherIndex >= 0 &&
+        identical(thisAncestors[thisIndex], otherAncestors[otherIndex])) {
+      thisIndex -= 1;
+      otherIndex -= 1;
+    }
+
+    if (thisIndex < 0) {
+      return -1;
+    }
+    if (otherIndex < 0) {
+      return 1;
+    }
+
+    final RenderObject commonParent = thisAncestors[thisIndex + 1];
+    final RenderObject thisBranch = thisAncestors[thisIndex];
+    final RenderObject otherBranch = otherAncestors[otherIndex];
+
+    var comparisonResult = 0;
+    void findFirstChild(RenderObject child) {
+      if (comparisonResult != 0) {
+        return;
+      }
+      if (identical(child, thisBranch)) {
+        comparisonResult = -1;
+      } else if (identical(child, otherBranch)) {
+        comparisonResult = 1;
+      }
+    }
+
+    commonParent.visitChildren(findFirstChild);
+    return comparisonResult;
   }
 
   /// Marks the underlying [RenderParagraph] as needing to repaint.

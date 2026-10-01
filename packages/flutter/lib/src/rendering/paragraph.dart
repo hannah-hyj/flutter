@@ -573,6 +573,14 @@ class RenderParagraph extends RenderBox
     final newPlugins = value != null ? List<TextPlugin>.unmodifiable(value) : const <TextPlugin>[];
     _textPlugins = value != null ? newPlugins : null;
 
+    if (!attached) {
+      return;
+    }
+    _syncTextPluginDelegates(oldPlugins: oldPlugins);
+  }
+
+  void _syncTextPluginDelegates({List<TextPlugin>? oldPlugins}) {
+    final List<TextPlugin> newPlugins = _textPlugins ?? const <TextPlugin>[];
     if (_textPluginDelegates != null) {
       final Set<TextPlugin> newPluginSet = newPlugins.toSet();
       final List<TextPlugin> removedPlugins = _textPluginDelegates!.keys
@@ -623,7 +631,7 @@ class RenderParagraph extends RenderBox
         delegate.plugin.didLayoutText(delegate);
       }
     }
-    if (!listEquals(oldPlugins, newPlugins)) {
+    if (oldPlugins != null && !listEquals(oldPlugins, newPlugins)) {
       markNeedsPaint();
     }
   }
@@ -638,13 +646,12 @@ class RenderParagraph extends RenderBox
     }
   }
 
-  void _disposeTextPluginDelegates() {
+  void _removeAllTextPluginDelegates() {
     if (_textPluginDelegates == null) {
       return;
     }
     final List<TextDelegate> delegates = _textPluginDelegates!.values.toList(growable: false);
     _textPluginDelegates = null;
-    _textPlugins = null;
     for (final delegate in delegates) {
       delegate.detachPainters();
       delegate.plugin.didRemoveText(delegate);
@@ -652,9 +659,15 @@ class RenderParagraph extends RenderBox
     }
   }
 
+  void _disposeTextPluginDelegates() {
+    _textPlugins = null;
+    _removeAllTextPluginDelegates();
+  }
+
   @override
   void attach(PipelineOwner owner) {
     super.attach(owner);
+    _syncTextPluginDelegates();
     if (_textPluginDelegates != null) {
       for (final TextDelegate delegate in _textPluginDelegates!.values) {
         delegate.attachPainters();
@@ -664,11 +677,7 @@ class RenderParagraph extends RenderBox
 
   @override
   void detach() {
-    if (_textPluginDelegates != null) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        delegate.detachPainters();
-      }
-    }
+    _removeAllTextPluginDelegates();
     super.detach();
   }
 

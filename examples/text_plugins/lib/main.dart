@@ -6,8 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'plugins/linkify_plugin.dart';
+import 'plugins/pii_redaction_plugin.dart';
+import 'plugins/read_aloud_plugin.dart';
 import 'plugins/search_in_page_plugin.dart';
 import 'plugins/seo_extractor_plugin.dart';
+import 'plugins/spellcheck_linter_plugin.dart';
 import 'plugins/stock_ticker_plugin.dart';
 
 void main() {
@@ -48,6 +51,9 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
   late final StockTickerPlugin _stockTickerPlugin;
   late final LinkifyPlugin _linkifyPlugin;
   late final SeoExtractorPlugin _seoPlugin;
+  late final PiiRedactionPlugin _piiPlugin;
+  late final ReadAloudPlugin _readAloudPlugin;
+  late final SpellcheckLinterPlugin _spellcheckPlugin;
 
   final TextEditingController _searchController = TextEditingController(text: 'Flutter');
   final TextEditingController _customNoteController = TextEditingController();
@@ -57,14 +63,22 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
   bool _enableStockPlugin = true;
   bool _enableLinkifyPlugin = true;
   bool _enableSeoPlugin = true;
+  bool _enablePiiPlugin = true;
+  bool _enableReadAloudPlugin = true;
+  bool _enableSpellcheckPlugin = true;
   bool _showSeoInspector = true;
 
   StockTickerInfo? _lastTappedTicker;
   String? _lastTappedUrl;
+  PiiMatch? _lastTappedPii;
+  bool _lastTappedPiiRevealed = false;
+  SpellcheckIssue? _lastTappedSpellcheckIssue;
 
-  final List<String> _customNotes = <String>[
-    r'Try adding a note mentioning $NVDA or $AAPL and https://pub.dev to see plugins react live!',
-  ];
+  static const String _initialCustomNote =
+      r'Try $NVDA or $AAPL at https://pub.dev — teams recieve seperate alerts '
+      r'and utilize token sk-live-9876543210abcdef (contact ops@example.com or SSN 123-45-6789).';
+
+  final List<String> _customNotes = <String>[_initialCustomNote];
 
   @override
   void initState() {
@@ -73,16 +87,34 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
     _stockTickerPlugin = StockTickerPlugin(onTickerTapped: _handleTickerTapped);
     _linkifyPlugin = LinkifyPlugin(onLinkTapped: _handleLinkTapped);
     _seoPlugin = SeoExtractorPlugin();
+    _piiPlugin = PiiRedactionPlugin(onMatchTapped: _handlePiiTapped);
+    _readAloudPlugin = ReadAloudPlugin();
+    _spellcheckPlugin = SpellcheckLinterPlugin(onIssueTapped: _handleSpellcheckTapped);
   }
 
   @override
   void dispose() {
     _searchPlugin.dispose();
     _seoPlugin.dispose();
+    _piiPlugin.dispose();
+    _readAloudPlugin.dispose();
     _searchController.dispose();
     _customNoteController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
+  }
+
+  void _handlePiiTapped(PiiMatch match, {required bool isRevealed}) {
+    setState(() {
+      _lastTappedPii = match;
+      _lastTappedPiiRevealed = isRevealed;
+    });
+  }
+
+  void _handleSpellcheckTapped(SpellcheckIssue issue) {
+    setState(() {
+      _lastTappedSpellcheckIssue = issue;
+    });
   }
 
   void _handleTickerTapped(StockTickerInfo info) {
@@ -191,18 +223,30 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
   List<TextPlugin> get _activePlugins => <TextPlugin>[
     if (_enableStockPlugin) _stockTickerPlugin,
     if (_enableLinkifyPlugin) _linkifyPlugin,
+    if (_enableSpellcheckPlugin) _spellcheckPlugin,
+    if (_enableReadAloudPlugin) _readAloudPlugin,
     if (_enableSearchPlugin) _searchPlugin,
+    if (_enablePiiPlugin) _piiPlugin,
     if (_enableSeoPlugin) _seoPlugin,
   ];
+
+  void _activateFindInPage() {
+    if (!_enableSearchPlugin) {
+      setState(() {
+        _enableSearchPlugin = true;
+      });
+    }
+    _searchPlugin.eagerLoadOffscreenText = true;
+    _searchFocusNode.requestFocus();
+  }
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.keyF, control: true):
-            _searchFocusNode.requestFocus,
-        const SingleActivator(LogicalKeyboardKey.keyF, meta: true): _searchFocusNode.requestFocus,
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true): _activateFindInPage,
+        const SingleActivator(LogicalKeyboardKey.keyF, meta: true): _activateFindInPage,
       },
       child: Focus(
         autofocus: true,
@@ -226,7 +270,11 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
             children: <Widget>[
               _buildPluginControlHeader(colorScheme),
               if (_enableSearchPlugin) _buildSearchBar(colorScheme),
-              if (_lastTappedTicker != null || _lastTappedUrl != null)
+              if (_enableReadAloudPlugin) _buildReadAloudBar(colorScheme),
+              if (_lastTappedTicker != null ||
+                  _lastTappedUrl != null ||
+                  _lastTappedPii != null ||
+                  _lastTappedSpellcheckIssue != null)
                 _buildInteractionBanner(colorScheme),
               Expanded(
                 child: LayoutBuilder(
@@ -265,19 +313,23 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
   Widget _buildPluginControlHeader(ColorScheme colorScheme) {
     return Material(
       color: colorScheme.surfaceContainerLow,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Row(
           children: <Widget>[
             Text(
               'Active TextPlugins:',
-              style: TextStyle(fontWeight: FontWeight.w600, color: colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+                color: colorScheme.onSurfaceVariant,
+              ),
             ),
+            const SizedBox(width: 8),
             FilterChip(
-              avatar: const Icon(Icons.search, size: 18),
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.search, size: 16),
               label: const Text('Search in Page'),
               selected: _enableSearchPlugin,
               onSelected: (bool value) {
@@ -286,8 +338,10 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
                 });
               },
             ),
+            const SizedBox(width: 6),
             FilterChip(
-              avatar: const Icon(Icons.trending_up, size: 18),
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.trending_up, size: 16),
               label: const Text('Stock Tickers'),
               selected: _enableStockPlugin,
               onSelected: (bool value) {
@@ -296,8 +350,10 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
                 });
               },
             ),
+            const SizedBox(width: 6),
             FilterChip(
-              avatar: const Icon(Icons.link, size: 18),
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.link, size: 16),
               label: const Text('Linkify URLs'),
               selected: _enableLinkifyPlugin,
               onSelected: (bool value) {
@@ -306,8 +362,52 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
                 });
               },
             ),
+            const SizedBox(width: 6),
             FilterChip(
-              avatar: const Icon(Icons.analytics_outlined, size: 18),
+              key: const Key('chip_pii_plugin'),
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.visibility_off_outlined, size: 16),
+              label: const Text('PII Redaction'),
+              selected: _enablePiiPlugin,
+              onSelected: (bool value) {
+                setState(() {
+                  _enablePiiPlugin = value;
+                });
+              },
+            ),
+            const SizedBox(width: 6),
+            FilterChip(
+              key: const Key('chip_spellcheck_plugin'),
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.spellcheck, size: 16),
+              label: const Text('Spellcheck Linter'),
+              selected: _enableSpellcheckPlugin,
+              onSelected: (bool value) {
+                setState(() {
+                  _enableSpellcheckPlugin = value;
+                });
+              },
+            ),
+            const SizedBox(width: 6),
+            FilterChip(
+              key: const Key('chip_read_aloud_plugin'),
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.record_voice_over_outlined, size: 16),
+              label: const Text('Read-Aloud (TTS)'),
+              selected: _enableReadAloudPlugin,
+              onSelected: (bool value) {
+                if (!value) {
+                  _readAloudPlugin.stop();
+                }
+                setState(() {
+                  _enableReadAloudPlugin = value;
+                });
+              },
+            ),
+            const SizedBox(width: 6),
+            FilterChip(
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.analytics_outlined, size: 16),
               label: const Text('SEO Extractor'),
               selected: _enableSeoPlugin,
               onSelected: (bool value) {
@@ -322,6 +422,69 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
     );
   }
 
+  Widget _buildReadAloudBar(ColorScheme colorScheme) {
+    return ListenableBuilder(
+      listenable: _readAloudPlugin,
+      builder: (BuildContext context, Widget? child) {
+        final ReadAloudWord? active = _readAloudPlugin.currentWord;
+        final int total = _readAloudPlugin.words.length;
+        final int current = active == null ? 0 : _readAloudPlugin.currentWordIndex + 1;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerLow,
+            border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
+          ),
+          child: Row(
+            children: <Widget>[
+              const Icon(Icons.record_voice_over, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                active != null
+                    ? 'Speaking: "${active.word}" ($current/$total)'
+                    : 'Read-Aloud Idle ($total words)',
+                key: const Key('read_aloud_status'),
+                style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+              ),
+              const Spacer(),
+              IconButton(
+                key: const Key('read_aloud_prev_word_button'),
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Previous word',
+                icon: const Icon(Icons.skip_previous, size: 20),
+                onPressed: total > 0 ? _readAloudPlugin.stepPreviousWord : null,
+              ),
+              IconButton(
+                key: const Key('read_aloud_play_button'),
+                visualDensity: VisualDensity.compact,
+                tooltip: _readAloudPlugin.isPlaying ? 'Pause Read-Aloud' : 'Play Read-Aloud',
+                icon: Icon(
+                  _readAloudPlugin.isPlaying ? Icons.pause_circle : Icons.play_circle,
+                  size: 22,
+                ),
+                onPressed: total > 0 ? _readAloudPlugin.togglePlay : null,
+              ),
+              IconButton(
+                key: const Key('read_aloud_next_word_button'),
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Next word',
+                icon: const Icon(Icons.skip_next, size: 20),
+                onPressed: total > 0 ? _readAloudPlugin.stepNextWord : null,
+              ),
+              IconButton(
+                key: const Key('read_aloud_stop_button'),
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Stop Read-Aloud',
+                icon: const Icon(Icons.stop_circle_outlined, size: 20),
+                onPressed: active != null ? _readAloudPlugin.stop : null,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildSearchBar(ColorScheme colorScheme) {
     return ListenableBuilder(
       listenable: _searchPlugin,
@@ -329,7 +492,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
         final int total = _searchPlugin.matches.length;
         final int current = total == 0 ? 0 : _searchPlugin.activeMatchIndex + 1;
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           decoration: BoxDecoration(
             color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
             border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
@@ -340,25 +503,42 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
               const SizedBox(width: 12),
               Expanded(
                 child: TextField(
+                  key: const Key('search_input'),
                   controller: _searchController,
                   focusNode: _searchFocusNode,
                   decoration: const InputDecoration(
-                    hintText: 'Find in page (e.g. Flutter, GOOG, http)...',
+                    hintText: 'Find in page (e.g. Flutter, GOOG, Archive #20)...',
                     isDense: true,
                     border: OutlineInputBorder(),
                   ),
                   onChanged: (String value) {
                     _searchPlugin.query = value;
                   },
+                  onSubmitted: (_) {
+                    _searchPlugin.scrollToActiveMatch();
+                  },
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               FilterChip(
+                visualDensity: VisualDensity.compact,
                 label: const Text('Aa'),
                 tooltip: 'Case sensitive',
                 selected: _searchPlugin.caseSensitive,
                 onSelected: (bool value) {
                   _searchPlugin.caseSensitive = value;
+                },
+              ),
+              const SizedBox(width: 8),
+              FilterChip(
+                key: const Key('eager_load_chip'),
+                visualDensity: VisualDensity.compact,
+                avatar: const Icon(Icons.bolt, size: 16),
+                label: const Text('Cancel Lazy Load'),
+                tooltip: 'Eagerly lay out offscreen SliverList items (auto-enabled on Ctrl+F)',
+                selected: _searchPlugin.eagerLoadOffscreenText,
+                onSelected: (bool value) {
+                  _searchPlugin.eagerLoadOffscreenText = value;
                 },
               ),
               const SizedBox(width: 12),
@@ -369,12 +549,14 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
               ),
               IconButton(
                 key: const Key('search_prev_button'),
+                visualDensity: VisualDensity.compact,
                 tooltip: 'Previous match',
                 icon: const Icon(Icons.keyboard_arrow_up),
                 onPressed: total > 0 ? _searchPlugin.previousMatch : null,
               ),
               IconButton(
                 key: const Key('search_next_button'),
+                visualDensity: VisualDensity.compact,
                 tooltip: 'Next match',
                 icon: const Icon(Icons.keyboard_arrow_down),
                 onPressed: total > 0 ? _searchPlugin.nextMatch : null,
@@ -389,7 +571,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
   Widget _buildInteractionBanner(ColorScheme colorScheme) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       color: colorScheme.secondaryContainer,
       child: Wrap(
         spacing: 16,
@@ -414,6 +596,26 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
                 fontWeight: FontWeight.w600,
               ),
             ),
+          if (_lastTappedPii != null)
+            Text(
+              'PII (${_lastTappedPii!.kind.label}): '
+              '${_lastTappedPiiRevealed ? "Revealed (${_lastTappedPii!.rawValue})" : "Masked (••••••••)"}',
+              key: const Key('last_tapped_pii'),
+              style: TextStyle(
+                color: colorScheme.onSecondaryContainer,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          if (_lastTappedSpellcheckIssue != null)
+            Text(
+              'Lint "${_lastTappedSpellcheckIssue!.matchedText}" → '
+              '"${_lastTappedSpellcheckIssue!.rule.suggestion}"',
+              key: const Key('last_tapped_spellcheck'),
+              style: TextStyle(
+                color: colorScheme.onSecondaryContainer,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
         ],
       ),
     );
@@ -422,146 +624,180 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
   Widget _buildScopedArticleContent() {
     return TextPluginScope.multiple(
       plugins: _activePlugins,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            const Text(
-              'Composable Text Plugins in Flutter',
-              style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Every paragraph below is rendered using standard Flutter Text and Text.rich '
-              'widgets—no custom SearchableText or LinkText widgets required. Multiple '
-              'TextPlugins inspect, highlight, and handle pointer events on the same Text '
-              'widgets simultaneously.',
-              style: TextStyle(fontSize: 16, height: 1.5),
-            ),
-            const SizedBox(height: 20),
-            Card(
-              elevation: 0,
-              color: Theme.of(context).colorScheme.surfaceContainerLow,
-              child: const Padding(
-                padding: EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      'Market & Ecosystem Report (Tap any Ticker or URL)',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    SizedBox(height: 10),
-                    Text(
-                      'Flutter continues to power multi-platform applications built at '
-                      'GOOG and across the industry. Developers building for AAPL iOS/macOS, '
-                      'MSFT Windows, and web browsers can learn more at https://flutter.dev '
-                      'and https://dart.dev.',
-                      key: Key('market_report_text'),
-                      style: TextStyle(fontSize: 15, height: 1.55),
-                    ),
-                    SizedBox(height: 10),
-                    Text.rich(
-                      TextSpan(
-                        text: 'In hardware and cloud news, ',
-                        style: TextStyle(fontSize: 15, height: 1.55),
-                        children: <InlineSpan>[
-                          TextSpan(
-                            text: 'NVDA and AMZN',
-                            style: TextStyle(fontWeight: FontWeight.bold),
+      child: CustomScrollView(
+        key: const Key('article_scroll_view'),
+        slivers: <Widget>[
+          SliverPadding(
+            padding: const EdgeInsets.all(20),
+            sliver: SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Text(
+                    'Composable Text Plugins in Flutter',
+                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Every paragraph below is rendered using standard Flutter Text and Text.rich '
+                    'widgets—no custom SearchableText or LinkText widgets required. Multiple '
+                    'TextPlugins inspect, highlight, and handle pointer events on the same Text '
+                    'widgets simultaneously.',
+                    style: TextStyle(fontSize: 16, height: 1.5),
+                  ),
+                  const SizedBox(height: 20),
+                  Card(
+                    elevation: 0,
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
+                    child: const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            'Market & Ecosystem Report (Tap any Ticker or URL)',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                           ),
-                          TextSpan(
-                            text:
-                                ' expanded AI infrastructure while TSLA updated its '
-                                'in-vehicle software. Agricultural tech updates are also '
-                                'available at http://www.goderfarmers.com for reference.',
+                          SizedBox(height: 10),
+                          Text(
+                            'Flutter continues to power multi-platform applications built at '
+                            'GOOG and across the industry. Developers building for AAPL iOS/macOS, '
+                            'MSFT Windows, and web browsers can learn more at https://flutter.dev '
+                            'and https://dart.dev.',
+                            key: Key('market_report_text'),
+                            style: TextStyle(fontSize: 15, height: 1.55),
+                          ),
+                          SizedBox(height: 10),
+                          Text.rich(
+                            TextSpan(
+                              text: 'In hardware and cloud news, ',
+                              style: TextStyle(fontSize: 15, height: 1.55),
+                              children: <InlineSpan>[
+                                TextSpan(
+                                  text: 'NVDA and AMZN',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                TextSpan(
+                                  text:
+                                      ' expanded AI infrastructure while TSLA updated its '
+                                      'in-vehicle software. Agricultural tech updates are also '
+                                      'available at http://www.goderfarmers.com for reference.',
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Dynamic Content Playground',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            TextPluginScope.none(
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: TextField(
-                      key: const Key('custom_note_input'),
-                      controller: _customNoteController,
-                      decoration: const InputDecoration(
-                        hintText: 'Add a paragraph with GOOG, AAPL, or https://example.com...',
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      onSubmitted: (_) => _addCustomNote(),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Dynamic Content Playground',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  TextPluginScope.none(
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: TextField(
+                            key: const Key('custom_note_input'),
+                            controller: _customNoteController,
+                            decoration: const InputDecoration(
+                              hintText:
+                                  'Add a paragraph with GOOG, AAPL, or https://example.com...',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            onSubmitted: (_) => _addCustomNote(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          key: const Key('add_note_button'),
+                          onPressed: _addCustomNote,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add Text'),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    key: const Key('add_note_button'),
-                    onPressed: _addCustomNote,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add Text'),
+                  const SizedBox(height: 12),
+                  for (var i = 0; i < _customNotes.length; i++)
+                    Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        title: Text(_customNotes[i], key: Key('custom_note_text_$i')),
+                        trailing: TextPluginScope.none(
+                          child: IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            tooltip: 'Remove paragraph',
+                            onPressed: () {
+                              setState(() {
+                                _customNotes.removeAt(i);
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 20),
+                  TextPluginScope.none(
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+                      ),
+                      child: const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            'Opt-Out Zone (TextPluginScope.none)',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'This Text widget is wrapped in TextPluginScope.none, so mentions of '
+                            'GOOG, AAPL, Flutter, and https://flutter.dev inside this box are '
+                            'intentionally ignored by ancestor plugins.',
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
+                  const SizedBox(height: 600),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            for (var i = 0; i < _customNotes.length; i++)
-              Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: ListTile(
-                  title: Text(_customNotes[i]),
-                  trailing: TextPluginScope.none(
-                    child: IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      tooltip: 'Remove paragraph',
-                      onPressed: () {
-                        setState(() {
-                          _customNotes.removeAt(i);
-                        });
-                      },
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            sliver: SliverList.builder(
+              itemCount: 20,
+              itemBuilder: (BuildContext context, int index) {
+                final int itemNumber = index + 1;
+                final isDeepTarget = itemNumber == 20;
+                return Card(
+                  key: Key('lazy_archive_card_$itemNumber'),
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      isDeepTarget
+                          ? 'Lazy Archive #$itemNumber — Deep Offscreen Target: Quantum Impeller '
+                                'Pipeline for GOOG and AAPL at https://dart.dev/overview'
+                          : 'Lazy Archive #$itemNumber — Historical research dispatch covering '
+                                'cloud infrastructure for MSFT and NVDA.',
+                      key: Key('lazy_archive_text_$itemNumber'),
                     ),
                   ),
-                ),
-              ),
-            const SizedBox(height: 20),
-            TextPluginScope.none(
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-                ),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      'Opt-Out Zone (TextPluginScope.none)',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      'This Text widget is wrapped in TextPluginScope.none, so mentions of '
-                      'GOOG, AAPL, Flutter, and https://flutter.dev inside this box are '
-                      'intentionally ignored by ancestor plugins.',
-                    ),
-                  ],
-                ),
-              ),
+                );
+              },
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

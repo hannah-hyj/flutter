@@ -2088,6 +2088,64 @@ void _testContainer() {
     semantics().semanticsEnabled = false;
   });
 
+  // Regression test for https://github.com/flutter/flutter/issues/193235.
+  test('deeply nested detached subtree removes un-reparented siblings after reparented sibling', () async {
+    semantics()
+      ..debugOverrideTimestampFunction(() => _testTime)
+      ..semanticsEnabled = true;
+
+    {
+      final builder = ui.SemanticsUpdateBuilder();
+      updateNode(
+        builder,
+        childrenInTraversalOrder: Int32List.fromList(<int>[1, 2]),
+        childrenInHitTestOrder: Int32List.fromList(<int>[1, 2]),
+      );
+      updateNode(builder, id: 1);
+      updateNode(
+        builder,
+        id: 2,
+        childrenInTraversalOrder: Int32List.fromList(<int>[5]),
+        childrenInHitTestOrder: Int32List.fromList(<int>[5]),
+      );
+      updateNode(
+        builder,
+        id: 5,
+        childrenInTraversalOrder: Int32List.fromList(<int>[6, 8]),
+        childrenInHitTestOrder: Int32List.fromList(<int>[6, 8]),
+      );
+      updateNode(builder, id: 6);
+      updateNode(builder, id: 8);
+
+      owner().updateSemantics(builder.build());
+      expect(
+        owner().debugSemanticsTree!.keys.toList(),
+        unorderedEquals(<int>[0, 1, 2, 5, 6, 8]),
+      );
+    }
+
+    // Detach #2 (and its child #5), reparenting #6 under #1 while #8 is removed.
+    {
+      final builder = ui.SemanticsUpdateBuilder();
+      updateNode(
+        builder,
+        childrenInTraversalOrder: Int32List.fromList(<int>[1]),
+        childrenInHitTestOrder: Int32List.fromList(<int>[1]),
+      );
+      updateNode(
+        builder,
+        id: 1,
+        childrenInTraversalOrder: Int32List.fromList(<int>[6]),
+        childrenInHitTestOrder: Int32List.fromList(<int>[6]),
+      );
+
+      owner().updateSemantics(builder.build());
+      expect(owner().debugSemanticsTree!.keys.toList(), unorderedEquals(<int>[0, 1, 6]));
+    }
+
+    semantics().semanticsEnabled = false;
+  });
+
   test('node updated with role change', () async {
     semantics()
       ..debugOverrideTimestampFunction(() => _testTime)

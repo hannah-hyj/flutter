@@ -5946,6 +5946,9 @@ class _RenderObjectSemantics extends _SemanticsFragment with DiagnosticableTreeM
         siblingMergeGroups.addAll(childSemantics.siblingMergeGroups);
       }
     }
+    if (siblingMergeGroups.isNotEmpty || _producedSiblingNodesAndOwners.isNotEmpty) {
+      markNeedsBuild();
+    }
     // If this node is the root, then all of its children are in the semantics tree.
     // Otherwise, we won't know if this node shouldFormSemanticsNode until the parent
     // of this node determines it.
@@ -6599,6 +6602,10 @@ class _RenderObjectSemantics extends _SemanticsFragment with DiagnosticableTreeM
   }
 
   void _marksConflictsInMergeGroup(List<_SemanticsFragment> mergeGroup, {bool isMergeUp = false}) {
+    final previousConflicts = <_SemanticsFragment>{
+      for (final _SemanticsFragment fragment in mergeGroup)
+        if (fragment is _RenderObjectSemantics && fragment._hasSiblingConflict) fragment,
+    };
     final hasSiblingConflict = <_SemanticsFragment>{};
     for (var i = 0; i < mergeGroup.length; i += 1) {
       final _SemanticsFragment fragment = mergeGroup[i];
@@ -6621,6 +6628,13 @@ class _RenderObjectSemantics extends _SemanticsFragment with DiagnosticableTreeM
     }
     for (final fragment in hasSiblingConflict) {
       fragment.markSiblingConfigurationConflict(true);
+    }
+    for (final _SemanticsFragment fragment in mergeGroup) {
+      if (fragment is _RenderObjectSemantics &&
+          previousConflicts.contains(fragment) != hasSiblingConflict.contains(fragment)) {
+        fragment.markNeedsBuild();
+        fragment.geometry = null;
+      }
     }
   }
 

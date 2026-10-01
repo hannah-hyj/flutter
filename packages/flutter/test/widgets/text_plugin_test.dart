@@ -313,4 +313,165 @@ void main() {
       containsAll(<String>['First selectable paragraph', 'Second selectable paragraph']),
     );
   });
+
+  testWidgets('TextDelegate.ensureVisible scrolls offscreen text range into view', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _RecordingTextPlugin();
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: TextPluginScope(
+          plugin: plugin,
+          child: Center(
+            child: SizedBox(
+              height: 200,
+              width: 400,
+              child: SingleChildScrollView(
+                controller: scrollController,
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text('Top Paragraph'),
+                    SizedBox(height: 600),
+                    Text('Bottom Target Paragraph with KEYWORD inside'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(scrollController.offset, 0.0);
+    final TextDelegate bottomDelegate = plugin.activeDelegates.last;
+    expect(bottomDelegate.text, contains('KEYWORD'));
+
+    final int keywordStart = bottomDelegate.text.indexOf('KEYWORD');
+    bottomDelegate.ensureVisible(TextRange(start: keywordStart, end: keywordStart + 7));
+    await tester.pumpAndSettle();
+
+    expect(scrollController.offset, greaterThan(400.0));
+  });
+
+  testWidgets(
+    'TextDelegate.compareTo sorts delegates in document order when mounted out of order',
+    (WidgetTester tester) async {
+      final plugin = _RecordingTextPlugin();
+      final scrollController = ScrollController(initialScrollOffset: 800.0);
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: TextPluginScope(
+            plugin: plugin,
+            child: Center(
+              child: SizedBox(
+                height: 200,
+                width: 400,
+                child: ListView.builder(
+                  controller: scrollController,
+                  itemExtent: 100.0,
+                  itemCount: 15,
+                  itemBuilder: (BuildContext context, int index) => Text('Item $index'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Scroll upward so earlier items are mounted after later items.
+      scrollController.jumpTo(400.0);
+      await tester.pump();
+
+      final List<TextDelegate> sorted = plugin.activeDelegates.toList()..sort();
+      final List<int> indices = sorted
+          .map((TextDelegate d) => int.parse(d.text.split(' ').last))
+          .toList();
+      for (var i = 1; i < indices.length; i += 1) {
+        expect(indices[i], greaterThan(indices[i - 1]));
+      }
+    },
+  );
+
+  testWidgets('TextPlugin.disableLazyLoading cancels lazy loading in ListView.builder', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _EagerToggleTextPlugin();
+    addTearDown(plugin.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: TextPluginScope(
+          plugin: plugin,
+          child: Center(
+            child: SizedBox(
+              height: 200,
+              width: 400,
+              child: ListView.builder(
+                controller: scrollController,
+                itemExtent: 100.0,
+                itemCount: 30,
+                itemBuilder: (BuildContext context, int index) => Text('Lazy Item $index'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // With lazy loading active (default), only visible + cacheExtent items are mounted (< 30).
+    expect(plugin.activeDelegates.length, lessThan(10));
+    expect(plugin.activeDelegates.any((TextDelegate d) => d.text == 'Lazy Item 29'), isFalse);
+
+    // Simulate Ctrl+F enabling disableLazyLoading on the plugin.
+    plugin.disableLazyLoading = true;
+    await tester.pump();
+
+    // All 30 items in the ListView.builder are now materialized and registered!
+    expect(plugin.activeDelegates, hasLength(30));
+    final TextDelegate lastItem = plugin.activeDelegates.firstWhere(
+      (TextDelegate d) => d.text == 'Lazy Item 29',
+    );
+    expect(lastItem.hasLayout, isTrue);
+
+    // And we can scroll directly to the previously offscreen item 29 via ensureVisible!
+    lastItem.ensureVisible(const TextRange(start: 0, end: 12));
+    await tester.pumpAndSettle();
+    expect(scrollController.offset, greaterThan(2500.0));
+  });
+}
+
+class _EagerToggleTextPlugin extends TextPlugin with ChangeNotifier {
+  final List<TextDelegate> activeDelegates = <TextDelegate>[];
+
+  bool _disableLazyLoading = false;
+  @override
+  bool get disableLazyLoading => _disableLazyLoading;
+  set disableLazyLoading(bool value) {
+    if (_disableLazyLoading == value) {
+      return;
+    }
+    _disableLazyLoading = value;
+    notifyListeners();
+  }
+
+  @override
+  void didAddText(TextDelegate delegate) {
+    activeDelegates.add(delegate);
+  }
+
+  @override
+  void didRemoveText(TextDelegate delegate) {
+    activeDelegates.remove(delegate);
+  }
 }

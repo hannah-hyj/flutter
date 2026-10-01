@@ -15,6 +15,7 @@ import 'basic.dart';
 import 'debug.dart';
 import 'framework.dart';
 import 'scroll_notification.dart';
+import 'text_plugin.dart';
 
 export 'package:flutter/rendering.dart'
     show AxisDirection, GrowthDirection, ScrollCacheExtent, SliverPaintOrder;
@@ -164,7 +165,12 @@ class Viewport extends MultiChildRenderObjectWidget {
   /// Defaults to [Clip.hardEdge].
   final Clip clipBehavior;
 
-  ScrollCacheExtent? get _effectiveScrollCacheExtent {
+  static const ScrollCacheExtent _eagerScrollCacheExtent = ScrollCacheExtent.pixels(1e9);
+
+  ScrollCacheExtent? _effectiveScrollCacheExtent(BuildContext context) {
+    if (TextPluginScope.shouldDisableLazyLoadingOf(context)) {
+      return _eagerScrollCacheExtent;
+    }
     if (scrollCacheExtent != null) {
       return scrollCacheExtent;
     }
@@ -223,7 +229,7 @@ class Viewport extends MultiChildRenderObjectWidget {
           crossAxisDirection ?? Viewport.getDefaultCrossAxisDirection(context, axisDirection),
       anchor: anchor,
       offset: offset,
-      scrollCacheExtent: _effectiveScrollCacheExtent,
+      scrollCacheExtent: _effectiveScrollCacheExtent(context),
       paintOrder: paintOrder,
       clipBehavior: clipBehavior,
     );
@@ -237,7 +243,7 @@ class Viewport extends MultiChildRenderObjectWidget {
           crossAxisDirection ?? Viewport.getDefaultCrossAxisDirection(context, axisDirection)
       ..anchor = anchor
       ..offset = offset
-      ..scrollCacheExtent = _effectiveScrollCacheExtent
+      ..scrollCacheExtent = _effectiveScrollCacheExtent(context)
       ..paintOrder = paintOrder
       ..clipBehavior = clipBehavior;
   }
@@ -467,7 +473,10 @@ class ShrinkWrappingViewport extends MultiChildRenderObjectWidget {
   /// {@macro flutter.rendering.RenderViewportBase.scrollCacheExtent}
   final ScrollCacheExtent? scrollCacheExtent;
 
-  ScrollCacheExtent? get _effectiveScrollCacheExtent {
+  ScrollCacheExtent? _effectiveScrollCacheExtent(BuildContext context) {
+    if (TextPluginScope.shouldDisableLazyLoadingOf(context)) {
+      return Viewport._eagerScrollCacheExtent;
+    }
     if (scrollCacheExtent != null) {
       return scrollCacheExtent;
     }
@@ -491,7 +500,7 @@ class ShrinkWrappingViewport extends MultiChildRenderObjectWidget {
       offset: offset,
       paintOrder: paintOrder,
       clipBehavior: clipBehavior,
-      scrollCacheExtent: _effectiveScrollCacheExtent,
+      scrollCacheExtent: _effectiveScrollCacheExtent(context),
     );
   }
 
@@ -504,7 +513,7 @@ class ShrinkWrappingViewport extends MultiChildRenderObjectWidget {
       ..offset = offset
       ..paintOrder = paintOrder
       ..clipBehavior = clipBehavior
-      ..scrollCacheExtent = _effectiveScrollCacheExtent;
+      ..scrollCacheExtent = _effectiveScrollCacheExtent(context);
   }
 
   @override

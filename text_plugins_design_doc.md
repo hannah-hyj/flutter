@@ -347,14 +347,14 @@ Form controls (`TextField`, `DropdownButton`) inside a `TextPluginScope` should 
 ### Corner Case 12: Lazy Slivers (`ListView.builder`) & Offscreen Viewport Recycling
 
 **The Problem**:  
-In a `ListView.builder` or `CustomScrollView` with 1,000 paragraphs, Flutter only builds and mounts `RenderParagraph` instances for items currently inside the viewport + `cacheExtent`.
-- As the user scrolls down, top paragraphs are disposed (`didRemoveText` fires) and bottom paragraphs are mounted (`didAddText` + `didLayoutText` fire).
-- For **visual decoration plugins** (`StockTickerPlugin`, `LinkifyPlugin`), this works automatically and with $O(\text{visible items})$ memory overhead!
-- For **document-wide aggregation plugins** (`SearchInPagePlugin`, `SeoExtractorPlugin`), only currently mounted `RenderParagraph`s exist in the render tree. When an item scrolls offscreen and is disposed, `didRemoveText` removes its matches from the count.
-
-**Mitigation Strategies for Document-Wide Plugins**:
-- Use `SingleChildScrollView` or `KeepAlive` (`AutomaticKeepAliveClientMixin`) when full-document DOM-like persistence is required.
-- When `SearchInPagePlugin` updates its match list after a scroll or text mutation, [SearchInPagePlugin._recomputeAllMatches](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/search_in_page_plugin.dart#L140-L157) clamps `_activeMatchIndex` so dynamic additions or removals never cause an `IndexError`.
+In a `ListView.builder` or `CustomScrollView` with 1,000 paragraphs, Flutter by default only builds and mounts `RenderParagraph` instances for items currently inside the viewport + `cacheExtent` (`250.0` logical pixels).
+- As the user scrolls down, top paragraphs are deactivated (`detach()` fires `didRemoveText`) and bottom paragraphs are mounted (`attach()` fires `didAddText` + `didLayoutText`).
+- For **visual decoration plugins** (`StockTickerPlugin`, `LinkifyPlugin`), this works automatically with $O(\text{visible items})$ memory overhead!
+- For **document-wide plugins** (`SearchInPagePlugin`, `SeoExtractorPlugin`), three scrolling challenges arise:
+  1. **Out-of-order mounting when scrolling upward**: Items mounted while scrolling upward register via `didAddText` in reverse document order.
+  2. **Scrolling to a specific substring match**: A match inside a tall paragraph or nested scroll view needs character-level scroll-to-range rather than just scrolling to the widget's top edge.
+  3. **Offscreen unbuilt items in lazy lists (`Ctrl+F`)**: Unbuilt items outside `cacheExtent` have no `RenderParagraph` until lazy loading is canceled.
+- **How We Solved All Three**: See **Section 6 (Scrolling, Document Ordering, and Canceling Lazy Loading)** below for the full architecture (`TextDelegate.compareTo`, `TextDelegate.ensureVisible`, and `TextPlugin.disableLazyLoading`).
 
 ---
 
@@ -364,7 +364,7 @@ In a `ListView.builder` or `CustomScrollView` with 1,000 paragraphs, Flutter onl
 Because all plugin `backgroundPainter`s and `foregroundPainter`s share the `PaintingContext.canvas` with `RenderParagraph`, a buggy plugin painter that calls `canvas.save()` without `canvas.restore()`, or mutates the canvas transform without restoring, could corrupt the rendering of subsequent plugins, the paragraph text itself, or sibling widgets in the same repaint boundary.
 
 **How We Solved It**:
-- [RenderParagraph._paintWithCustomPainter](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L1164-L1210) wraps every individual plugin painter invocation in its own `canvas.save()` / `canvas.translate(offset.dx, offset.dy)` / `canvas.restore()` pair.
+- [RenderParagraph._paintWithCustomPainter](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L1178-L1224) wraps every individual plugin painter invocation in its own `canvas.save()` / `canvas.translate(offset.dx, offset.dy)` / `canvas.restore()` pair.
 - In debug mode, it records `canvas.getSaveCount()` before and after `painter.paint(canvas, size)` and throws a descriptive `FlutterError` pinpointing the exact offending `CustomPainter` if its `save()`/`restore()` calls are unbalanced.
 
 ---
@@ -375,18 +375,18 @@ Because all plugin `backgroundPainter`s and `foregroundPainter`s share the `Pain
 When `LinkifyPlugin` or `StockTickerPlugin` visually turns plain text (`'https://flutter.dev'` or `'GOOG'`) into a clickable region using `foregroundPainter` and `handlePointerEvent`, screen readers (VoiceOver on iOS/macOS, TalkBack on Android) still see a single static `SemanticsNode` for the entire `Text` widget, because `RenderParagraph.assembleSemanticsNode` only splits semantics nodes for `InlineSpanSemanticsInformation` produced by `TextSpan.recognizer` or `WidgetSpan`.
 
 **Future Extension Path**:
-- Extend [TextDelegate](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L86-L287) with an optional list of semantic annotations (e.g., `List<TextPluginSemanticAnnotation> semanticsAnnotations` specifying `TextRange`, `label`, `isLink`, and `VoidCallback? onTap`).
+- Extend [TextDelegate](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L102-L450) with an optional list of semantic annotations (e.g., `List<TextPluginSemanticAnnotation> semanticsAnnotations` specifying `TextRange`, `label`, `isLink`, and `VoidCallback? onTap`).
 - Merge those ranges inside `RenderParagraph.describeSemanticsConfiguration` / `assembleSemanticsNode` alongside `InlineSpanSemanticsInformation` so plugin-detected links and entities become individually focusable and actionable for assistive technologies.
 
 ---
 
 ## 5. Deep Dive: Should Selection Highlighting Be a `TextPlugin`?
 
-A natural architectural question is whether Flutter's built-in text selection highlight ([_SelectableFragment.paintSelection](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L3851-L3867)) should itself be migrated to a [TextPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L44-L71) installed by [SelectableRegion](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/selectable_region.dart#L240).
+A natural architectural question is whether Flutter's built-in text selection highlight ([_SelectableFragment.paintSelection](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L3865-L3881)) should itself be migrated to a [TextPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L44-L89) installed by [SelectableRegion](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/selectable_region.dart#L240).
 
 ### 5.1 What We Gain by Making Selection Highlight a `TextPlugin`
 
-Look at how [_SelectableFragment.paintSelection](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L3851-L3867) is implemented inside `RenderParagraph` today:
+Look at how [_SelectableFragment.paintSelection](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L3865-L3881) is implemented inside `RenderParagraph` today:
 
 ```dart
 for (final TextBox textBox in paragraph.getBoxesForSelection(selection)) {
@@ -394,11 +394,11 @@ for (final TextBox textBox in paragraph.getBoxesForSelection(selection)) {
 }
 ```
 
-Mechanically, this is identical to a `TextPlugin` installing a `backgroundPainter` on [TextDelegate](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L86-L287). Extracting selection highlighting into a `TextPlugin` offers three major benefits:
+Mechanically, this is identical to a `TextPlugin` installing a `backgroundPainter` on [TextDelegate](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L102-L450). Extracting selection highlighting into a `TextPlugin` offers three major benefits:
 
-1. **Composable Z-Order**: Instead of hardcoding whether selection highlights paint above or below plugin `backgroundPainter`s in [RenderParagraph.paint](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L1231-L1319), the Z-order becomes controlled by scope ordering.
+1. **Composable Z-Order**: Instead of hardcoding whether selection highlights paint above or below plugin `backgroundPainter`s in [RenderParagraph.paint](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L1245-L1333), the Z-order becomes controlled by scope ordering.
 2. **Customizable Selection Visuals**: Applications could customize selection rendering (rounded `RRect` selection highlights, gradient highlights, or **multi-user collaborative cursors/selections** as in Google Docs) using standard `TextPlugin`s without modifying `RenderParagraph`.
-3. **Decoupling `RenderParagraph`**: Over 2,100 lines of [paragraph.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L1738-L3923) are dedicated to `_SelectableFragment`. Moving selection highlight painting (and eventually selection state) out of `RenderParagraph` simplifies the core text render object.
+3. **Decoupling `RenderParagraph`**: Over 2,100 lines of [paragraph.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L1752-L3937) are dedicated to `_SelectableFragment`. Moving selection highlight painting (and eventually selection state) out of `RenderParagraph` simplifies the core text render object.
 
 ---
 
@@ -426,9 +426,9 @@ graph TD
 - If `SelectableRegion` installs a single `_SelectionHighlightTextPlugin(color: defaultHighlightColor)` at the root of the selection scope and the painter uses `plugin.color`, per-widget `Text(selectionColor: ...)` overrides are lost unless `TextDelegate` exposes `Color? get selectionColor` from the underlying `RenderParagraph`.
 
 #### 3. Disjoint Selections Across Embedded `WidgetSpan`s
-- When a `RenderParagraph` contains inline `WidgetSpan`s (e.g., `"First [WidgetSpan] Second"`), `RenderParagraph` splits itself into multiple [_SelectableFragment](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L1738)s around each `\uFFFC` placeholder code unit.
+- When a `RenderParagraph` contains inline `WidgetSpan`s (e.g., `"First [WidgetSpan] Second"`), `RenderParagraph` splits itself into multiple [_SelectableFragment](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L1752)s around each `\uFFFC` placeholder code unit.
 - Collapsing `_lastSelectableFragments` into a single `TextSelection?` union (`[minOffset, maxOffset]`) on `TextDelegate` causes two problems:
-  1. Calling `getBoxesForSelection` on the union includes the box of the `\uFFFC` placeholder itself unless `includePlaceholders: false` is passed to slice around `placeholderRanges`.
+  1. Calling `getBoxesForSelection` on the union includes the box of the `\uFFFC` placeholder itself unless `includePlaceholders: false` is passed to slice around [TextDelegate.placeholderRanges](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L128-L145).
   2. If multi-fragment selection state is non-contiguous across nested selectables, a single union span cannot represent disjoint fragment ranges; exposing `List<TextSelection> get selections` on `TextDelegate` avoids lossy unioning.
 
 #### 4. Legacy Fallback Suppression Bug (`skipLegacyHighlight`)
@@ -437,17 +437,17 @@ graph TD
 - **Fix**: Either remove legacy highlight painting from `_SelectableFragment` completely (having `SelectionContainer` always install the selection highlight plugin), or track an explicit `bool handlesSelectionHighlight` flag.
 
 #### 5. Opt-Out Coupling (`TextPluginScope.none` vs. `SelectionContainer.disabled`)
-- If `SelectableRegion` relies on `TextPluginScope` to paint selection highlights, wrapping a subtree in [TextPluginScope.none](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/text_plugin.dart#L48-L52) (for example, to exclude a card from `SeoExtractorPlugin` or `StockTickerPlugin`) will **also disable selection highlight painting** in that subtree, even though `_SelectableFragment` is still registered with `SelectionContainer` and copying text still works invisibly!
+- If `SelectableRegion` relies on `TextPluginScope` to paint selection highlights, wrapping a subtree in [TextPluginScope.none](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/text_plugin.dart#L50-L55) (for example, to exclude a card from `SeoExtractorPlugin` or `StockTickerPlugin`) will **also disable selection highlight painting** in that subtree, even though `_SelectableFragment` is still registered with `SelectionContainer` and copying text still works invisibly!
 - **Fix**: Provide selective opt-out (`TextPluginScope.exclude`) or keep selection highlight registration orthogonal to `TextPluginScope.none`.
 
 ---
 
 ### 5.3 Why Full Selection (`_SelectableFragment`) Requires More Than `CustomPainter`
 
-While **selection highlight painting** fits into `TextDelegate.backgroundPainter`, the rest of [_SelectableFragment](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L1738) cannot be moved out of `RenderParagraph` into a pure `TextPlugin` without extending `TextDelegate`:
+While **selection highlight painting** fits into `TextDelegate.backgroundPainter`, the rest of [_SelectableFragment](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L1752) cannot be moved out of `RenderParagraph` into a pure `TextPlugin` without extending `TextDelegate`:
 
 1. **Mobile Selection Drag Handles Need `PaintingContext.pushLayer`**:
-   [_SelectableFragment.paintHandles](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L3869-L3893) pushes composited `LeaderLayer`s via `context.pushLayer(LeaderLayer(link: _startHandleLayerLink!, ...))` and requires [RenderParagraph.alwaysNeedsCompositing](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L676) to return `true`. A `CustomPainter` only receives a `Canvas` and cannot push composited layers.
+   [_SelectableFragment.paintHandles](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L3883-L3907) pushes composited `LeaderLayer`s via `context.pushLayer(LeaderLayer(link: _startHandleLayerLink!, ...))` and requires [RenderParagraph.alwaysNeedsCompositing](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L684) to return `true`. A `CustomPainter` only receives a `Canvas` and cannot push composited layers.
 2. **Cross-RenderObject `SelectionRegistrar` Protocol**:
    `SelectionArea` selects across both text (`RenderParagraph`) and non-text `Selectable`s (such as selectable images). Any selection plugin must still bridge its fragments into `SelectionRegistrar`.
 
@@ -456,26 +456,207 @@ While **selection highlight painting** fits into `TextDelegate.backgroundPainter
 | Capability Needed | Required API on `TextDelegate` / `TextPluginScope` |
 | :--- | :--- |
 | **Per-fragment selection & color** | Expose `List<TextSelection> get selections` and `Color? get selectionColor` on `TextDelegate`. |
-| **Skip `WidgetSpan` boxes** | Expose `List<TextRange> get placeholderRanges` and `includePlaceholders: false` on `TextDelegate.getBoxesForSelection`. |
+| **Skip `WidgetSpan` boxes** | Implemented via [TextDelegate.placeholderRanges](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L128-L145) and `includePlaceholders: false` on [TextDelegate.getBoxesForSelection](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L210-L257). |
 | **Mobile drag handle layers** | Allow `TextDelegate` to register `LeaderLayer` handle links `(LayerLink, Offset)` painted during `RenderParagraph.paint` and reflected in `alwaysNeedsCompositing`. |
 | **Orthogonal opt-out** | Add `TextPluginScope.exclude(types: {...})` so `TextPluginScope.none` does not inadvertently suppress `SelectionHighlightPlugin`. |
 
 ---
 
-## 6. Summary of Files Created & Modified
+## 6. Scrolling, Document Ordering, and Canceling Lazy Loading (`Ctrl+F`)
+
+Supporting browser-grade **"Find in Page" (`Ctrl+F`)** across scrollable Flutter views requires solving three interconnected problems at the rendering and widget layers:
+1. **Scrolling to a matched character range** (`TextDelegate.ensureVisible`).
+2. **Sorting matches in true document order** regardless of lazy mount order (`TextDelegate.compareTo`).
+3. **Canceling lazy loading** in `ListView.builder` / `SliverList.builder` / `CustomScrollView` when `Ctrl+F` is active so offscreen items are materialized and searchable (`TextPlugin.disableLazyLoading` + `Viewport` integration).
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Plugin as SearchInPagePlugin
+    participant Scope as TextPluginScope
+    participant VP as Viewport / RenderViewport
+    participant Sliver as RenderSliverList
+    participant Para as RenderParagraph (Offscreen)
+
+    User->>Plugin: Presses Ctrl+F (eagerLoadOffscreenText = true)
+    Plugin->>Scope: notifyListeners() (disableLazyLoading == true)
+    Scope->>VP: _InheritedTextPluginLazyLoading notifies Viewport
+    VP->>VP: scrollCacheExtent = ScrollCacheExtent.pixels(1e9)
+    VP->>Sliver: performLayout(remainingCacheExtent: 1e9)
+    Sliver->>Para: Builds, mounts, and lays out all offscreen items
+    Para->>Plugin: attach() -> didAddText(delegate)
+    Para->>Plugin: performLayout() -> didLayoutText(delegate)
+    Plugin->>Plugin: Sorts delegates via delegate.compareTo()
+    User->>Plugin: Next Match / Enter
+    Plugin->>Para: delegate.ensureVisible(match.range)
+    Para->>VP: showOnScreen(rect: targetRect) -> scrolls to match
+```
+
+---
+
+### 6.1 Scrolling to a Specific Character Range (`TextDelegate.ensureVisible`)
+
+Scrolling to an entire `RenderParagraph` (`showOnScreen(rect: null)`) is insufficient when a paragraph is a multi-screen article block or when a horizontal/vertical nested scroll view clips part of a line.
+
+[TextDelegate.ensureVisible](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L314-L342) computes the exact glyph bounding rectangle for any `TextRange` and reveals it across all enclosing viewports:
+
+```dart
+void ensureVisible(
+  ui.TextRange range, {
+  Duration duration = Duration.zero,
+  Curve curve = Curves.ease,
+}) {
+  assert(hasLayout);
+  final List<ui.TextBox> boxes = getBoxesForSelection(
+    TextSelection(baseOffset: range.start, extentOffset: range.end),
+    boxHeightStyle: ui.BoxHeightStyle.max,
+    includePlaceholders: false,
+  );
+  if (boxes.isNotEmpty) {
+    var targetRect = boxes.first.toRect();
+    for (var i = 1; i < boxes.length; i += 1) {
+      targetRect = targetRect.expandToInclude(boxes[i].toRect());
+    }
+    showOnScreen(rect: targetRect, duration: duration, curve: curve);
+    return;
+  }
+  final position = ui.TextPosition(offset: range.start);
+  final Offset caretOffset = getOffsetForCaret(position, Rect.zero);
+  final double caretHeight = getFullHeightForCaret(position);
+  showOnScreen(
+    rect: Rect.fromLTWH(caretOffset.dx, caretOffset.dy, 1.0, caretHeight),
+    duration: duration,
+    curve: curve,
+  );
+}
+```
+
+#### How `showOnScreen` Traverses Slivers & Nested Viewports
+1. `_paragraph.showOnScreen(descendant: _paragraph, rect: targetRect, duration: duration, curve: curve)` walks up the `RenderObject.parent` chain.
+2. Each enclosing [RenderViewportBase](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/viewport.dart#L1429-L1517) invokes `RenderViewportBase.showInViewport`, querying `viewport.getOffsetToReveal(descendant, 0.0, rect: rect)` (leading edge) and `viewport.getOffsetToReveal(descendant, 1.0, rect: rect)` (trailing edge).
+3. If `targetRect` is already fully visible between the leading and trailing edges of the viewport, `RevealedOffset.clampOffset` returns `null` and no unnecessary scroll occurs.
+4. Otherwise, `offset.moveTo(targetOffset.offset, duration: duration, curve: curve)` scrolls (or animates) the minimal distance required to bring `targetRect` onscreen, and then continues walking up `super.showOnScreen` so **nested scroll views** (e.g., a horizontal scrollable inside a vertical `CustomScrollView`) scroll both axes into view.
+5. **Deferred Scroll on Newly Mounted Items**: If [SearchInPagePlugin.scrollToActiveMatch](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/search_in_page_plugin.dart#L156-L171) is invoked while a newly mounted delegate has not yet completed layout (`!delegate.hasLayout`), the plugin sets `_pendingScrollToActiveMatch = true` and triggers `ensureVisible` inside `didLayoutText(delegate)` as soon as layout completes.
+
+---
+
+### 6.2 Document-Order Sorting (`TextDelegate implements Comparable<TextDelegate>`)
+
+#### The Problem: Mount Order $\neq$ Document Order
+When a user starts at the middle of a `ListView.builder` (say at `Item 10`) and scrolls **upward**, `RenderSliverList` mounts `Item 9`, then `Item 8`, then `Item 7`. Consequently, `didAddText` is called in the chronological order `[Item 10, Item 9, Item 8, Item 7]`. If `SearchInPagePlugin` iterates over `_delegates` in registration order, pressing "Next Match" jumps **backward** up the document!
+
+Furthermore, comparing global screen coordinates (`localToGlobal(Offset.zero).dy`) is insufficient for general layouts because two columns side-by-side or wrapped flex items may have overlapping vertical coordinates despite having a well-defined logical reading order in the widget tree.
+
+#### How We Solved It: Lowest Common Ancestor Render-Tree Traversal
+1. **Attach-Synchronized Registration**: [RenderParagraph](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L568-L674) registers its `TextDelegate`s in `attach(PipelineOwner)` (when `RenderParagraph.parent` and the entire ancestor chain up to the root are already linked) and unregisters them immediately in `detach()`.
+2. **Tree-Order Comparison ([TextDelegate.compareTo](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L353-L409))**:
+   - Walks up `RenderObject.parent` from both `this._paragraph` and `other._paragraph` to find their **lowest common ancestor** (`commonParent`) and the two diverging child branches (`thisBranch` and `otherBranch`).
+   - Calls `commonParent.visitChildren(...)` to determine which branch precedes the other.
+   - Because `ContainerRenderObjectMixin.visitChildren` (used by `RenderFlex`, `RenderWrap`, `RenderViewport`, and `RenderSliverMultiBoxAdaptor` / `RenderSliverList`) always visits children from `firstChild` to `lastChild` in ascending logical index order—even when `insertAndLayoutLeadingChild` prepends children while scrolling upward—`delegates.sort()` guarantees true top-to-bottom document ordering.
+
+---
+
+### 6.3 Canceling Lazy Loading on `Ctrl+F` (`TextPlugin.disableLazyLoading`)
+
+#### Why Lazy Lists Hide Offscreen Text
+In Flutter's sliver protocol ([RenderViewport._attemptLayout](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/viewport.dart#L1765-L1844) and [RenderSliverList.performLayout](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/sliver_list.dart#L46-L320)):
+- `RenderViewport` computes `_calculatedCacheExtent` from `scrollCacheExtent` (defaulting to `250.0` logical pixels before and after the visible viewport).
+- `RenderSliverList` only builds and lays out children whose layout offsets fall within `[scrollOffset + cacheOrigin, scrollOffset + cacheOrigin + remainingCacheExtent]`, and calls `collectGarbage(leadingGarbage, trailingGarbage)` to destroy children outside that window.
+- Therefore, in a `ListView.builder` or `SliverList.builder` with 50 items, items #10–#50 do not exist in the Element or RenderObject trees until scrolled near the viewport.
+
+#### How `TextPlugin.disableLazyLoading` Materializes Offscreen Slivers
+We added a declarative, reactive mechanism that lets any `TextPlugin` (or `TextPluginScope`) temporarily cancel lazy loading in descendant viewports:
+
+1. **Plugin Opt-In ([TextPlugin.disableLazyLoading](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L65))**:
+   ```dart
+   bool get disableLazyLoading => false;
+   ```
+   In [SearchInPagePlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/search_in_page_plugin.dart#L69-L82), pressing `Ctrl+F` / `Cmd+F` (or toggling the **"Cancel Lazy Load"** chip) sets `eagerLoadOffscreenText = true` (`disableLazyLoading => true`) and calls `notifyListeners()`.
+2. **Split Inherited Scope in [TextPluginScope](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/text_plugin.dart#L120-L246)**:
+   - `_TextPluginScopeState` automatically subscribes to any installed `TextPlugin` that implements `Listenable`.
+   - Crucially, `TextPluginScope` separates `_InheritedTextPluginScope` (which provides `List<TextPlugin>` to `RichText`) from `_InheritedTextPluginLazyLoading` (which provides `bool disableLazyLoading` via `TextPluginScope.shouldDisableLazyLoadingOf(context)`).
+   - When `disableLazyLoading` flips from `false` to `true`, **only** `Viewport` and `ShrinkWrappingViewport` are notified—existing onscreen `RichText` widgets are **not** rebuilt!
+3. **Viewport Cache Expansion ([Viewport._effectiveScrollCacheExtent](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/viewport.dart#L168-L185))**:
+   - Both `Viewport` and `ShrinkWrappingViewport` check `TextPluginScope.shouldDisableLazyLoadingOf(context)`.
+   - When `true`, they apply `const ScrollCacheExtent.pixels(1e9)`.
+   - Why `1e9` (`1,000,000,000.0` logical pixels) instead of `double.maxFinite` or `double.infinity`?
+     - In [RenderViewport._attemptLayout](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/viewport.dart#L1793-L1804), `fullCacheExtent = mainAxisExtent + 2 * _calculatedCacheExtent` and `centerCacheOffset = centerOffset + _calculatedCacheExtent`.
+     - Using `double.maxFinite` (`1.79e308`) overflows `2 * _calculatedCacheExtent` to `double.infinity` (producing `NaN` in `fullCacheExtent - centerCacheOffset`) and loses all floating-point mantissa precision when adding `centerOffset`.
+     - `1e9` pixels (equivalent to ~1,600,000 screens of scroll) is well within IEEE-754 float64's exact precision (`9e15`), preserving sub-pixel layout accuracy while forcing finite `SliverList` / `SliverGrid` / `ListView.builder` delegates to materialize and lay out all children from index `0` to `itemCount - 1`.
+4. **Automatic Restoration**:
+   - When the user closes `Ctrl+F` (`eagerLoadOffscreenText = false`), `_InheritedTextPluginLazyLoading` notifies the `Viewport` to restore its normal `250.0` pixel `cacheExtent`. On the very next layout pass, `RenderSliverList.collectGarbage` unmounts offscreen items and triggers `didRemoveText` for each one.
+
+> [!WARNING]
+> **Unbounded Infinite Lists (`itemCount == null`)**:  
+> Developers should only enable `disableLazyLoading` on finite lists (`itemCount != null`). If a `SliverChildBuilderDelegate` has `childCount == null` (an infinite procedural generator that never returns `null`), expanding the cache extent will build items until the builder returns `null`.
+
+---
+
+## 7. Broader Ecosystem Use Cases & Implemented Plugins
+
+Because `TextPlugin` combines **text inspection** (`plainText`, `placeholderRanges`), **sub-span geometry** (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`), **composited painting** (`backgroundPainter`, `foregroundPainter` without re-laying out text), **pointer routing** (`handlePointerEvent`), and **viewport control** (`ensureVisible`, `compareTo`, `disableLazyLoading`), it unlocks a broad ecosystem of drop-in plugins across any existing `Text` or `RichText` subtree.
+
+Below is a summary of six broader ecosystem categories, along with the **three additional plugins** we implemented in `examples/text_plugins/`:
+
+### 7.1 Accessibility, Reading Aids & Language Learning
+1. **TTS "Read-Aloud Karaoke" Synchronizer** (**Implemented**: [ReadAloudPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/read_aloud_plugin.dart)):
+   - **How it works**: Sorts all mounted `TextDelegate`s in true visual reading order via `delegates.sort()` (`TextDelegate.compareTo`), tokenizes words while skipping `0xFFFC` `WidgetSpan` placeholders, tints the active paragraph in `backgroundPainter` and paints a pill highlight + underline over the currently spoken word in `foregroundPainter`, and automatically calls `delegate.ensureVisible(wordRange)` when narration crosses a paragraph or viewport boundary.
+   - **Why `TextPlugin` shines**: Word-by-word TTS highlighting updates multiple times per second; using a `CustomPainter` via `TextDelegate.markNeedsPaint()` avoids rebuilding or re-shaping `RenderParagraph` on every word boundary.
+2. **Inline Dictionary / Translation / Furigana Lookup**:
+   - **How it works**: Listens for hover or long-press via `handlePointerEvent`, resolves the word via `getPositionForOffset` + `getWordBoundary`, highlights the hovered word, and anchors a translation or phonetic popover to `localToGlobal(wordBox.toRect().topCenter)`.
+3. **Dyslexia / Focus Reading Ruler & Bionic Reading Guide**:
+   - **How it works**: Tracks the pointer's vertical coordinate across paragraphs and uses `foregroundPainter` to dim surrounding lines while keeping a crisp spotlight window over the active line (`getLineBoundary`).
+
+### 7.2 Security, Privacy & Compliance
+1. **Live PII Redaction / Screen-Share Privacy Mask** (**Implemented**: [PiiRedactionPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/pii_redaction_plugin.dart)):
+   - **How it works**: Scans `delegate.plainText` for sensitive patterns (API keys like `sk-...`, SSNs, credit cards, email addresses). In `foregroundPainter` (which paints **after** `textPainter.paint()`), draws an opaque dark rounded badge with diagonal hazard stripes and `••••` dots completely covering the underlying sensitive glyphs. In `handlePointerEvent`, tapping a redacted box toggles revealing/masking that specific span (`markNeedsPaint()`).
+   - **Why `TextPlugin` shines**: Banking, healthcare, and customer-support apps can wrap their entire app in `TextPluginScope(plugin: piiPlugin)` during screen-sharing, bug-report screenshots, or public demos without auditing thousands of individual `Text` widgets.
+
+### 7.3 Editorial, Localization (l10n) & QA Tooling
+1. **Read-Only Spellcheck, Grammar & Style-Guide Linter** (**Implemented**: [SpellcheckLinterPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/spellcheck_linter_plugin.dart)):
+   - **How it works**: Inspects rendered `Text` widgets for spelling errors (`recieve`, `seperate`, `occured`, `teh`) and company terminology violations (`utilize` vs. `use`). In `foregroundPainter`, draws classic wavy red (spelling) or amber (style) squiggly underlines along `box.toRect().bottom` using `Path`, and surfaces replacement suggestions when tapped.
+2. **Untranslated / Broken-Interpolation l10n Detector**:
+   - **How it works**: In staging builds, highlights raw translation keys (`auth.login.button_title`), uninterpolated placeholders (`{userName}`, `%1$s`), or `NaN` / `undefined` leaks in bright magenta and logs offending widget locations.
+3. **Typography & Layout QA Inspector (Overflow / Orphans / Rivers)**:
+   - **How it works**: Compares `getLineBoundary` and `getBoxesForSelection` across lines to highlight "widow/orphan" single-word last lines, clipped paragraphs, or cramped line heights for design QA.
+
+### 7.4 Collaborative Annotation & Multi-User Presence
+1. **Medium / Kindle-Style Persistent User Highlights & Margin Notes**:
+   - **How it works**: Persists user character-range highlights and comment anchors in articles/documentation; `backgroundPainter` renders pastel highlighter strokes and `foregroundPainter` draws a comment badge at the end of the annotated span.
+2. **Multiplayer Presence Carets & Live Co-Viewing Cursors**:
+   - **How it works**: In collaborative doc viewers or review tools, renders remote teammates' selection ranges and named cursor flags using `getOffsetForCaret` and `getBoxesForSelection`.
+
+### 7.5 AI / LLM Grounding, Citations & 120fps Effects
+1. **RAG Source Attribution & Fact-Check Grounding Spans**:
+   - **How it works**: Highlights claims in AI-generated responses that map to retrieved source documents; hovering or tapping a grounded span reveals the source citation card.
+2. **Zero-Relayout Animated Shimmer / Spoiler Blur**:
+   - **How it works**: Animates a gradient shader or blur mask over specific character ranges (`[spoiler]...[/spoiler]` or streaming tokens) at 120fps via `foregroundPainter` (`repaint: animationController`) with **zero** `TextPainter.layout()` cost.
+
+### 7.6 Domain-Specific Smart Entities
+1. **DevOps & Log Viewers**: Auto-detects UUIDs, Git commit SHAs, stack-trace `file.dart:123:45` references, and RFC-3339 timestamps inside plain `Text` logs—making them clickable to copy, jump to source, or preview local timezones.
+2. **Medical, Legal & Scientific Reference Linkers**: Automatically turns ICD-10 codes, statute citations, or `arXiv:` / `DOI:` identifiers into interactive reference cards.
+
+---
+
+## 8. Summary of Files Created & Modified
 
 ### Framework (`packages/flutter/`)
-- [packages/flutter/lib/src/rendering/text_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart) — [TextPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L44-L71) and [TextDelegate](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L86-L287).
-- [packages/flutter/lib/src/widgets/text_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/text_plugin.dart) — [TextPluginScope](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/text_plugin.dart#L30-L117).
-- [packages/flutter/lib/src/rendering/paragraph.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart) — [RenderParagraph.textPlugins](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L565-L629), lifecycle dispatch, pointer routing, and painter compositing.
-- [packages/flutter/lib/src/widgets/basic.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/basic.dart) — [RichText.textPlugins](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/basic.dart#L8035) and automatic lookup from [TextPluginScope.maybeOf](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/text_plugin.dart#L70-L77).
+- [packages/flutter/lib/src/rendering/text_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart) — [TextPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L44-L89) (`disableLazyLoading`, lifecycle & pointer hooks) and [TextDelegate](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/text_plugin.dart#L102-L450) (`ensureVisible`, `compareTo`, `placeholderRanges`, `getBoxesForSelection`).
+- [packages/flutter/lib/src/widgets/text_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/text_plugin.dart) — [TextPluginScope](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/text_plugin.dart#L35-L132) (`new`, `multiple`, `none`, `of`, `maybeOf`, `shouldDisableLazyLoadingOf`).
+- [packages/flutter/lib/src/widgets/viewport.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/viewport.dart) — `Viewport` and `ShrinkWrappingViewport` integration with `TextPluginScope.shouldDisableLazyLoadingOf`.
+- [packages/flutter/lib/src/rendering/paragraph.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart) — [RenderParagraph.textPlugins](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/rendering/paragraph.dart#L565-L674), attach/detach delegate synchronization, pointer routing, and painter compositing.
+- [packages/flutter/lib/src/widgets/basic.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/basic.dart) — [RichText.textPlugins](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/basic.dart#L8035) and automatic lookup from [TextPluginScope.maybeOf](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/src/widgets/text_plugin.dart#L86-L93).
 - [packages/flutter/lib/rendering.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/rendering.dart) & [packages/flutter/lib/widgets.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/lib/widgets.dart) — Barrel exports.
-- [packages/flutter/test/widgets/text_plugin_test.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/test/widgets/text_plugin_test.dart) — Unit and widget tests.
+- [packages/flutter/test/widgets/text_plugin_test.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/packages/flutter/test/widgets/text_plugin_test.dart) — Unit and widget tests (including `ensureVisible`, `compareTo`, and `disableLazyLoading`).
 
 ### Demo Application (`examples/text_plugins/`)
-- [examples/text_plugins/lib/main.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/main.dart) — Interactive multi-plugin workbench.
-- [examples/text_plugins/lib/plugins/search_in_page_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/search_in_page_plugin.dart) — [SearchInPagePlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/search_in_page_plugin.dart#L34-L209).
+- [examples/text_plugins/lib/main.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/main.dart) — Interactive multi-plugin workbench composing 7 plugins simultaneously with `CustomScrollView`, offscreen `SliverList.builder`, Read-Aloud karaoke bar, and `Ctrl+F` lazy-load cancellation.
+- [examples/text_plugins/lib/plugins/search_in_page_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/search_in_page_plugin.dart) — [SearchInPagePlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/search_in_page_plugin.dart#L46-L273) with `disableLazyLoading`, document-order sorting, and `ensureVisible` scrolling.
 - [examples/text_plugins/lib/plugins/stock_ticker_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/stock_ticker_plugin.dart) — [StockTickerPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/stock_ticker_plugin.dart#L42-L194).
 - [examples/text_plugins/lib/plugins/linkify_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/linkify_plugin.dart) — [LinkifyPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/linkify_plugin.dart#L23-L137).
 - [examples/text_plugins/lib/plugins/seo_extractor_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/seo_extractor_plugin.dart) — [SeoExtractorPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/seo_extractor_plugin.dart#L11-L97).
-- [examples/text_plugins/test/widget_test.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/test/widget_test.dart) — Integration tests for all four plugins.
+- [examples/text_plugins/lib/plugins/pii_redaction_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/pii_redaction_plugin.dart) — [PiiRedactionPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/pii_redaction_plugin.dart#L36-L253) (opaque foreground redaction mask with tap-to-reveal).
+- [examples/text_plugins/lib/plugins/read_aloud_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/read_aloud_plugin.dart) — [ReadAloudPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/read_aloud_plugin.dart#L30-L315) (TTS karaoke word synchronizer with document-order traversal and auto-scroll).
+- [examples/text_plugins/lib/plugins/spellcheck_linter_plugin.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/spellcheck_linter_plugin.dart) — [SpellcheckLinterPlugin](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/lib/plugins/spellcheck_linter_plugin.dart#L39-L227) (wavy red/amber squiggly underlines and tap-for-suggestion diagnostics).
+- [examples/text_plugins/test/widget_test.dart](file:///Users/jinhangyu/Documents/GitHub/flutter/examples/text_plugins/test/widget_test.dart) — Integration tests for all seven plugins, lazy-loading cancellation, and scroll-to-match.
+

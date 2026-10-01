@@ -3004,7 +3004,11 @@ class SemanticsNode with DiagnosticableTreeMixin {
       return;
     }
     _isMergedIntoParent = value;
+    _markDirty();
     parent?._markDirty();
+    if (!mergeAllDescendantsIntoThisNode) {
+      _updateChildrenMergeFlags();
+    }
   }
 
   /// Whether the user can interact with this node in assistive technologies.
@@ -3093,6 +3097,8 @@ class SemanticsNode with DiagnosticableTreeMixin {
         assert(!child.attached);
         _adoptChild(child);
         sawChange = true;
+      } else {
+        _updateChildMergeFlagRecursively(child);
       }
     }
     // Wait until the new children are adopted so isMergedIntoParent becomes
@@ -3273,6 +3279,9 @@ class SemanticsNode with DiagnosticableTreeMixin {
   }
 
   void _updateChildMergeFlagRecursively(SemanticsNode child) {
+    if (child.parent != this) {
+      return;
+    }
     assert(child.owner == owner);
     final bool childShouldMergeToParent = isPartOfNodeMerging;
 
