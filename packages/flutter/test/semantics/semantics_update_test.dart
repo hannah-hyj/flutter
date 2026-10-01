@@ -506,10 +506,7 @@ class _ToggleableMergeSemantics extends SingleChildRenderObjectWidget {
   }
 
   @override
-  void updateRenderObject(
-    BuildContext context,
-    _RenderToggleableMergeSemantics renderObject,
-  ) {
+  void updateRenderObject(BuildContext context, _RenderToggleableMergeSemantics renderObject) {
     renderObject.isMerging = isMerging;
   }
 }

@@ -1817,7 +1817,8 @@ void _testContainer() {
       expect(
         element.style.pointerEvents,
         'none',
-        reason: 'Framework declaration (Tier 1) should take precedence over interactive behaviors (Tier 2)',
+        reason:
+            'Framework declaration (Tier 1) should take precedence over interactive behaviors (Tier 2)',
       );
     });
 
@@ -2089,62 +2090,62 @@ void _testContainer() {
   });
 
   // Regression test for https://github.com/flutter/flutter/issues/193235.
-  test('deeply nested detached subtree removes un-reparented siblings after reparented sibling', () async {
-    semantics()
-      ..debugOverrideTimestampFunction(() => _testTime)
-      ..semanticsEnabled = true;
+  test(
+    'deeply nested detached subtree removes un-reparented siblings after reparented sibling',
+    () async {
+      semantics()
+        ..debugOverrideTimestampFunction(() => _testTime)
+        ..semanticsEnabled = true;
 
-    {
-      final builder = ui.SemanticsUpdateBuilder();
-      updateNode(
-        builder,
-        childrenInTraversalOrder: Int32List.fromList(<int>[1, 2]),
-        childrenInHitTestOrder: Int32List.fromList(<int>[1, 2]),
-      );
-      updateNode(builder, id: 1);
-      updateNode(
-        builder,
-        id: 2,
-        childrenInTraversalOrder: Int32List.fromList(<int>[5]),
-        childrenInHitTestOrder: Int32List.fromList(<int>[5]),
-      );
-      updateNode(
-        builder,
-        id: 5,
-        childrenInTraversalOrder: Int32List.fromList(<int>[6, 8]),
-        childrenInHitTestOrder: Int32List.fromList(<int>[6, 8]),
-      );
-      updateNode(builder, id: 6);
-      updateNode(builder, id: 8);
+      {
+        final builder = ui.SemanticsUpdateBuilder();
+        updateNode(
+          builder,
+          childrenInTraversalOrder: Int32List.fromList(<int>[1, 2]),
+          childrenInHitTestOrder: Int32List.fromList(<int>[1, 2]),
+        );
+        updateNode(builder, id: 1);
+        updateNode(
+          builder,
+          id: 2,
+          childrenInTraversalOrder: Int32List.fromList(<int>[5]),
+          childrenInHitTestOrder: Int32List.fromList(<int>[5]),
+        );
+        updateNode(
+          builder,
+          id: 5,
+          childrenInTraversalOrder: Int32List.fromList(<int>[6, 8]),
+          childrenInHitTestOrder: Int32List.fromList(<int>[6, 8]),
+        );
+        updateNode(builder, id: 6);
+        updateNode(builder, id: 8);
 
-      owner().updateSemantics(builder.build());
-      expect(
-        owner().debugSemanticsTree!.keys.toList(),
-        unorderedEquals(<int>[0, 1, 2, 5, 6, 8]),
-      );
-    }
+        owner().updateSemantics(builder.build());
+        expect(owner().debugSemanticsTree!.keys.toList(), unorderedEquals(<int>[0, 1, 2, 5, 6, 8]));
+      }
 
-    // Detach #2 (and its child #5), reparenting #6 under #1 while #8 is removed.
-    {
-      final builder = ui.SemanticsUpdateBuilder();
-      updateNode(
-        builder,
-        childrenInTraversalOrder: Int32List.fromList(<int>[1]),
-        childrenInHitTestOrder: Int32List.fromList(<int>[1]),
-      );
-      updateNode(
-        builder,
-        id: 1,
-        childrenInTraversalOrder: Int32List.fromList(<int>[6]),
-        childrenInHitTestOrder: Int32List.fromList(<int>[6]),
-      );
+      // Detach #2 (and its child #5), reparenting #6 under #1 while #8 is removed.
+      {
+        final builder = ui.SemanticsUpdateBuilder();
+        updateNode(
+          builder,
+          childrenInTraversalOrder: Int32List.fromList(<int>[1]),
+          childrenInHitTestOrder: Int32List.fromList(<int>[1]),
+        );
+        updateNode(
+          builder,
+          id: 1,
+          childrenInTraversalOrder: Int32List.fromList(<int>[6]),
+          childrenInHitTestOrder: Int32List.fromList(<int>[6]),
+        );
 
-      owner().updateSemantics(builder.build());
-      expect(owner().debugSemanticsTree!.keys.toList(), unorderedEquals(<int>[0, 1, 6]));
-    }
+        owner().updateSemantics(builder.build());
+        expect(owner().debugSemanticsTree!.keys.toList(), unorderedEquals(<int>[0, 1, 6]));
+      }
 
-    semantics().semanticsEnabled = false;
-  });
+      semantics().semanticsEnabled = false;
+    },
+  );
 
   test('node updated with role change', () async {
     semantics()
@@ -2503,9 +2504,9 @@ void _testVerticalScrolling() {
     final expectedOffset = Float64List(2);
     expectedOffset[0] = 0.0;
     expectedOffset[1] = 20.0;
-    var message = const StandardMessageCodec().decodeMessage(
-      capturedEvent.arguments! as ByteData,
-    ) as Float64List;
+    var message =
+        const StandardMessageCodec().decodeMessage(capturedEvent.arguments! as ByteData)
+            as Float64List;
     expect(message, expectedOffset);
 
     // Update scrollPosition to scrollTop value.
@@ -2532,9 +2533,9 @@ void _testVerticalScrolling() {
     expect(capturedEvent.arguments, isNotNull);
     expectedOffset[0] = 0.0;
     expectedOffset[1] = 5.0;
-    message = const StandardMessageCodec().decodeMessage(
-      capturedEvent.arguments! as ByteData,
-    ) as Float64List;
+    message =
+        const StandardMessageCodec().decodeMessage(capturedEvent.arguments! as ByteData)
+            as Float64List;
     expect(message, expectedOffset);
   });
 
@@ -2731,9 +2732,9 @@ void _testHorizontalScrolling() {
     final expectedOffset = Float64List(2);
     expectedOffset[0] = 20.0;
     expectedOffset[1] = 0.0;
-    var message = const StandardMessageCodec().decodeMessage(
-      capturedEvent.arguments! as ByteData,
-    ) as Float64List;
+    var message =
+        const StandardMessageCodec().decodeMessage(capturedEvent.arguments! as ByteData)
+            as Float64List;
     expect(message, expectedOffset);
 
     // Update scrollPosition to scrollLeft value.
@@ -2760,9 +2761,9 @@ void _testHorizontalScrolling() {
     expect(capturedEvent.arguments, isNotNull);
     expectedOffset[0] = 5.0;
     expectedOffset[1] = 0.0;
-    message = const StandardMessageCodec().decodeMessage(
-      capturedEvent.arguments! as ByteData,
-    ) as Float64List;
+    message =
+        const StandardMessageCodec().decodeMessage(capturedEvent.arguments! as ByteData)
+            as Float64List;
     expect(message, expectedOffset);
   });
 }

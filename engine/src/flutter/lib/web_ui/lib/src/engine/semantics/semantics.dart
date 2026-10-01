@@ -2555,10 +2555,7 @@ class SemanticsObject {
 
     for (final int childIndex in _childrenInTraversalOrder!) {
       final SemanticsObject? child = owner._semanticsTree[childIndex];
-      assert(
-        child != null,
-        'Child #$childIndex is missing in the semantics tree.',
-      );
+      assert(child != null, 'Child #$childIndex is missing in the semantics tree.');
       if (child == null) {
         continue;
       }
