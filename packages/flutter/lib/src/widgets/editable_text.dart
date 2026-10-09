@@ -60,6 +60,7 @@ import 'spell_check.dart';
 import 'tap_region.dart';
 import 'text.dart';
 import 'text_editing_intents.dart';
+import 'text_plugin.dart';
 import 'text_selection.dart';
 import 'text_selection_toolbar_anchors.dart';
 import 'ticker_provider.dart';
@@ -943,6 +944,7 @@ class EditableText extends StatefulWidget {
     this.undoController,
     this.hintLocales,
     this.enableInlinePrediction,
+    this.textPlugins,
   }) : assert(obscuringCharacter.length == 1),
        autocorrect = autocorrect ?? _inferAutocorrect(autofillHints: autofillHints),
        smartDashesType =
@@ -2139,6 +2141,12 @@ class EditableText extends StatefulWidget {
 
   /// {@macro flutter.services.TextInputConfiguration.enableInlinePrediction}
   final bool? enableInlinePrediction;
+
+  /// The list of [TextPlugin]s this editable text is registered with.
+  ///
+  /// If null, [TextPluginScope.maybeOf] is used to obtain the active
+  /// [TextPlugin]s from the ambient [BuildContext].
+  final List<TextPlugin>? textPlugins;
 
   /// The default value for [selectionHeightStyle].
   ///
@@ -6076,6 +6084,8 @@ class EditableTextState extends State<EditableText>
                                     promptRectRange: _currentPromptRectRange,
                                     promptRectColor: widget.autocorrectionTextRectColor,
                                     clipBehavior: widget.clipBehavior,
+                                    textPlugins:
+                                        widget.textPlugins ?? TextPluginScope.maybeOf(context),
                                   ),
                                 ),
                               ),
@@ -6213,6 +6223,7 @@ class _Editable extends MultiChildRenderObjectWidget {
     this.promptRectRange,
     this.promptRectColor,
     required this.clipBehavior,
+    this.textPlugins,
   }) : selectionHeightStyle = selectionHeightStyle ?? EditableText.defaultSelectionHeightStyle,
        selectionWidthStyle = selectionWidthStyle ?? EditableText.defaultSelectionWidthStyle,
        super(children: WidgetSpan.extractFromInlineSpan(inlineSpan, textScaler));
@@ -6255,6 +6266,7 @@ class _Editable extends MultiChildRenderObjectWidget {
   final TextRange? promptRectRange;
   final Color? promptRectColor;
   final Clip clipBehavior;
+  final List<TextPlugin>? textPlugins;
 
   @override
   RenderEditable createRenderObject(BuildContext context) {
@@ -6297,6 +6309,7 @@ class _Editable extends MultiChildRenderObjectWidget {
       promptRectRange: promptRectRange,
       promptRectColor: promptRectColor,
       clipBehavior: clipBehavior,
+      textPlugins: textPlugins,
     );
   }
 
@@ -6340,7 +6353,8 @@ class _Editable extends MultiChildRenderObjectWidget {
       ..paintCursorAboveText = paintCursorAboveText
       ..promptRectColor = promptRectColor
       ..clipBehavior = clipBehavior
-      ..setPromptRectRange(promptRectRange);
+      ..setPromptRectRange(promptRectRange)
+      ..textPlugins = textPlugins;
   }
 }
 

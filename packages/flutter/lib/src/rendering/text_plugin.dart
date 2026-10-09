@@ -13,13 +13,15 @@ import 'package:flutter/animation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 
+import 'box.dart';
 import 'custom_paint.dart';
+import 'editable.dart';
 import 'object.dart';
 import 'paragraph.dart';
 
 /// An interface for plugins that interact with and change the visual appearance
-/// of text rendered by [RenderParagraph] (such as via [Text] and [RichText]
-/// widgets) within a [TextPluginScope].
+/// of text rendered by [RenderParagraph] and [RenderEditable] (such as via [Text],
+/// [RichText], and [EditableText] widgets) within a [TextPluginScope].
 ///
 /// A [TextPlugin] is notified as text widgets are added, updated, laid out,
 /// and removed within its scope, and can also receive pointer events
@@ -39,8 +41,8 @@ import 'paragraph.dart';
 ///
 ///  * [TextPluginScope], which installs one or more [TextPlugin]s for a
 ///    widget subtree.
-///  * [TextDelegate], which represents an individual [RenderParagraph] managed
-///    by a [TextPlugin].
+///  * [TextDelegate], which represents an individual [RenderParagraph] or
+///    [RenderEditable] managed by a [TextPlugin].
 abstract class TextPlugin {
   /// Abstract const constructor. This constructor enables subclasses to provide
   /// const constructors so that they can be used in const expressions.
@@ -64,32 +66,31 @@ abstract class TextPlugin {
   /// Defaults to `false`.
   bool get disableLazyLoading => false;
 
-  /// Called whenever a new [Text] or [RichText] widget appears in the subtree
-  /// covered by this plugin.
+  /// Called whenever a new text widget ([Text], [RichText], or [EditableText])
+  /// appears in the subtree covered by this plugin.
   void didAddText(TextDelegate delegate) {}
 
-  /// Called whenever the text displayed in a [Text] or [RichText] widget
-  /// covered by this plugin changes.
+  /// Called whenever the text displayed in a text widget covered by this
+  /// plugin changes.
   void didUpdateText(TextDelegate delegate) {}
 
-  /// Called whenever a [Text] or [RichText] widget covered by this plugin
-  /// completes layout.
+  /// Called whenever a text widget covered by this plugin completes layout.
   ///
   /// Layout queries on [delegate] (such as [TextDelegate.getBoxesForSelection])
   /// are guaranteed to be valid during this callback.
   void didLayoutText(TextDelegate delegate) {}
 
-  /// Called whenever a [Text] or [RichText] widget is removed from the subtree
-  /// covered by this plugin.
+  /// Called whenever a text widget is removed from the subtree covered by this
+  /// plugin.
   void didRemoveText(TextDelegate delegate) {}
 
-  /// Called whenever a pointer event occurs on a [Text] or [RichText] widget
-  /// covered by this plugin.
+  /// Called whenever a pointer event occurs on a text widget covered by this
+  /// plugin.
   void handlePointerEvent(TextDelegate delegate, PointerEvent event) {}
 }
 
-/// A delegate representing a [RenderParagraph] (such as a [Text] or [RichText]
-/// widget) registered with a [TextPlugin].
+/// A delegate representing a text render object ([RenderParagraph] or
+/// [RenderEditable]) registered with a [TextPlugin].
 ///
 /// A [TextPlugin] receives a dedicated [TextDelegate] instance for each text
 /// widget in its scope. Through this delegate, the plugin can:
@@ -106,26 +107,44 @@ abstract class TextPlugin {
 ///  * Listen for text or layout updates via [addListener], or register an
 ///    [onPointerEvent] callback.
 class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
-  /// Creates a [TextDelegate] for the given [RenderParagraph] and [TextPlugin].
+  /// Creates a [TextDelegate] for the given [RenderObject] ([RenderParagraph] or
+  /// [RenderEditable]) and [TextPlugin].
   @internal
-  TextDelegate(this._paragraph, this.plugin) {
+  TextDelegate(this.renderObject, this.plugin)
+    : assert(renderObject is RenderParagraph || renderObject is RenderEditable) {
     if (kFlutterMemoryAllocationsEnabled) {
       ChangeNotifier.maybeDispatchObjectCreation(this);
     }
   }
 
-  final RenderParagraph _paragraph;
+  /// The render box ([RenderParagraph] or [RenderEditable]) represented by
+  /// this delegate.
+  final RenderBox renderObject;
+
+  RenderParagraph? get _paragraph =>
+      renderObject is RenderParagraph ? renderObject as RenderParagraph : null;
+  RenderEditable? get _editable =>
+      renderObject is RenderEditable ? renderObject as RenderEditable : null;
 
   /// The [TextPlugin] that owns this delegate.
   final TextPlugin plugin;
 
-  /// Returns the plain text in the [Text] or [RichText] widget represented by
-  /// this delegate.
-  String get text => _paragraph.text.toPlainText(includeSemanticsLabels: false);
+  /// Returns the plain text in the text widget represented by this delegate.
+  String get text {
+    if (_paragraph != null) {
+      return _paragraph!.text.toPlainText(includeSemanticsLabels: false);
+    }
+    return _editable!.text?.toPlainText(includeSemanticsLabels: false) ?? _editable!.plainText;
+  }
 
-  /// Returns the [InlineSpan] tree displayed by the [RenderParagraph]
-  /// represented by this delegate.
-  InlineSpan get textSpan => _paragraph.text;
+  /// Returns the [InlineSpan] tree displayed by the text widget represented by
+  /// this delegate.
+  InlineSpan get textSpan {
+    if (_paragraph != null) {
+      return _paragraph!.text;
+    }
+    return _editable!.text ?? TextSpan(text: _editable!.plainText);
+  }
 
   /// Returns the character ranges occupied by [PlaceholderSpan]s (such as
   /// [WidgetSpan]s) within [text].
@@ -152,32 +171,32 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   }
 
   /// The directionality of the text.
-  ui.TextDirection get textDirection => _paragraph.textDirection;
+  ui.TextDirection get textDirection => _paragraph?.textDirection ?? _editable!.textDirection;
 
-  /// Whether the underlying [RenderParagraph] is currently attached to the
+  /// Whether the underlying render object is currently attached to the
   /// render tree.
-  bool get attached => _paragraph.attached;
+  bool get attached => renderObject.attached;
 
-  /// Whether the underlying [RenderParagraph] has undergone layout and has a
+  /// Whether the underlying render object has undergone layout and has a
   /// size.
-  bool get hasSize => _paragraph.hasSize;
+  bool get hasSize => renderObject.hasSize;
 
-  /// Whether the underlying [RenderParagraph] has a valid, up-to-date layout.
+  /// Whether the underlying render object has a valid, up-to-date layout.
   ///
   /// Layout query methods such as [getBoxesForSelection], [ensureVisible], and
   /// [getPositionForOffset] may only be called when [hasLayout] is true (such
   /// as inside [TextPlugin.didLayoutText], [CustomPainter.paint], or
   /// [TextPlugin.handlePointerEvent]).
-  bool get hasLayout => _paragraph.hasSize && !_paragraph.debugNeedsLayout;
+  bool get hasLayout => renderObject.hasSize && !renderObject.debugNeedsLayout;
 
-  /// The size of the underlying [RenderParagraph].
+  /// The size of the underlying render object.
   ///
   /// Valid only after layout.
-  Size get size => _paragraph.size;
+  Size get size => renderObject.size;
 
-  /// An estimate of the bounds of the underlying [RenderParagraph] in its
+  /// An estimate of the bounds of the underlying render object in its
   /// local coordinate system.
-  Rect get paintBounds => _paragraph.paintBounds;
+  Rect get paintBounds => renderObject.paintBounds;
 
   /// Optional callback invoked when a [PointerEvent] occurs on the text widget
   /// represented by this delegate.
@@ -210,15 +229,15 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   void _didUpdatePainter(CustomPainter? newPainter, CustomPainter? oldPainter) {
     if (newPainter == null) {
       assert(oldPainter != null);
-      _paragraph.markNeedsPaint();
+      renderObject.markNeedsPaint();
     } else if (oldPainter == null ||
         newPainter.runtimeType != oldPainter.runtimeType ||
         newPainter.shouldRepaint(oldPainter)) {
-      _paragraph.markNeedsPaint();
+      renderObject.markNeedsPaint();
     }
-    if (_paragraph.attached) {
-      oldPainter?.removeListener(_paragraph.markNeedsPaint);
-      newPainter?.addListener(_paragraph.markNeedsPaint);
+    if (renderObject.attached) {
+      oldPainter?.removeListener(renderObject.markNeedsPaint);
+      newPainter?.addListener(renderObject.markNeedsPaint);
     }
   }
 
@@ -236,8 +255,11 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     ui.BoxWidthStyle boxWidthStyle = ui.BoxWidthStyle.tight,
     bool includePlaceholders = true,
   }) {
+    if (_editable != null) {
+      return _editable!.getBoxesForSelection(selection);
+    }
     if (includePlaceholders || !selection.isValid || selection.isCollapsed) {
-      return _paragraph.getBoxesForSelection(
+      return _paragraph!.getBoxesForSelection(
         selection,
         boxHeightStyle: boxHeightStyle,
         boxWidthStyle: boxWidthStyle,
@@ -252,7 +274,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
       if (plainText.codeUnitAt(i) == PlaceholderSpan.placeholderCodeUnit) {
         if (segmentStart < i) {
           boxes.addAll(
-            _paragraph.getBoxesForSelection(
+            _paragraph!.getBoxesForSelection(
               TextSelection(baseOffset: segmentStart, extentOffset: i),
               boxHeightStyle: boxHeightStyle,
               boxWidthStyle: boxWidthStyle,
@@ -264,7 +286,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     }
     if (segmentStart < end) {
       boxes.addAll(
-        _paragraph.getBoxesForSelection(
+        _paragraph!.getBoxesForSelection(
           TextSelection(baseOffset: segmentStart, extentOffset: end),
           boxHeightStyle: boxHeightStyle,
           boxWidthStyle: boxWidthStyle,
@@ -279,14 +301,20 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   ///
   /// Valid only after layout (see [hasLayout]).
   ui.TextPosition getPositionForOffset(Offset offset) {
-    return _paragraph.getPositionForOffset(offset);
+    if (_paragraph != null) {
+      return _paragraph!.getPositionForOffset(offset);
+    }
+    return _editable!.getPositionForOffset(offset);
   }
 
   /// Returns the [ui.TextRange] of the word at the given [position].
   ///
   /// Valid only after layout (see [hasLayout]).
   ui.TextRange getWordBoundary(ui.TextPosition position) {
-    return _paragraph.getWordBoundary(position);
+    if (_paragraph != null) {
+      return _paragraph!.getWordBoundary(position);
+    }
+    return _editable!.getWordBoundary(position);
   }
 
   /// Returns the local offset at which to paint the caret for the given
@@ -294,40 +322,51 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   ///
   /// Valid only after layout (see [hasLayout]).
   Offset getOffsetForCaret(ui.TextPosition position, Rect caretPrototype) {
-    return _paragraph.getOffsetForCaret(position, caretPrototype);
+    if (_paragraph != null) {
+      return _paragraph!.getOffsetForCaret(position, caretPrototype);
+    }
+    return _editable!.getOffsetForCaret(position, caretPrototype);
   }
 
   /// Returns the full height of the caret at the given [position].
   ///
   /// Valid only after layout (see [hasLayout]).
   double getFullHeightForCaret(ui.TextPosition position) {
-    return _paragraph.getFullHeightForCaret(position);
+    if (_paragraph != null) {
+      return _paragraph!.getFullHeightForCaret(position);
+    }
+    return _editable!.getFullHeightForCaret(position);
   }
 
-  /// Applies the paint transform from the underlying [RenderParagraph] up to
+  /// Applies the paint transform from the underlying render object up to
   /// [ancestor] (or the root of the render tree if [ancestor] is null).
   Matrix4 getTransformTo(RenderObject? ancestor) {
-    return _paragraph.getTransformTo(ancestor);
+    return renderObject.getTransformTo(ancestor);
   }
 
   /// Converts the given [point] from the local coordinate system of the text
   /// widget to the global coordinate system (or the coordinate system of
   /// [ancestor]).
   Offset localToGlobal(Offset point, {RenderObject? ancestor}) {
-    return _paragraph.localToGlobal(point, ancestor: ancestor);
+    return renderObject.localToGlobal(point, ancestor: ancestor);
   }
 
   /// Converts the given [point] from the global coordinate system (or the
   /// coordinate system of [ancestor]) to the local coordinate system of the
   /// text widget.
   Offset globalToLocal(Offset point, {RenderObject? ancestor}) {
-    return _paragraph.globalToLocal(point, ancestor: ancestor);
+    return renderObject.globalToLocal(point, ancestor: ancestor);
   }
 
   /// Scrolls any enclosing scrollable viewports so that this text widget (or
   /// the specified local [rect] within it) is visible on screen.
   void showOnScreen({Rect? rect, Duration duration = Duration.zero, Curve curve = Curves.ease}) {
-    _paragraph.showOnScreen(descendant: _paragraph, rect: rect, duration: duration, curve: curve);
+    renderObject.showOnScreen(
+      descendant: renderObject,
+      rect: rect,
+      duration: duration,
+      curve: curve,
+    );
   }
 
   /// Scrolls any enclosing scrollable viewports so that the given character
@@ -369,26 +408,26 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// Compares this [TextDelegate] with [other] according to their logical
   /// document order in the render tree.
   ///
-  /// Returns a negative integer if this delegate's [RenderParagraph] precedes
+  /// Returns a negative integer if this delegate's render object precedes
   /// [other]'s in a pre-order traversal of the render tree, zero if they
-  /// represent the same [RenderParagraph], or a positive integer if this
+  /// represent the same render object, or a positive integer if this
   /// delegate follows [other].
   ///
   /// This is useful when scrollable lists mount items out of document order
   /// (for example, when scrolling upward in a lazy [ListView]).
   @override
   int compareTo(TextDelegate other) {
-    if (identical(this, other) || identical(_paragraph, other._paragraph)) {
+    if (identical(this, other) || identical(renderObject, other.renderObject)) {
       return 0;
     }
 
     final thisAncestors = <RenderObject>[];
-    for (RenderObject? node = _paragraph; node != null; node = node.parent) {
+    for (RenderObject? node = renderObject; node != null; node = node.parent) {
       thisAncestors.add(node);
     }
 
     final otherAncestors = <RenderObject>[];
-    for (RenderObject? node = other._paragraph; node != null; node = node.parent) {
+    for (RenderObject? node = other.renderObject; node != null; node = node.parent) {
       otherAncestors.add(node);
     }
 
@@ -396,8 +435,8 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     int otherIndex = otherAncestors.length - 1;
 
     if (!identical(thisAncestors[thisIndex], otherAncestors[otherIndex])) {
-      // The two paragraphs do not share a common root (e.g., one is detached).
-      return identityHashCode(_paragraph).compareTo(identityHashCode(other._paragraph));
+      // The two render objects do not share a common root (e.g., one is detached).
+      return identityHashCode(renderObject).compareTo(identityHashCode(other.renderObject));
     }
 
     while (thisIndex >= 0 &&
@@ -434,25 +473,25 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     return comparisonResult;
   }
 
-  /// Marks the underlying [RenderParagraph] as needing to repaint.
+  /// Marks the underlying render object as needing to repaint.
   void markNeedsPaint() {
-    _paragraph.markNeedsPaint();
+    renderObject.markNeedsPaint();
   }
 
-  /// Attaches painter listeners when the [RenderParagraph] attaches to the
+  /// Attaches painter listeners when the render object attaches to the
   /// pipeline owner.
   @internal
   void attachPainters() {
-    _backgroundPainter?.addListener(_paragraph.markNeedsPaint);
-    _foregroundPainter?.addListener(_paragraph.markNeedsPaint);
+    _backgroundPainter?.addListener(renderObject.markNeedsPaint);
+    _foregroundPainter?.addListener(renderObject.markNeedsPaint);
   }
 
-  /// Detaches painter listeners when the [RenderParagraph] detaches from the
+  /// Detaches painter listeners when the render object detaches from the
   /// pipeline owner.
   @internal
   void detachPainters() {
-    _backgroundPainter?.removeListener(_paragraph.markNeedsPaint);
-    _foregroundPainter?.removeListener(_paragraph.markNeedsPaint);
+    _backgroundPainter?.removeListener(renderObject.markNeedsPaint);
+    _foregroundPainter?.removeListener(renderObject.markNeedsPaint);
   }
 
   /// Notifies listeners registered on this [TextDelegate] that the text or

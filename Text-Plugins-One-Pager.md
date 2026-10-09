@@ -34,7 +34,7 @@ This is not a design document. It is a proposal for adding an API, that still ne
 
 # API CONSIDERATIONS
 
-The rough idea is that an app developer can install a text plugin for a subtree of the widge tree by wrapping it with a new `TextPluginScope` widget. The `TextPlugin` provided to this widget can henceforth keep track of all the `Text` widgets inside its subtree.&nbsp;
+The rough idea is that an app developer can install a text plugin for a subtree of the widget tree by wrapping it with a new `TextPluginScope` widget. The `TextPlugin` provided to this widget can henceforth keep track of all the `Text`, `RichText`, and `EditableText` (`TextField`) widgets inside its subtree.
 
 &nbsp;
 

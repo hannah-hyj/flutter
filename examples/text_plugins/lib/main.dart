@@ -692,35 +692,41 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
                   ),
                   const SizedBox(height: 20),
                   const Text(
-                    'Dynamic Content Playground',
+                    'Live Interactive TextField (EditableText)',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  const SizedBox(height: 8),
-                  TextPluginScope.none(
-                    child: Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: TextField(
-                            key: const Key('custom_note_input'),
-                            controller: _customNoteController,
-                            decoration: const InputDecoration(
-                              hintText:
-                                  'Add a paragraph with GOOG, AAPL, or https://example.com...',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
-                            onSubmitted: (_) => _addCustomNote(),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Try typing GOOG, AAPL, https://flutter.dev, or search queries directly in '
+                    'the TextField below. Active TextPlugins highlight, linkify, and lint '
+                    'editable text live as you type!',
+                    style: TextStyle(fontSize: 14, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: TextField(
+                          key: const Key('custom_note_input'),
+                          controller: _customNoteController,
+                          decoration: const InputDecoration(
+                            hintText: 'Type text with GOOG, AAPL, or https://example.com live...',
+                            border: OutlineInputBorder(),
+                            isDense: true,
                           ),
+                          onSubmitted: (_) => _addCustomNote(),
                         ),
-                        const SizedBox(width: 8),
-                        FilledButton.icon(
+                      ),
+                      const SizedBox(width: 8),
+                      TextPluginScope.none(
+                        child: FilledButton.icon(
                           key: const Key('add_note_button'),
                           onPressed: _addCustomNote,
                           icon: const Icon(Icons.add),
                           label: const Text('Add Text'),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   for (var i = 0; i < _customNotes.length; i++)

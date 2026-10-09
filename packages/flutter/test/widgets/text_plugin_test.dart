@@ -449,6 +449,56 @@ void main() {
     await tester.pumpAndSettle();
     expect(scrollController.offset, greaterThan(2500.0));
   });
+
+  testWidgets('TextPlugin tracks lifecycle and typing updates of EditableText in subtree', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _RecordingTextPlugin();
+    final controller = TextEditingController(text: 'Initial Editable');
+    addTearDown(controller.dispose);
+    final focusNode = FocusNode();
+    addTearDown(focusNode.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TextPluginScope(
+            plugin: plugin,
+            child: EditableText(
+              controller: controller,
+              focusNode: focusNode,
+              style: const TextStyle(),
+              cursorColor: Colors.red,
+              backgroundCursorColor: Colors.black,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(plugin.activeDelegates, hasLength(1));
+    final TextDelegate delegate = plugin.activeDelegates.single;
+    expect(delegate.text, 'Initial Editable');
+    expect(plugin.log, contains('plugin:add:Initial Editable'));
+    expect(plugin.log, contains('plugin:layout:Initial Editable'));
+
+    plugin.log.clear();
+
+    // Type new text into controller
+    controller.text = 'Updated Editable';
+    await tester.pump();
+
+    expect(delegate.text, 'Updated Editable');
+    expect(plugin.log, contains('plugin:update:Updated Editable'));
+    expect(plugin.log, contains('plugin:layout:Updated Editable'));
+
+    plugin.log.clear();
+
+    // Unmount widget
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(plugin.activeDelegates, isEmpty);
+    expect(plugin.log, contains('plugin:remove:Updated Editable'));
+  });
 }
 
 class _EagerToggleTextPlugin extends TextPlugin with ChangeNotifier {
