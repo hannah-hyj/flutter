@@ -6,6 +6,48 @@
 
 ---
 
+## Table of Contents
+
+- [1. Problem Statement & Motivation](#1-problem-statement--motivation)
+  - [Why Custom `Text` Subclasses Fail](#why-custom-text-subclasses-fail)
+- [2. Design Goals & Framework/Community Taxonomy](#2-design-goals--frameworkcommunity-taxonomy)
+  - [2.1 Design Goals & Non-Goals](#21-design-goals--non-goals)
+  - [Goals](#goals)
+  - [Non-Goals (Current Scope)](#non-goals-current-scope)
+  - [2.2 Framework-Builtin vs. Community Package Taxonomy & Generic API Design](#22-framework-builtin-vs-community-package-taxonomy--generic-api-design)
+- [3. Architecture & Component Design](#3-architecture--component-design)
+  - [3.1 Layering & File Organization](#31-layering--file-organization)
+  - [3.2 `TextPlugin` Lifecycle Contract](#32-textplugin-lifecycle-contract)
+  - [3.3 `TextDelegate`: Capability-Scoped Proxy for `RenderParagraph`](#33-textdelegate-capability-scoped-proxy-for-renderparagraph)
+  - [3.4 `TextPluginScope` & Hierarchical Merging](#34-textpluginscope--hierarchical-merging)
+  - [3.5 `RenderParagraph` Painting & Z-Order Pipeline](#35-renderparagraph-painting--z-order-pipeline)
+- [4. Broader Ecosystem Use Cases](#4-broader-ecosystem-use-cases)
+  - [4.1 Accessibility, Reading Aids & Language Learning](#41-accessibility-reading-aids--language-learning)
+  - [4.2 Security, Privacy & Compliance](#42-security-privacy--compliance)
+  - [4.3 Editorial, Localization (l10n) & QA Tooling](#43-editorial-localization-l10n--qa-tooling)
+  - [4.4 Collaborative Annotation & Multi-User Presence](#44-collaborative-annotation--multi-user-presence)
+  - [4.5 AI / LLM Grounding, Citations & 120fps Effects](#45-ai--llm-grounding-citations--120fps-effects)
+  - [4.6 Domain-Specific Smart Entities](#46-domain-specific-smart-entities)
+- [5. Feature Deep Dives](#5-feature-deep-dives)
+  - [5.1 Scrolling, Document Ordering, and Canceling Lazy Loading (`Ctrl+F`)](#51-scrolling-document-ordering-and-canceling-lazy-loading-ctrlf)
+  - [5.2 Deep Dive: Should Selection Highlighting Be a `TextPlugin`?](#52-deep-dive-should-selection-highlighting-be-a-textplugin)
+- [6. Exhaustive Corner Cases & Architectural Analysis](#6-exhaustive-corner-cases--architectural-analysis)
+  - [Corner Case 1: `ChangeNotifier` / `setState` Re-entrancy During Build, Layout, and Dispose](#corner-case-1-changenotifier--setstate-re-entrancy-during-build-layout-and-dispose)
+  - [Corner Case 2: Calling Layout Queries in `didAddText` or `didUpdateText` (`!delegate.hasLayout`)](#corner-case-2-calling-layout-queries-in-didaddtext-or-didupdatetext-delegatehaslayout)
+  - [Corner Case 3: Embedded `WidgetSpan`s (`PlaceholderSpan`) and UTF-16 Offset Alignment](#corner-case-3-embedded-widgetspans-placeholderspan-and-utf-16-offset-alignment)
+  - [Corner Case 4: Text Truncation (`maxLines`, `TextOverflow.ellipsis`, `TextOverflow.clip`, `TextOverflow.fade`)](#corner-case-4-text-truncation-maxlines-textoverflowellipsis-textoverflowclip-textoverflowfade)
+  - [Corner Case 5: Multi-Line Wrapping, Bidirectional (BiDi) Text, and Surrogate Pairs](#corner-case-5-multi-line-wrapping-bidirectional-bidi-text-and-surrogate-pairs)
+  - [Corner Case 6: Dynamic Plugin List Reconciliation & Stateful Delegate Preservation](#corner-case-6-dynamic-plugin-list-reconciliation--stateful-delegate-preservation)
+  - [Corner Case 7: Duplicate Plugin Instances Across Nested `TextPluginScope`s](#corner-case-7-duplicate-plugin-instances-across-nested-textpluginscopes)
+  - [Corner Case 8: Pointer Event Routing, Multi-Plugin Conflicts, and Scroll Gesture Slop](#corner-case-8-pointer-event-routing-multi-plugin-conflicts-and-scroll-gesture-slop)
+  - [Corner Case 9: `SelectionArea` / `SelectableRegion` Coexistence](#corner-case-9-selectionarea--selectableregion-coexistence)
+  - [Corner Case 10: Unintended Capture of UI Chrome & `TextPluginScope.none`](#corner-case-10-unintended-capture-of-ui-chrome--textpluginscopenone)
+  - [Corner Case 11: Lazy Slivers (`ListView.builder`) & Offscreen Viewport Recycling](#corner-case-11-lazy-slivers-listviewbuilder--offscreen-viewport-recycling)
+  - [Corner Case 12: Canvas State Corruption in Plugin `CustomPainter`s](#corner-case-12-canvas-state-corruption-in-plugin-custompainters)
+
+---
+
+
 ## 1. Problem Statement & Motivation
 
 Flutter applications frequently need cross-cutting text capabilities that inspect, decorate, or attach interactions to text across an entire page or subtree:
@@ -87,6 +129,30 @@ To ensure `TextPlugin` scales smoothly from simple core selection to complex com
 ---
 
 ## 3. Architecture & Component Design
+
+Before diving into the internal rendering pipeline, here is what the developer experience looks like at the Widget level:
+
+```dart
+TextPluginScope.multiple(
+  plugins: [
+    SearchInPagePlugin(query: 'Flutter'),
+    PiiRedactionPlugin(), // e.g., auto-redacts sensitive info
+  ],
+  child: Column(
+    children: [
+      // Standard widgets automatically participate in the plugin pipeline!
+      Text('Welcome to Flutter!'),  // Automatically highlighted & redacted
+      TextField(),                  // Text input also automatically inspected
+      
+      // Developers can easily firewall UI chrome from being affected:
+      TextPluginScope.none(
+        child: Text('Search query: Flutter'), // Safely isolated from plugins
+      ),
+    ],
+  ),
+)
+```
+
 
 ![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogImdyYXBoIFREXG4gICAgc3ViZ3JhcGggV2lkZ2V0c1tcIldpZGdldHMgTGF5ZXIgKHBhY2thZ2U6Zmx1dHRlci93aWRnZXRzLmRhcnQpXCJdXG4gICAgICAgIFNjb3BlT3V0ZXJbXCJUZXh0UGx1Z2luU2NvcGUgKE91dGVyOiBlLmcuIFNlYXJjaFBsdWdpbilcIl1cbiAgICAgICAgU2NvcGVJbm5lcltcIlRleHRQbHVnaW5TY29wZS5tdWx0aXBsZSAoSW5uZXI6IFN0b2NrUGx1Z2luLCBMaW5raWZ5UGx1Z2luKVwiXVxuICAgICAgICBTY29wZU5vbmVbXCJUZXh0UGx1Z2luU2NvcGUubm9uZSAoT3B0LW91dCBTdWJ0cmVlKVwiXVxuICAgICAgICBUZXh0V2lkZ2V0W1wiVGV4dCAvIFRleHQucmljaFwiXVxuICAgICAgICBSaWNoVGV4dFdpZGdldFtcIlJpY2hUZXh0XCJdXG4gICAgICAgIEVkaXRhYmxlV2lkZ2V0W1wiRWRpdGFibGVUZXh0IC8gVGV4dEZpZWxkXCJdXG4gICAgZW5kXG5cbiAgICBzdWJncmFwaCBSZW5kZXJpbmdbXCJSZW5kZXJpbmcgTGF5ZXIgKHBhY2thZ2U6Zmx1dHRlci9yZW5kZXJpbmcuZGFydClcIl1cbiAgICAgICAgUlBbXCJSZW5kZXJQYXJhZ3JhcGhcIl1cbiAgICAgICAgUkVbXCJSZW5kZXJFZGl0YWJsZVwiXVxuICAgICAgICBURDFbXCJUZXh0RGVsZWdhdGUgKFNlYXJjaFBsdWdpbilcIl1cbiAgICAgICAgVEQyW1wiVGV4dERlbGVnYXRlIChTdG9ja1BsdWdpbilcIl1cbiAgICAgICAgVEQzW1wiVGV4dERlbGVnYXRlIChMaW5raWZ5UGx1Z2luKVwiXVxuICAgIGVuZFxuXG4gICAgU2NvcGVPdXRlciAtLT4gU2NvcGVJbm5lclxuICAgIFNjb3BlSW5uZXIgLS0-IFRleHRXaWRnZXRcbiAgICBTY29wZUlubmVyIC0tPiBFZGl0YWJsZVdpZGdldFxuICAgIFNjb3BlSW5uZXIgLS0-IFNjb3BlTm9uZVxuICAgIFRleHRXaWRnZXQgLS0-IFJpY2hUZXh0V2lkZ2V0XG4gICAgUmljaFRleHRXaWRnZXQgLS0-fFwidGV4dFBsdWdpbnMgPSBbU2VhcmNoLCBTdG9jaywgTGlua2lmeV1cInwgUlBcbiAgICBFZGl0YWJsZVdpZGdldCAtLT58XCJ0ZXh0UGx1Z2lucyA9IFtTZWFyY2gsIFN0b2NrLCBMaW5raWZ5XVwifCBSRVxuICAgIFJQIC0tPiBURDFcbiAgICBSRSAtLT4gVEQxXG4gICAgUlAgLS0-IFREMlxuICAgIFJFIC0tPiBURDJcbiAgICBSUCAtLT4gVEQzXG4gICAgUkUgLS0-IFREMyIsICJtZXJtYWlkIjogeyJ0aGVtZSI6ICJkZWZhdWx0In19)
 

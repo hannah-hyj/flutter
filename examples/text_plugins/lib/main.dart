@@ -29,8 +29,55 @@ class TextPluginsDemoApp extends StatelessWidget {
       title: 'Flutter Text Plugins Demo',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0D47A1)),
         useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF6750A4), // Modern Material 3 Purple
+          brightness: Brightness.light,
+          surface: const Color(0xFFFBFDF8),
+          surfaceContainerHighest: const Color(0xFFEADDFF),
+        ),
+        scaffoldBackgroundColor: const Color(0xFFFBFDF8),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFFFBFDF8),
+          elevation: 0,
+          scrolledUnderElevation: 2,
+          centerTitle: false,
+          iconTheme: IconThemeData(color: Color(0xFF1D1B20)),
+          titleTextStyle: TextStyle(
+            color: Color(0xFF1D1B20),
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.5,
+          ),
+        ),
+        cardTheme: CardThemeData(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: Color(0xFFE0E0E0), width: 1),
+          ),
+          color: Colors.white,
+          margin: const EdgeInsets.symmetric(vertical: 8),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFFF4EFF4),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: Color(0xFF6750A4), width: 2),
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          ),
+        ),
       ),
       home: const TextPluginsHomePage(),
     );

@@ -6,6 +6,47 @@
 
 ---
 
+## 目录 (Table of Contents)
+
+- [1. 问题背景与动机 (Problem Statement & Motivation)](#1-问题背景与动机-problem-statement--motivation)
+  - [为什么自定义 `Text` 子类方案会失败？](#为什么自定义-text-子类方案会失败)
+- [2. 设计目标与 API 划界战略 (Design Goals & Framework/Community Taxonomy)](#2-设计目标与-api-划界战略-design-goals--frameworkcommunity-taxonomy)
+  - [2.1 设计目标与非目标 (Design Goals & Non-Goals)](#21-设计目标与非目标-design-goals--non-goals)
+  - [设计目标 (Goals)](#设计目标-goals)
+  - [非目标 (Non-Goals)](#非目标-non-goals)
+  - [2.2 框架内置 vs 社区 Package 划界与通用 API 设计](#22-框架内置-vs-社区-package-划界与通用-api-设计)
+- [3. 架构与组件设计 (Architecture & Component Design)](#3-架构与组件设计-architecture--component-design)
+  - [3.1 分层架构与文件组织](#31-分层架构与文件组织)
+  - [3.2 `TextPlugin` 生命周期契约](#32-textplugin-生命周期契约)
+  - [3.3 `TextDelegate`：RenderObject 的能力受限安全代理](#33-textdelegaterenderobject-的能力受限安全代理)
+  - [3.4 `TextPluginScope` 与层级合并](#34-textpluginscope-与层级合并)
+  - [3.5 渲染图层与 Z 轴顺序 (Z-Order Pipeline)](#35-渲染图层与-z-轴顺序-z-order-pipeline)
+- [4. 更广泛的生态应用场景 (Broader Ecosystem Use Cases)](#4-更广泛的生态应用场景-broader-ecosystem-use-cases)
+  - [4.1 无障碍、朗读辅助与语言学习](#41-无障碍朗读辅助与语言学习)
+  - [4.2 安全、隐私与合规](#42-安全隐私与合规)
+  - [4.3 编辑、多语言 (l10n) 与 QA 工具](#43-编辑多语言-l10n-与-qa-工具)
+  - [4.4 协同标注与多用户光标](#44-协同标注与多用户光标)
+  - [4.5 领域特定智能实体](#45-领域特定智能实体)
+- [5. 高阶特性深度探讨 (Feature Deep Dives)](#5-高阶特性深度探讨-feature-deep-dives)
+  - [5.1 滚动、文档顺序排序与取消懒加载 (`Ctrl+F`)](#51-滚动文档顺序排序与取消懒加载-ctrlf)
+  - [5.2 深度探讨：文本选择高亮是否应该作为一个 `TextPlugin`？](#52-深度探讨文本选择高亮是否应该作为一个-textplugin)
+- [6. 极端边界情况与架构深度分析 (12 个 Corner Cases)](#6-极端边界情况与架构深度分析-12-个-corner-cases)
+  - [边界 1：Build、Layout 与 Dispose 期间的 `ChangeNotifier` / `setState` 重入](#边界-1buildlayout-与-dispose-期间的-changenotifier--setstate-重入)
+  - [边界 2：在 `didAddText` 或 `didUpdateText` 中调用布局查询 (`!delegate.hasLayout`)](#边界-2在-didaddtext-或-didupdatetext-中调用布局查询-delegatehaslayout)
+  - [边界 3：内联 `WidgetSpan` (`PlaceholderSpan`) 与 UTF-16 偏移对齐](#边界-3内联-widgetspan-placeholderspan-与-utf-16-偏移对齐)
+  - [边界 4：文本截断 (`maxLines`, `TextOverflow.ellipsis`, `TextOverflow.clip`, `TextOverflow.fade`)](#边界-4文本截断-maxlines-textoverflowellipsis-textoverflowclip-textoverflowfade)
+  - [边界 5：多行折行、双向文本 (BiDi) 与 UTF-16 代理对](#边界-5多行折行双向文本-bidi-与-utf-16-代理对)
+  - [边界 6：动态插件列表 Reconciliation 与 Delegate 状态保留](#边界-6动态插件列表-reconciliation-与-delegate-状态保留)
+  - [边界 7：嵌套 `TextPluginScope` 中的重复插件实例](#边界-7嵌套-textpluginscope-中的重复插件实例)
+  - [边界 8：指针手势路由、多插件冲突与滚动滑动容差 (Touch Slop)](#边界-8指针手势路由多插件冲突与滚动滑动容差-touch-slop)
+  - [边界 9：与 `SelectionArea` / `SelectableRegion` 共存](#边界-9与-selectionarea--selectableregion-共存)
+  - [边界 10：意外捕获 UI Chrome 与 `TextPluginScope.none`](#边界-10意外捕获-ui-chrome-与-textpluginscopenone)
+  - [边界 11：懒加载列表 (`ListView.builder`) 与屏幕外视口回收](#边界-11懒加载列表-listviewbuilder-与屏幕外视口回收)
+  - [边界 12：插件 `CustomPainter` 中的 Canvas 状态污染](#边界-12插件-custompainter-中的-canvas-状态污染)
+
+---
+
+
 ## 1. 问题背景与动机 (Problem Statement & Motivation)
 
 Flutter 应用程序经常需要跨页面的横向文本能力，这些能力需要对整个页面或子树中的文本进行检查、装饰或附加交互：
@@ -87,6 +128,30 @@ Flutter 应用程序经常需要跨页面的横向文本能力，这些能力需
 ---
 
 ## 3. 架构与组件设计 (Architecture & Component Design)
+
+在深入底层的渲染流水线之前，我们先从 Widget 层面直观地看看开发者的使用体验：
+
+```dart
+TextPluginScope.multiple(
+  plugins: [
+    SearchInPagePlugin(query: 'Flutter'),
+    PiiRedactionPlugin(), // 例如：自动打码敏感信息
+  ],
+  child: Column(
+    children: [
+      // 标准的文本组件自动参与插件的扩展流水线！
+      Text('Welcome to Flutter!'),  // 自动被高亮和脱敏
+      TextField(),                  // 输入框内的文字也同样生效
+      
+      // 对于不想被插件影响的 UI 控件，可以轻松通过 none 隔离：
+      TextPluginScope.none(
+        child: Text('Search query: Flutter'), // 安全隔离，不会被意外高亮
+      ),
+    ],
+  ),
+)
+```
+
 
 ![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogImdyYXBoIFREXG4gICAgc3ViZ3JhcGggV2lkZ2V0c1tcIldpZGdldHMgXHU1YzQyIChwYWNrYWdlOmZsdXR0ZXIvd2lkZ2V0cy5kYXJ0KVwiXVxuICAgICAgICBTY29wZU91dGVyW1wiVGV4dFBsdWdpblNjb3BlIChcdTU5MTZcdTVjNDI6IFx1NTk4MiBTZWFyY2hQbHVnaW4pXCJdXG4gICAgICAgIFNjb3BlSW5uZXJbXCJUZXh0UGx1Z2luU2NvcGUubXVsdGlwbGUgKFx1NTE4NVx1NWM0MjogU3RvY2tQbHVnaW4sIExpbmtpZnlQbHVnaW4pXCJdXG4gICAgICAgIFNjb3BlTm9uZVtcIlRleHRQbHVnaW5TY29wZS5ub25lIChcdTYzOTJcdTk2NjRcdTViNTBcdTY4MTEpXCJdXG4gICAgICAgIFRleHRXaWRnZXRbXCJUZXh0IC8gVGV4dC5yaWNoXCJdXG4gICAgICAgIFJpY2hUZXh0V2lkZ2V0W1wiUmljaFRleHRcIl1cbiAgICAgICAgRWRpdGFibGVXaWRnZXRbXCJFZGl0YWJsZVRleHQgLyBUZXh0RmllbGRcIl1cbiAgICBlbmRcblxuICAgIHN1YmdyYXBoIFJlbmRlcmluZ1tcIlJlbmRlcmluZyBcdTVjNDIgKHBhY2thZ2U6Zmx1dHRlci9yZW5kZXJpbmcuZGFydClcIl1cbiAgICAgICAgUlBbXCJSZW5kZXJQYXJhZ3JhcGhcIl1cbiAgICAgICAgUkVbXCJSZW5kZXJFZGl0YWJsZVwiXVxuICAgICAgICBURDFbXCJUZXh0RGVsZWdhdGUgKFNlYXJjaFBsdWdpbilcIl1cbiAgICAgICAgVEQyW1wiVGV4dERlbGVnYXRlIChTdG9ja1BsdWdpbilcIl1cbiAgICAgICAgVEQzW1wiVGV4dERlbGVnYXRlIChMaW5raWZ5UGx1Z2luKVwiXVxuICAgIGVuZFxuXG4gICAgU2NvcGVPdXRlciAtLT4gU2NvcGVJbm5lclxuICAgIFNjb3BlSW5uZXIgLS0-IFRleHRXaWRnZXRcbiAgICBTY29wZUlubmVyIC0tPiBFZGl0YWJsZVdpZGdldFxuICAgIFNjb3BlSW5uZXIgLS0-IFNjb3BlTm9uZVxuICAgIFRleHRXaWRnZXQgLS0-IFJpY2hUZXh0V2lkZ2V0XG4gICAgUmljaFRleHRXaWRnZXQgLS0-fFwidGV4dFBsdWdpbnMgPSBbU2VhcmNoLCBTdG9jaywgTGlua2lmeV1cInwgUlBcbiAgICBFZGl0YWJsZVdpZGdldCAtLT58XCJ0ZXh0UGx1Z2lucyA9IFtTZWFyY2gsIFN0b2NrLCBMaW5raWZ5XVwifCBSRVxuICAgIFJQIC0tPiBURDFcbiAgICBSRSAtLT4gVEQxXG4gICAgUlAgLS0-IFREMlxuICAgIFJFIC0tPiBURDJcbiAgICBSUCAtLT4gVEQzXG4gICAgUkUgLS0-IFREMyIsICJtZXJtYWlkIjogeyJ0aGVtZSI6ICJkZWZhdWx0In19)
 
