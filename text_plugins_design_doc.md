@@ -57,12 +57,12 @@ Only plugins that fulfill universal, platform-standard expectations and have zer
 
 1. **`_SelectionHighlightTextPlugin`**: Internal plugin supporting `SelectionArea` / `SelectableRegion` text selection highlighting across all platforms.
 2. **`SearchInPagePlugin`**: Standard desktop/web `Ctrl+F` search highlighting, sequential match navigation, and viewport lazy-loading management.
-3. **`DefaultSpellCheckPlugin`**: Core framework integration for platform IME spellcheck squiggly underlines.
 
 #### 2.2.2 Community Package Plugins (`pub.dev`)
 
 Domain-specific, opinionated, or third-party-dependent features should be maintained by the community as standalone packages:
 
+1. **`SpellCheckPlugin` (`package:flutter_spellcheck`)**: Integration for IME spellcheck squiggly underlines and grammar suggestions.
 1. **`LinkifyPlugin` (`package:flutter_linkify_plugin`)**: Regex URL parsing, custom link styles, and integration with `url_launcher`.
 2. **`StockTickerPlugin` / `FinancialTextPlugin`**: Financial symbol decoration (`GOOG`, `AAPL`), crypto address detection, and currency conversions.
 3. **`PiiRedactionPlugin` (`package:flutter_pii_redaction`)**: Compliance masking for SSNs, API keys, and sensitive data with tap-to-reveal mechanisms.
@@ -408,7 +408,7 @@ Based on the prototype analysis of [`Renzo-Olivares:text-plugins-alt` (commit 55
 
 ## 6. Exhaustive Corner Cases & Architectural Analysis
 
-Below are the 14 critical corner cases identified during design and implementation, how our implementation handles them today, and what additional safeguards or trade-offs apply.
+Below are the 12 critical corner cases identified during design and implementation, how our implementation handles them today, and what additional safeguards or trade-offs apply.
 
 ### Corner Case 1: `ChangeNotifier` / `setState` Re-entrancy During Build, Layout, and Dispose
 
@@ -573,20 +573,7 @@ If a developer wraps their entire `MaterialApp` or `Scaffold` in a `TextPluginSc
 
 ---
 
-### Corner Case 11: Static Text (`RenderParagraph`) vs. Editable Text (`RenderEditable`)
-
-**The Problem**:  
-What happens when a `TextField` or `EditableText` is placed inside a `TextPluginScope`?
-- The editable text buffer inside `EditableText` is rendered by `RenderEditable`, **not** `RenderParagraph`.
-- However, `TextField`'s `InputDecoration` (`hintText`, `labelText`, `helperText`, `errorText`, `prefixText`, `suffixText`) **is** rendered using standard `Text` -> `RichText` -> `RenderParagraph` widgets!
-- Consequently, a `TextField` inside a `TextPluginScope` will have its `hintText` and `labelText` inspected by plugins, while the user's typed text in `RenderEditable` will not be inspected unless `TextField` is wrapped in `TextPluginScope.none` (or `RenderEditable` is separately wired to `TextPlugin`).
-
-**Recommendation**:  
-Form controls (`TextField`, `DropdownButton`) inside a `TextPluginScope` should typically be wrapped in `TextPluginScope.none` (or `InputDecoration` could wrap its internal labels/hints in `TextPluginScope.none` at the framework level if desired).
-
----
-
-### Corner Case 12: Lazy Slivers (`ListView.builder`) & Offscreen Viewport Recycling
+### Corner Case 11: Lazy Slivers (`ListView.builder`) & Offscreen Viewport Recycling
 
 **The Problem**:  
 In a `ListView.builder` or `CustomScrollView` with 1,000 paragraphs, Flutter by default only builds and mounts `RenderParagraph` instances for items currently inside the viewport + `cacheExtent` (`250.0` logical pixels).
@@ -600,7 +587,7 @@ In a `ListView.builder` or `CustomScrollView` with 1,000 paragraphs, Flutter by 
 
 ---
 
-### Corner Case 13: Canvas State Corruption in Plugin `CustomPainter`s
+### Corner Case 12: Canvas State Corruption in Plugin `CustomPainter`s
 
 **The Problem**:  
 Because all plugin `backgroundPainter`s and `foregroundPainter`s share the `PaintingContext.canvas` with `RenderParagraph`, a buggy plugin painter that calls `canvas.save()` without `canvas.restore()`, or mutates the canvas transform without restoring, could corrupt the rendering of subsequent plugins, the paragraph text itself, or sibling widgets in the same repaint boundary.
@@ -608,16 +595,5 @@ Because all plugin `backgroundPainter`s and `foregroundPainter`s share the `Pain
 **How We Solved It**:
 - [RenderParagraph._paintWithCustomPainter](rendering/paragraph.dart#L1178-L1224) wraps every individual plugin painter invocation in its own `canvas.save()` / `canvas.translate(offset.dx, offset.dy)` / `canvas.restore()` pair.
 - In debug mode, it records `canvas.getSaveCount()` before and after `painter.paint(canvas, size)` and throws a descriptive `FlutterError` pinpointing the exact offending `CustomPainter` if its `save()`/`restore()` calls are unbalanced.
-
----
-
-### Corner Case 14: Accessibility & Semantics Integration
-
-**The Problem**:  
-When `LinkifyPlugin` or `StockTickerPlugin` visually turns plain text (`'https://flutter.dev'` or `'GOOG'`) into a clickable region using `foregroundPainter` and `handlePointerEvent`, screen readers (VoiceOver on iOS/macOS, TalkBack on Android) still see a single static `SemanticsNode` for the entire `Text` widget, because `RenderParagraph.assembleSemanticsNode` only splits semantics nodes for `InlineSpanSemanticsInformation` produced by `TextSpan.recognizer` or `WidgetSpan`.
-
-**Future Extension Path**:
-- Extend [TextDelegate](rendering/text_plugin.dart#L102-L450) with an optional list of semantic annotations (e.g., `List<TextPluginSemanticAnnotation> semanticsAnnotations` specifying `TextRange`, `label`, `isLink`, and `VoidCallback? onTap`).
-- Merge those ranges inside `RenderParagraph.describeSemanticsConfiguration` / `assembleSemanticsNode` alongside `InlineSpanSemanticsInformation` so plugin-detected links and entities become individually focusable and actionable for assistive technologies.
 
 ---

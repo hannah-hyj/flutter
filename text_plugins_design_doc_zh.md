@@ -57,12 +57,12 @@ Flutter 应用程序经常需要跨页面的横向文本能力，这些能力需
 
 1. **`_SelectionHighlightTextPlugin`**：作为 `SelectionArea` / `SelectableRegion` 的底层依赖，全平台通用文本选择高亮。
 2. **`SearchInPagePlugin`**：桌面端/Web 端标配的 `Ctrl+F` 页面内查找高亮、平滑跳转及视口懒加载管理。
-3. **`DefaultSpellCheckPlugin`**：对接平台原生 IME 输入法和内置拼写检查波浪线。
 
 #### 2.2.2 社区 Package 插件 (`pub.dev`)
 
 特定领域、带有业务偏向或依赖第三方库的功能应当由社区作为独立 Package 维护：
 
+1. **`SpellCheckPlugin` (`package:flutter_spellcheck`)**：对接原生 IME 拼写检查与波浪线错误提示。
 1. **`LinkifyPlugin` (`package:flutter_linkify_plugin`)**：复杂的 URL 正则解析、超链接样式及 `url_launcher` 调用。
 2. **`StockTickerPlugin` / 财经文本插件**：股票代码 (`GOOG`)、加密货币地址、外币汇率实时转换。
 3. **`PiiRedactionPlugin` (`package:flutter_pii_redaction`)**：符合安全合规要求的 API Key、身份证、信用卡脱敏黑块遮罩与点击解密。
@@ -256,9 +256,9 @@ abstract class TextPlugin {
 
 ---
 
-## 6. 极端边界情况与架构深度分析 (14 个 Corner Cases)
+## 6. 极端边界情况与架构深度分析 (12 个 Corner Cases)
 
-以下是设计和实现过程中识别出的 14 个关键边界情况、当前的解决方案以及相关权衡：
+以下是设计和实现过程中识别出的 12 个关键边界情况、当前的解决方案以及相关权衡：
 
 ### 边界 1：Build、Layout 与 Dispose 期间的 `ChangeNotifier` / `setState` 重入
 
@@ -368,17 +368,7 @@ abstract class TextPlugin {
 
 ---
 
-### 边界 11：静态文本与可编辑文本的统一处理
-
-**问题**：  
-`EditableText` (`TextField`) 内部采用 `RenderEditable` 渲染，而外部 `InputDecoration` 采用 `RenderParagraph` 渲染。
-
-**解决方案**：
-- 本架构将 `TextDelegate` 抽象泛化为 `RenderBox`（统一支持 `RenderParagraph` 与 `RenderEditable`），使 `TextField` 的输入内容与静态文本共享完全相同的插件生命周期与绘制流水线。
-
----
-
-### 边界 12：懒加载列表 (`ListView.builder`) 与屏幕外视口回收
+### 边界 11：懒加载列表 (`ListView.builder`) 与屏幕外视口回收
 
 **问题**：  
 屏幕外的列表项默认不会被创建，按 `Ctrl+F` 搜索时搜不到屏幕外的文字。
@@ -388,22 +378,12 @@ abstract class TextPlugin {
 
 ---
 
-### 边界 13：插件 `CustomPainter` 中的 Canvas 状态污染
+### 边界 12：插件 `CustomPainter` 中的 Canvas 状态污染
 
 **问题**：  
 错误插件如果调用了 `canvas.save()` 但未调用 `restore()`，会污染后续组件的 Canvas 坐标系。
 
 **解决方案**：
 - RenderObject 在调用插件 Painter 前后自动执行 `canvas.save()` / `restore()` 保护，并在 Debug 模式下校验 `getSaveCount()`，发现不匹配时抛出清晰的 `FlutterError` 指出有问题的插件。
-
----
-
-### 边界 14：无障碍辅助功能 (Accessibility & Semantics)
-
-**问题**：  
-插件在字形上画了超链接，但屏幕朗读器 (VoiceOver/TalkBack) 仍将其视为单个静态文本。
-
-**未来扩展路径**：
-- 扩展 `TextDelegate` 允许注册语义标注区间 (`TextPluginSemanticAnnotation`)，在 `assembleSemanticsNode` 阶段合并生成独立可聚焦的语义节点。
 
 ---
