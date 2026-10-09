@@ -28,7 +28,9 @@ Flutter 应用程序经常需要跨页面的横向文本能力，这些能力需
 
 ---
 
-## 2. 设计目标与非目标 (Design Goals & Non-Goals)
+## 2. 设计目标与 API 划界战略 (Design Goals & Framework/Community Taxonomy)
+
+### 2.1 设计目标与非目标 (Design Goals & Non-Goals)
 
 ### 设计目标 (Goals)
 - **零样板代码接入 (Zero-boilerplate adoption)**：现有的 `Text('...')`、`Text.rich(...)` 和 `EditableText` (`TextField`) 组件放置在 [TextPluginScope](widgets/text_plugin.dart) 内部时自动参与插件扩展。
@@ -40,10 +42,55 @@ Flutter 应用程序经常需要跨页面的横向文本能力，这些能力需
 
 ### 非目标 (Non-Goals)
 - **修改输入 `InlineSpan` 树或改变文本排版度量**：插件通过 [CustomPainter](rendering/custom_paint.dart) (`backgroundPainter` / `foregroundPainter`) 对已排版的文本进行观察和装饰；插件不会在布局阶段重写字号或插入导致排版偏移的内联 Widget。
+- **一次性实现所有的文本插件**：本设计的核心目标是提供一个通用、可扩展的底层架构 API，并在框架内提供极少数最核心的插件（如搜索和选区高亮）。大量特定领域的插件（如自动链接、拼写检查等）将交由开源社区去开发和维护。
+
+---
+
+
+### 2.2 框架内置 vs 社区 Package 划界与通用 API 设计
+
+在架构层面，一个关键问题是明确：**哪些插件应该作为核心内置在 Flutter 框架中 (`package:flutter`)**，**哪些插件应该交给社区以包的形式存在 (`pub.dev`)**，以及**如何设计 API 使其足够通用**。
+
+#### 2.2.1 框架内置插件 (`package:flutter`)
+
+只有满足全平台通用、属于系统标配功能且零外部依赖的插件才适合内置在框架中：
+
+1. **`_SelectionHighlightTextPlugin`**：作为 `SelectionArea` / `SelectableRegion` 的底层依赖，全平台通用文本选择高亮。
+2. **`SearchInPagePlugin`**：桌面端/Web 端标配的 `Ctrl+F` 页面内查找高亮、平滑跳转及视口懒加载管理。
+3. **`DefaultSpellCheckPlugin`**：对接平台原生 IME 输入法和内置拼写检查波浪线。
+
+#### 2.2.2 社区 Package 插件 (`pub.dev`)
+
+特定领域、带有业务偏向或依赖第三方库的功能应当由社区作为独立 Package 维护：
+
+1. **`LinkifyPlugin` (`package:flutter_linkify_plugin`)**：复杂的 URL 正则解析、超链接样式及 `url_launcher` 调用。
+2. **`StockTickerPlugin` / 财经文本插件**：股票代码 (`GOOG`)、加密货币地址、外币汇率实时转换。
+3. **`PiiRedactionPlugin` (`package:flutter_pii_redaction`)**：符合安全合规要求的 API Key、身份证、信用卡脱敏黑块遮罩与点击解密。
+4. **`ReadAloudPlugin` (`package:flutter_read_aloud`)**：结合 `flutter_tts` 或云端语音 API 的卡拉 OK 逐字高亮朗读同步器。
+5. **`SeoExtractorPlugin` (`package:flutter_seo_text`)**：提取 Schema.org JSON-LD 结构化文本供搜索引擎抓取。
+6. **`AiGroundingPlugin` / `SpoilerBlurPlugin`**：AI 问答引用来源高亮、剧透打码与 120fps 动态特效。
+
+#### 2.2.3 如何设计更通用的 API 架构
+
+为了让同一个 `TextPlugin` 体系既能支撑框架内置的基础选择，又能支撑社区成百上千种创意 Package，API 设计遵循以下四个通用维度：
+
+1. **通用能力原语而非特定业务假设**：
+   - 不为超链接或搜索单独设计特化 API，而是提供原语级别的基础能力：`getBoxesForSelection`、`getPositionForOffset`、`getWordBoundary`、`getLineBoundary`、`getOffsetForCaret`、`backgroundPainter` 与 `foregroundPainter`。
+2. **分层组合与精准筛选机制**：
+   - `TextPluginScope` 支持任意数量的插件分层叠加（背景高亮在最底，超链接在顶）。
+   - 提供 `TextPluginScope.exclude(types: {...})` 允许开发者在 UI 按钮上精准排除特定插件，而不破坏底层的选择高亮。
+3. **响应式视口控制协议**：
+   - 暴露 `disableLazyLoading` 协议，使任何需要全局检索的插件（如搜索、SEO 提取）均可以与 `ListView.builder` 视口无缝联动，临时拓宽缓存区并自动恢复。
+4. **无障碍与语义对齐**：
+   - 提供 `TextPluginSemanticAnnotation` 语义标注扩展路径，使社区插件在视觉上绘制的元素（如链接、股票代码、敏感词）能同步映射为 VoiceOver / TalkBack 屏幕朗读器可识别的独立语义节点。
 
 ---
 
 ## 3. 架构与组件设计 (Architecture & Component Design)
+
+![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogImdyYXBoIFREXG4gICAgc3ViZ3JhcGggV2lkZ2V0c1tcIldpZGdldHMgXHU1YzQyIChwYWNrYWdlOmZsdXR0ZXIvd2lkZ2V0cy5kYXJ0KVwiXVxuICAgICAgICBTY29wZU91dGVyW1wiVGV4dFBsdWdpblNjb3BlIChcdTU5MTZcdTVjNDI6IFx1NTk4MiBTZWFyY2hQbHVnaW4pXCJdXG4gICAgICAgIFNjb3BlSW5uZXJbXCJUZXh0UGx1Z2luU2NvcGUubXVsdGlwbGUgKFx1NTE4NVx1NWM0MjogU3RvY2tQbHVnaW4sIExpbmtpZnlQbHVnaW4pXCJdXG4gICAgICAgIFNjb3BlTm9uZVtcIlRleHRQbHVnaW5TY29wZS5ub25lIChcdTYzOTJcdTk2NjRcdTViNTBcdTY4MTEpXCJdXG4gICAgICAgIFRleHRXaWRnZXRbXCJUZXh0IC8gVGV4dC5yaWNoXCJdXG4gICAgICAgIFJpY2hUZXh0V2lkZ2V0W1wiUmljaFRleHRcIl1cbiAgICAgICAgRWRpdGFibGVXaWRnZXRbXCJFZGl0YWJsZVRleHQgLyBUZXh0RmllbGRcIl1cbiAgICBlbmRcblxuICAgIHN1YmdyYXBoIFJlbmRlcmluZ1tcIlJlbmRlcmluZyBcdTVjNDIgKHBhY2thZ2U6Zmx1dHRlci9yZW5kZXJpbmcuZGFydClcIl1cbiAgICAgICAgUlBbXCJSZW5kZXJQYXJhZ3JhcGhcIl1cbiAgICAgICAgUkVbXCJSZW5kZXJFZGl0YWJsZVwiXVxuICAgICAgICBURDFbXCJUZXh0RGVsZWdhdGUgKFNlYXJjaFBsdWdpbilcIl1cbiAgICAgICAgVEQyW1wiVGV4dERlbGVnYXRlIChTdG9ja1BsdWdpbilcIl1cbiAgICAgICAgVEQzW1wiVGV4dERlbGVnYXRlIChMaW5raWZ5UGx1Z2luKVwiXVxuICAgIGVuZFxuXG4gICAgU2NvcGVPdXRlciAtLT4gU2NvcGVJbm5lclxuICAgIFNjb3BlSW5uZXIgLS0-IFRleHRXaWRnZXRcbiAgICBTY29wZUlubmVyIC0tPiBFZGl0YWJsZVdpZGdldFxuICAgIFNjb3BlSW5uZXIgLS0-IFNjb3BlTm9uZVxuICAgIFRleHRXaWRnZXQgLS0-IFJpY2hUZXh0V2lkZ2V0XG4gICAgUmljaFRleHRXaWRnZXQgLS0-fFwidGV4dFBsdWdpbnMgPSBbU2VhcmNoLCBTdG9jaywgTGlua2lmeV1cInwgUlBcbiAgICBFZGl0YWJsZVdpZGdldCAtLT58XCJ0ZXh0UGx1Z2lucyA9IFtTZWFyY2gsIFN0b2NrLCBMaW5raWZ5XVwifCBSRVxuICAgIFJQIC0tPiBURDFcbiAgICBSRSAtLT4gVEQxXG4gICAgUlAgLS0-IFREMlxuICAgIFJFIC0tPiBURDJcbiAgICBSUCAtLT4gVEQzXG4gICAgUkUgLS0-IFREMyIsICJtZXJtYWlkIjogeyJ0aGVtZSI6ICJkZWZhdWx0In19)
+
+*(如果您无法看到上图，请参阅下方的 Mermaid 源码)*
 
 ```mermaid
 graph TD
@@ -105,6 +152,10 @@ abstract class TextPlugin {
   void handlePointerEvent(TextDelegate delegate, PointerEvent event) {}
 }
 ```
+
+![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogInNlcXVlbmNlRGlhZ3JhbVxuICAgIHBhcnRpY2lwYW50IFcgYXMgUmljaFRleHQgLyBFZGl0YWJsZVRleHQgKFdpZGdldClcbiAgICBwYXJ0aWNpcGFudCBSIGFzIFJlbmRlclBhcmFncmFwaCAvIFJlbmRlckVkaXRhYmxlXG4gICAgcGFydGljaXBhbnQgVEQgYXMgVGV4dERlbGVnYXRlXG4gICAgcGFydGljaXBhbnQgVFAgYXMgVGV4dFBsdWdpblxuXG4gICAgVy0-PlI6IGNyZWF0ZVJlbmRlck9iamVjdCAvIHVwZGF0ZVJlbmRlck9iamVjdCAodGV4dFBsdWdpbnMpXG4gICAgUi0-PlREOiBuZXcgVGV4dERlbGVnYXRlKHRoaXMsIHBsdWdpbilcbiAgICBSLT4-VFA6IGRpZEFkZFRleHQoZGVsZWdhdGUpXG4gICAgTm90ZSBvdmVyIFIsVFA6IFx1NmNlOFx1NjEwZlx1ZmYxYVx1NTIxZFx1NmIyMVx1NjMwMlx1OGY3ZFx1NjVmNlx1NWUwM1x1NWM0MFx1NWMxYVx1NjcyYVx1NjI2N1x1ODg0YyAoaGFzTGF5b3V0ID09IGZhbHNlKVxuXG4gICAgUi0-PlI6IHBlcmZvcm1MYXlvdXQoKVxuICAgIFItPj5URDogbm90aWZ5Q2hhbmdlZCgpXG4gICAgUi0-PlRQOiBkaWRMYXlvdXRUZXh0KGRlbGVnYXRlKVxuICAgIE5vdGUgb3ZlciBSLFRQOiBcdTVlMDNcdTVjNDBcdTY3ZTVcdThiZTIgKGdldEJveGVzRm9yU2VsZWN0aW9uLCBzaXplKSBcdTczYjBcdTU3MjhcdTVkZjJcdTViODlcdTUxNjhcdTY3MDlcdTY1NDhcblxuICAgIFItPj5SOiBwYWludChjb250ZXh0LCBvZmZzZXQpXG4gICAgUi0-PlREOiBiYWNrZ3JvdW5kUGFpbnRlcj8ucGFpbnQoY2FudmFzLCBzaXplKVxuICAgIFItPj5SOiBfdGV4dFBhaW50ZXIucGFpbnQoY2FudmFzLCBvZmZzZXQpXG4gICAgUi0-PlREOiBmb3JlZ3JvdW5kUGFpbnRlcj8ucGFpbnQoY2FudmFzLCBzaXplKVxuXG4gICAgVy0-PlI6IHVwZGF0ZVJlbmRlck9iamVjdCAoXHU2NTg3XHU2NzJjXHU2NTM5XHU1M2Q4L1x1NjI1M1x1NWI1N1x1OGY5M1x1NTE2NSlcbiAgICBSLT4-VEQ6IG5vdGlmeUNoYW5nZWQoKVxuICAgIFItPj5UUDogZGlkVXBkYXRlVGV4dChkZWxlZ2F0ZSlcbiAgICBSLT4-UjogcGVyZm9ybUxheW91dCgpXG4gICAgUi0-PlRQOiBkaWRMYXlvdXRUZXh0KGRlbGVnYXRlKVxuXG4gICAgVy0-PlI6IGRpc3Bvc2UoKSBcdTYyMTYgXHU2M2QyXHU0ZWY2XHU3OWJiXHU1ZjAwXHU0ZjVjXHU3NTI4XHU1N2RmXG4gICAgUi0-PlREOiBkZXRhY2hQYWludGVycygpXG4gICAgUi0-PlRQOiBkaWRSZW1vdmVUZXh0KGRlbGVnYXRlKVxuICAgIFItPj5URDogZGlzcG9zZSgpIiwgIm1lcm1haWQiOiB7InRoZW1lIjogImRlZmF1bHQifX0=)
+
+*(如果您无法看到上图，请参阅下方的 Mermaid 源码)*
 
 ```mermaid
 sequenceDiagram
@@ -173,7 +224,133 @@ sequenceDiagram
 
 ---
 
-## 4. 极端边界情况与架构深度分析 (14 个 Corner Cases)
+## 4. 更广泛的生态应用场景 (Broader Ecosystem Use Cases)
+
+`TextPlugin` 将**文本检查**、**子区间几何坐标**、**合成绘制**、**手势路由**和**视口控制**融为一体，为 Flutter 生态解锁了一系列“即插即用”的强大插件能力：
+
+### 4.1 无障碍、朗读辅助与语言学习
+- **TTS 朗读卡拉 OK 同步器**：按阅读顺序朗读文本，高亮当前朗读单词，并在跨段落时自动平滑滚动。
+- **划词翻译 / 假名 (Furigana) 标注**：悬浮/长按显示单词释义 popover。
+- **阅读障碍辅助视线尺**：暗化背景行，聚焦当前阅读行。
+
+### 4.2 安全、隐私与合规
+- **实时 PII 敏感信息脱敏打码**：自动识别 API Key、身份证、手机号并绘制黑块遮罩，点击可解密查看。
+
+### 4.3 编辑、多语言 (l10n) 与 QA 工具
+- **拼写检查与写作风格 Lint**：在错别字下方绘制红色波浪线，点击弹出修改建议。
+- **未翻译文本 / 占位符泄露检测**：开发模式下高亮未翻译的 `auth.login.title` 或 `{userName}` 占位符。
+
+### 4.4 协同标注与多用户光标
+- **Kindle 式持久化高亮与边注**：在文章上绘制荧光笔高亮并标记评论。
+- **多人在线协同光标与选区**：实时渲染队友的光标标志与选择区域。
+
+### 4.5 领域特定智能实体
+- **股票代码实时高亮**：自动将 `GOOG`、`AAPL` 变成可点击的行情卡片。
+- **自动超链接识别**：自动将 `https://...` 变成可点击链接。
+- **SEO 结构化元数据提取**：提取全页展示文本生成搜索引擎索引。
+
+---
+
+## 5. 高阶特性深度探讨 (Feature Deep Dives)
+
+### 5.1 滚动、文档顺序排序与取消懒加载 (`Ctrl+F`)
+
+要在 Flutter 中实现浏览器级别的 **"页面内查找 (Find in Page)"**，需要在渲染层与 Widget 层解决三个核心问题：
+
+![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogInNlcXVlbmNlRGlhZ3JhbVxuICAgIHBhcnRpY2lwYW50IFVzZXIgYXMgXHU3NTI4XHU2MjM3XG4gICAgcGFydGljaXBhbnQgUGx1Z2luIGFzIFNlYXJjaEluUGFnZVBsdWdpblxuICAgIHBhcnRpY2lwYW50IFNjb3BlIGFzIFRleHRQbHVnaW5TY29wZVxuICAgIHBhcnRpY2lwYW50IFZQIGFzIFZpZXdwb3J0IC8gUmVuZGVyVmlld3BvcnRcbiAgICBwYXJ0aWNpcGFudCBTbGl2ZXIgYXMgUmVuZGVyU2xpdmVyTGlzdFxuICAgIHBhcnRpY2lwYW50IFBhcmEgYXMgUmVuZGVyUGFyYWdyYXBoIC8gUmVuZGVyRWRpdGFibGUgKFx1NWM0Zlx1NWU1NVx1NTkxNilcblxuICAgIFVzZXItPj5QbHVnaW46IFx1NjMwOVx1NGUwYiBDdHJsK0YgKGVhZ2VyTG9hZE9mZnNjcmVlblRleHQgPSB0cnVlKVxuICAgIFBsdWdpbi0-PlNjb3BlOiBub3RpZnlMaXN0ZW5lcnMoKSAoZGlzYWJsZUxhenlMb2FkaW5nID09IHRydWUpXG4gICAgU2NvcGUtPj5WUDogX0luaGVyaXRlZFRleHRQbHVnaW5MYXp5TG9hZGluZyBcdTkwMWFcdTc3ZTVcdTg5YzZcdTUzZTNcbiAgICBWUC0-PlZQOiBzY3JvbGxDYWNoZUV4dGVudCA9IFNjcm9sbENhY2hlRXh0ZW50LnBpeGVscygxZTkpXG4gICAgVlAtPj5TbGl2ZXI6IHBlcmZvcm1MYXlvdXQocmVtYWluaW5nQ2FjaGVFeHRlbnQ6IDFlOSlcbiAgICBTbGl2ZXItPj5QYXJhOiBcdTY3ODRcdTVlZmFcdTMwMDFcdTYzMDJcdThmN2RcdTVlNzZcdTYzOTJcdTcyNDhcdTYyNDBcdTY3MDlcdTVjNGZcdTVlNTVcdTU5MTZcdTUyMTdcdTg4NjhcdTk4NzlcbiAgICBQYXJhLT4-UGx1Z2luOiBhdHRhY2goKSAtPiBkaWRBZGRUZXh0KGRlbGVnYXRlKVxuICAgIFBhcmEtPj5QbHVnaW46IHBlcmZvcm1MYXlvdXQoKSAtPiBkaWRMYXlvdXRUZXh0KGRlbGVnYXRlKVxuICAgIFBsdWdpbi0-PlBsdWdpbjogXHU5MDFhXHU4ZmM3IGRlbGVnYXRlLmNvbXBhcmVUbygpIFx1NjMwOVx1NjU4N1x1Njg2M1x1OTg3YVx1NWU4Zlx1NjM5Mlx1NWU4ZlxuICAgIFVzZXItPj5QbHVnaW46IFx1NzBiOVx1NTFmYlx1NGUwYlx1NGUwMFx1NGUyYVx1NTMzOVx1OTE0ZFx1OTg3OSAvIEVudGVyXG4gICAgUGx1Z2luLT4-UGFyYTogZGVsZWdhdGUuZW5zdXJlVmlzaWJsZShtYXRjaC5yYW5nZSlcbiAgICBQYXJhLT4-VlA6IHNob3dPblNjcmVlbihyZWN0OiB0YXJnZXRSZWN0KSAtPiBcdTVlNzNcdTZlZDFcdTZlZGFcdTUyYThcdTgxZjNcdTUzMzlcdTkxNGRcdTY1ODdcdTViNTciLCAibWVybWFpZCI6IHsidGhlbWUiOiAiZGVmYXVsdCJ9fQ==)
+
+*(如果您无法看到上图，请参阅下方的 Mermaid 源码)*
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Plugin as SearchInPagePlugin
+    participant Scope as TextPluginScope
+    participant VP as Viewport / RenderViewport
+    participant Sliver as RenderSliverList
+    participant Para as RenderParagraph / RenderEditable (屏幕外)
+
+    User->>Plugin: 按下 Ctrl+F (eagerLoadOffscreenText = true)
+    Plugin->>Scope: notifyListeners() (disableLazyLoading == true)
+    Scope->>VP: _InheritedTextPluginLazyLoading 通知视口
+    VP->>VP: scrollCacheExtent = ScrollCacheExtent.pixels(1e9)
+    VP->>Sliver: performLayout(remainingCacheExtent: 1e9)
+    Sliver->>Para: 构建、挂载并排版所有屏幕外列表项
+    Para->>Plugin: attach() -> didAddText(delegate)
+    Para->>Plugin: performLayout() -> didLayoutText(delegate)
+    Plugin->>Plugin: 通过 delegate.compareTo() 按文档顺序排序
+    User->>Plugin: 点击下一个匹配项 / Enter
+    Plugin->>Para: delegate.ensureVisible(match.range)
+    Para->>VP: showOnScreen(rect: targetRect) -> 平滑滚动至匹配文字
+```
+
+#### 5.1.1 精确滚动至指定字符区间 (`TextDelegate.ensureVisible`)
+`TextDelegate.ensureVisible(range)` 计算任意 `TextRange` 的字符包围盒矩形，并向上逐级唤醒父级视口（`RenderViewportBase.showInViewport`）进行平滑滚动。支持多层嵌套滚动视图（横向+纵向）自动双轴滚动定位。
+
+#### 5.1.2 真正的文档顺序排序 (`TextDelegate.compareTo`)
+当用户向上滚动列表时，组件的挂载顺序与文档顺序相反。`TextDelegate.compareTo` 通过寻找两者的**最近公共祖先 (Lowest Common Ancestor, LCA)**，并遍历祖先节点的子节点链，保证无论滑动和挂载顺序如何，“下一个/上一个”匹配项始终严格按照从上到下的阅读顺序排列。
+
+#### 5.1.3 取消懒加载 (`TextPlugin.disableLazyLoading`)
+当激活搜索时，`TextPluginScope` 仅向视口通知 `disableLazyLoading = true`，使视口将 `cacheExtent` 扩展至 `1e9` 像素，强制 `SliverList` 将所有屏幕外项构建入内存；关闭搜索时自动恢复 `250.0` 像素默认视口缓存，回收屏幕外组件。
+
+---
+
+
+### 5.2 深度探讨：文本选择高亮是否应该作为一个 `TextPlugin`？
+
+一个自然的架构思考是：Flutter 内置的文本选择高亮 ([_SelectableFragment.paintSelection](rendering/paragraph.dart#L3865)) 是否应该本身迁移为一个由 `SelectableRegion` 安装的 `TextPlugin`？
+
+#### 5.2.1 收益
+1. **可组合的 Z 轴顺序**：由作用域安装顺序决定选择高亮与插件画笔的层级。
+2. **自定义选择视觉效果**：无需修改 `RenderParagraph` 即可实现圆角选区、渐变选区或**多用户协同光标/选区**（如 Google Docs）。
+3. **精简 `RenderParagraph`**：将 `paragraph.dart` 中数千行选择逻辑解耦。
+
+#### 5.2.2 迁移时发现的 5 个边界情况 (`text-plugins-alt` 原型分析)
+1. **根与叶绘制顺序反转**：`SelectableRegion` 通常在页面根部，而业务插件在内层。若外层后画，选择蓝框会盖住内层插件的前景装饰。
+2. **单组件 `Text(selectionColor: ...)` 覆盖**：单个组件覆盖选择颜色的属性需要显式暴露至 `TextDelegate`。
+3. **不连续选区与 `WidgetSpan` 占位符**：需过滤 `\uFFFC` 占位符矩形。
+4. **回退绘制抑制标志**：需要明确的 `handlesSelectionHighlight` 标志防止双重绘制。
+5. **排除作用域偶合**：`TextPluginScope.none` 不应意外屏蔽选择高亮的绘制。
+
+#### 5.2.3 为什么完整的文本选择 (`_SelectableFragment`) 仅仅依靠 `CustomPainter` 是不够的？
+
+虽然**选择高亮蓝框的绘制**可以完美放入 `TextDelegate.backgroundPainter`，但在不扩展 `TextDelegate` 的情况下，[_SelectableFragment](rendering/paragraph.dart#L1752) 的其余能力无法直接从 `RenderParagraph` / `RenderEditable` 中剥离到纯粹的 `TextPlugin` 中：
+
+1. **移动端选择拖拽手柄需要 `PaintingContext.pushLayer`**：
+   [_SelectableFragment.paintHandles](rendering/paragraph.dart#L3883) 通过 `context.pushLayer(LeaderLayer(link: _startHandleLayerLink!, ...))` 提交合成好的 `LeaderLayer` 图层，并要求 [RenderParagraph.alwaysNeedsCompositing](rendering/paragraph.dart#L684) 返回 `true`。而 `CustomPainter` 仅接收 `Canvas` 绘制上下文，无法向渲染流水线提交合成图层。
+2. **跨 RenderObject 的 `SelectionRegistrar` 注册协议**：
+   `SelectionArea` 能够同时跨越文本组件（`RenderParagraph`）和非文本可选组件（如可选择的 Image）。任何选择插件都必须继续将其片段桥接到 `SelectionRegistrar` 注册中心。
+
+#### 5.2.4 干净解耦选择功能至 `TextPlugin` 的蓝图规格
+
+| 所需能力 | 在 `TextDelegate` / `TextPluginScope` 上所需的 API 扩展 |
+| :--- | :--- |
+| **多片段选区与颜色** | 在 `TextDelegate` 上暴露 `List<TextSelection> get selections` 与 `Color? get selectionColor`。 |
+| **跳过 `WidgetSpan` 矩形** | 通过 [TextDelegate.placeholderRanges](rendering/text_plugin.dart) 以及在 [TextDelegate.getBoxesForSelection](rendering/text_plugin.dart) 中传入 `includePlaceholders: false` 实现。 |
+| **移动端拖拽手柄图层** | 允许 `TextDelegate` 注册拖拽手柄的 `LeaderLayer` 链接 `(LayerLink, Offset)`，在 `RenderParagraph.paint` / `RenderEditable._paintContents` 期间统一绘制并反映在 `alwaysNeedsCompositing` 中。 |
+| **正交排除作用域** | 引入 `TextPluginScope.exclude(types: {...})`，避免 `TextPluginScope.none` 意外抑制 `SelectionHighlightPlugin`。 |
+
+#### 5.2.5 后续演进路线图：将 `SelectionArea` / `SelectionContainer` 迁移为 `TextPlugin`
+
+基于原型实验 [`Renzo-Olivares:text-plugins-alt` (commit 55f5d0af4503fe7950374addd625a5fd9ae8efb5)](https://github.com/Renzo-Olivares/flutter/commit/55f5d0af4503fe7950374addd625a5fd9ae8efb5) 的设计分析，将 Flutter 内置的文本选择高亮完全重构成一个标准的 `TextPlugin` 已规划为以下四个阶段的后续 Action / Roadmap 项：
+
+#### 阶段 1：内部 `_SelectionHighlightTextPlugin` 原型化
+- `SelectionContainer` / `SelectableRegion` 在其子树中自动安装私有的 `_SelectionHighlightTextPlugin`。
+- `_SelectionHighlightTextPlugin` 监听来自 `SelectionRegistrar` 的选区变化，通过 `delegate.getBoxesForSelection(selection, includePlaceholders: false)` 读取选区物理矩形，并利用 `delegate.backgroundPainter` 进行高亮绘制。
+- `RenderParagraph` 与 `RenderEditable` 在检测到选择高亮插件存在时，自动抑制传统的 `_SelectableFragment.paintSelection` 回退绘制，防止重复叠加颜色。
+
+#### 阶段 2：移动端选择手柄图层注册 (Handle Layer Registration)
+- 扩展 `TextDelegate` 暴露 `delegate.registerHandleLayers(startLink, endLink)` 方法，允许选择插件在 `RenderParagraph` / `RenderEditable` 绘制时提交用于移动端选区拖拽小球的合成 `LeaderLayer` 图层。
+
+#### 阶段 3：按类型精准排除子树 (`TextPluginScope.exclude`)
+- 在 `TextPluginScope.none` 之外新增 `TextPluginScope.exclude(types: {SearchInPagePlugin, StockTickerPlugin})` 语法，允许开发者仅屏蔽业务层插件（如在 UI 按钮上），而不会误将底层的 `_SelectionHighlightTextPlugin` 屏蔽导致选择高亮失效。
+
+#### 阶段 4：框架解耦与全面迁移
+- 弃用 `RenderParagraph` 和 `RenderEditable` 内部的硬编码选区绘制逻辑，使 `_SelectionHighlightTextPlugin` 成为 Flutter 全平台统一的文本选择渲染引擎。
+
+---
+
+## 6. 极端边界情况与架构深度分析 (14 个 Corner Cases)
 
 以下是设计和实现过程中识别出的 14 个关键边界情况、当前的解决方案以及相关权衡：
 
@@ -325,165 +502,7 @@ sequenceDiagram
 
 ---
 
-## 5. 深度探讨：文本选择高亮是否应该作为一个 `TextPlugin`？
-
-一个自然的架构思考是：Flutter 内置的文本选择高亮 ([_SelectableFragment.paintSelection](rendering/paragraph.dart#L3865)) 是否应该本身迁移为一个由 `SelectableRegion` 安装的 `TextPlugin`？
-
-### 5.1 收益
-1. **可组合的 Z 轴顺序**：由作用域安装顺序决定选择高亮与插件画笔的层级。
-2. **自定义选择视觉效果**：无需修改 `RenderParagraph` 即可实现圆角选区、渐变选区或**多用户协同光标/选区**（如 Google Docs）。
-3. **精简 `RenderParagraph`**：将 `paragraph.dart` 中数千行选择逻辑解耦。
-
-### 5.2 迁移时发现的 5 个边界情况 (`text-plugins-alt` 原型分析)
-1. **根与叶绘制顺序反转**：`SelectableRegion` 通常在页面根部，而业务插件在内层。若外层后画，选择蓝框会盖住内层插件的前景装饰。
-2. **单组件 `Text(selectionColor: ...)` 覆盖**：单个组件覆盖选择颜色的属性需要显式暴露至 `TextDelegate`。
-3. **不连续选区与 `WidgetSpan` 占位符**：需过滤 `\uFFFC` 占位符矩形。
-4. **回退绘制抑制标志**：需要明确的 `handlesSelectionHighlight` 标志防止双重绘制。
-5. **排除作用域偶合**：`TextPluginScope.none` 不应意外屏蔽选择高亮的绘制。
-
-### 5.3 为什么完整的文本选择 (`_SelectableFragment`) 仅仅依靠 `CustomPainter` 是不够的？
-
-虽然**选择高亮蓝框的绘制**可以完美放入 `TextDelegate.backgroundPainter`，但在不扩展 `TextDelegate` 的情况下，[_SelectableFragment](rendering/paragraph.dart#L1752) 的其余能力无法直接从 `RenderParagraph` / `RenderEditable` 中剥离到纯粹的 `TextPlugin` 中：
-
-1. **移动端选择拖拽手柄需要 `PaintingContext.pushLayer`**：
-   [_SelectableFragment.paintHandles](rendering/paragraph.dart#L3883) 通过 `context.pushLayer(LeaderLayer(link: _startHandleLayerLink!, ...))` 提交合成好的 `LeaderLayer` 图层，并要求 [RenderParagraph.alwaysNeedsCompositing](rendering/paragraph.dart#L684) 返回 `true`。而 `CustomPainter` 仅接收 `Canvas` 绘制上下文，无法向渲染流水线提交合成图层。
-2. **跨 RenderObject 的 `SelectionRegistrar` 注册协议**：
-   `SelectionArea` 能够同时跨越文本组件（`RenderParagraph`）和非文本可选组件（如可选择的 Image）。任何选择插件都必须继续将其片段桥接到 `SelectionRegistrar` 注册中心。
-
-### 5.4 干净解耦选择功能至 `TextPlugin` 的蓝图规格
-
-| 所需能力 | 在 `TextDelegate` / `TextPluginScope` 上所需的 API 扩展 |
-| :--- | :--- |
-| **多片段选区与颜色** | 在 `TextDelegate` 上暴露 `List<TextSelection> get selections` 与 `Color? get selectionColor`。 |
-| **跳过 `WidgetSpan` 矩形** | 通过 [TextDelegate.placeholderRanges](rendering/text_plugin.dart) 以及在 [TextDelegate.getBoxesForSelection](rendering/text_plugin.dart) 中传入 `includePlaceholders: false` 实现。 |
-| **移动端拖拽手柄图层** | 允许 `TextDelegate` 注册拖拽手柄的 `LeaderLayer` 链接 `(LayerLink, Offset)`，在 `RenderParagraph.paint` / `RenderEditable._paintContents` 期间统一绘制并反映在 `alwaysNeedsCompositing` 中。 |
-| **正交排除作用域** | 引入 `TextPluginScope.exclude(types: {...})`，避免 `TextPluginScope.none` 意外抑制 `SelectionHighlightPlugin`。 |
-
-### 5.5 后续演进路线图：将 `SelectionArea` / `SelectionContainer` 迁移为 `TextPlugin`
-
-基于原型实验 [`Renzo-Olivares:text-plugins-alt` (commit 55f5d0af4503fe7950374addd625a5fd9ae8efb5)](https://github.com/Renzo-Olivares/flutter/commit/55f5d0af4503fe7950374addd625a5fd9ae8efb5) 的设计分析，将 Flutter 内置的文本选择高亮完全重构成一个标准的 `TextPlugin` 已规划为以下四个阶段的后续 Action / Roadmap 项：
-
-#### 阶段 1：内部 `_SelectionHighlightTextPlugin` 原型化
-- `SelectionContainer` / `SelectableRegion` 在其子树中自动安装私有的 `_SelectionHighlightTextPlugin`。
-- `_SelectionHighlightTextPlugin` 监听来自 `SelectionRegistrar` 的选区变化，通过 `delegate.getBoxesForSelection(selection, includePlaceholders: false)` 读取选区物理矩形，并利用 `delegate.backgroundPainter` 进行高亮绘制。
-- `RenderParagraph` 与 `RenderEditable` 在检测到选择高亮插件存在时，自动抑制传统的 `_SelectableFragment.paintSelection` 回退绘制，防止重复叠加颜色。
-
-#### 阶段 2：移动端选择手柄图层注册 (Handle Layer Registration)
-- 扩展 `TextDelegate` 暴露 `delegate.registerHandleLayers(startLink, endLink)` 方法，允许选择插件在 `RenderParagraph` / `RenderEditable` 绘制时提交用于移动端选区拖拽小球的合成 `LeaderLayer` 图层。
-
-#### 阶段 3：按类型精准排除子树 (`TextPluginScope.exclude`)
-- 在 `TextPluginScope.none` 之外新增 `TextPluginScope.exclude(types: {SearchInPagePlugin, StockTickerPlugin})` 语法，允许开发者仅屏蔽业务层插件（如在 UI 按钮上），而不会误将底层的 `_SelectionHighlightTextPlugin` 屏蔽导致选择高亮失效。
-
-#### 阶段 4：框架解耦与全面迁移
-- 弃用 `RenderParagraph` 和 `RenderEditable` 内部的硬编码选区绘制逻辑，使 `_SelectionHighlightTextPlugin` 成为 Flutter 全平台统一的文本选择渲染引擎。
-
----
-
-## 6. 滚动、文档顺序排序与取消懒加载 (`Ctrl+F`)
-
-要在 Flutter 中实现浏览器级别的 **"页面内查找 (Find in Page)"**，需要在渲染层与 Widget 层解决三个核心问题：
-
-```mermaid
-sequenceDiagram
-    participant User as 用户
-    participant Plugin as SearchInPagePlugin
-    participant Scope as TextPluginScope
-    participant VP as Viewport / RenderViewport
-    participant Sliver as RenderSliverList
-    participant Para as RenderParagraph / RenderEditable (屏幕外)
-
-    User->>Plugin: 按下 Ctrl+F (eagerLoadOffscreenText = true)
-    Plugin->>Scope: notifyListeners() (disableLazyLoading == true)
-    Scope->>VP: _InheritedTextPluginLazyLoading 通知视口
-    VP->>VP: scrollCacheExtent = ScrollCacheExtent.pixels(1e9)
-    VP->>Sliver: performLayout(remainingCacheExtent: 1e9)
-    Sliver->>Para: 构建、挂载并排版所有屏幕外列表项
-    Para->>Plugin: attach() -> didAddText(delegate)
-    Para->>Plugin: performLayout() -> didLayoutText(delegate)
-    Plugin->>Plugin: 通过 delegate.compareTo() 按文档顺序排序
-    User->>Plugin: 点击下一个匹配项 / Enter
-    Plugin->>Para: delegate.ensureVisible(match.range)
-    Para->>VP: showOnScreen(rect: targetRect) -> 平滑滚动至匹配文字
-```
-
-### 6.1 精确滚动至指定字符区间 (`TextDelegate.ensureVisible`)
-`TextDelegate.ensureVisible(range)` 计算任意 `TextRange` 的字符包围盒矩形，并向上逐级唤醒父级视口（`RenderViewportBase.showInViewport`）进行平滑滚动。支持多层嵌套滚动视图（横向+纵向）自动双轴滚动定位。
-
-### 6.2 真正的文档顺序排序 (`TextDelegate.compareTo`)
-当用户向上滚动列表时，组件的挂载顺序与文档顺序相反。`TextDelegate.compareTo` 通过寻找两者的**最近公共祖先 (Lowest Common Ancestor, LCA)**，并遍历祖先节点的子节点链，保证无论滑动和挂载顺序如何，“下一个/上一个”匹配项始终严格按照从上到下的阅读顺序排列。
-
-### 6.3 取消懒加载 (`TextPlugin.disableLazyLoading`)
-当激活搜索时，`TextPluginScope` 仅向视口通知 `disableLazyLoading = true`，使视口将 `cacheExtent` 扩展至 `1e9` 像素，强制 `SliverList` 将所有屏幕外项构建入内存；关闭搜索时自动恢复 `250.0` 像素默认视口缓存，回收屏幕外组件。
-
----
-
-## 7. 更广泛的生态应用场景与已实现的插件
-
-`TextPlugin` 将**文本检查**、**子区间几何坐标**、**合成绘制**、**手势路由**和**视口控制**融为一体，为 Flutter 生态解锁了一系列“即插即用”的插件能力：
-
-### 7.1 无障碍、朗读辅助与语言学习
-- **TTS 朗读卡拉 OK 同步器 (已实现: [ReadAloudPlugin](examples/text_plugins/lib/plugins/read_aloud_plugin.dart))**：按阅读顺序朗读文本，高亮当前朗读单词，并在跨段落时自动平滑滚动。
-- **划词翻译 / 假名 (Furigana) 标注**：悬浮/长按显示单词释义 popover。
-- **阅读障碍辅助视线尺**：暗化背景行，聚焦当前阅读行。
-
-### 7.2 安全、隐私与合规
-- **实时 PII 敏感信息脱敏打码 (已实现: [PiiRedactionPlugin](examples/text_plugins/lib/plugins/pii_redaction_plugin.dart))**：自动识别 API Key、身份证、手机号并绘制黑块遮罩，点击可解密查看。
-
-### 7.3 编辑、多语言 (l10n) 与 QA 工具
-- **拼写检查与写作风格 Lint (已实现: [SpellcheckLinterPlugin](examples/text_plugins/lib/plugins/spellcheck_linter_plugin.dart))**：在错别字下方绘制红色波浪线，点击弹出修改建议。
-- **未翻译文本 / 占位符泄露检测**：开发模式下高亮未翻译的 `auth.login.title` 或 `{userName}` 占位符。
-
-### 7.4 协同标注与多用户光标
-- **Kindle 式持久化高亮与边注**：在文章上绘制荧光笔高亮并标记评论。
-- **多人在线协同光标与选区**：实时渲染队友的光标标志与选择区域。
-
-### 7.5 领域特定智能实体
-- **股票代码实时高亮 (已实现: [StockTickerPlugin](examples/text_plugins/lib/plugins/stock_ticker_plugin.dart))**：自动将 `GOOG`、`AAPL` 变成可点击的行情卡片。
-- **自动超链接识别 (已实现: [LinkifyPlugin](examples/text_plugins/lib/plugins/linkify_plugin.dart))**：自动将 `https://...` 变成可点击链接。
-- **SEO 结构化元数据提取 (已实现: [SeoExtractorPlugin](examples/text_plugins/lib/plugins/seo_extractor_plugin.dart))**：提取全页展示文本生成搜索引擎索引。
-
----
-
-## 8. 框架内置 vs 社区 Package 划界与通用 API 设计
-
-在架构层面，一个关键问题是明确：**哪些插件应该作为核心内置在 Flutter 框架中 (`package:flutter`)**，**哪些插件应该交给社区以包的形式存在 (`pub.dev`)**，以及**如何设计 API 使其足够通用**。
-
-### 8.1 框架内置插件 (`package:flutter`)
-
-只有满足全平台通用、属于系统标配功能且零外部依赖的插件才适合内置在框架中：
-
-1. **`_SelectionHighlightTextPlugin`**：作为 `SelectionArea` / `SelectableRegion` 的底层依赖，全平台通用文本选择高亮。
-2. **`SearchInPagePlugin`**：桌面端/Web 端标配的 `Ctrl+F` 页面内查找高亮、平滑跳转及视口懒加载管理。
-3. **`DefaultSpellCheckPlugin`**：对接平台原生 IME 输入法和内置拼写检查波浪线。
-
-### 8.2 社区 Package 插件 (`pub.dev`)
-
-特定领域、带有业务偏向或依赖第三方库的功能应当由社区作为独立 Package 维护：
-
-1. **`LinkifyPlugin` (`package:flutter_linkify_plugin`)**：复杂的 URL 正则解析、超链接样式及 `url_launcher` 调用。
-2. **`StockTickerPlugin` / 财经文本插件**：股票代码 (`GOOG`)、加密货币地址、外币汇率实时转换。
-3. **`PiiRedactionPlugin` (`package:flutter_pii_redaction`)**：符合安全合规要求的 API Key、身份证、信用卡脱敏黑块遮罩与点击解密。
-4. **`ReadAloudPlugin` (`package:flutter_read_aloud`)**：结合 `flutter_tts` 或云端语音 API 的卡拉 OK 逐字高亮朗读同步器。
-5. **`SeoExtractorPlugin` (`package:flutter_seo_text`)**：提取 Schema.org JSON-LD 结构化文本供搜索引擎抓取。
-6. **`AiGroundingPlugin` / `SpoilerBlurPlugin`**：AI 问答引用来源高亮、剧透打码与 120fps 动态特效。
-
-### 8.3 如何设计更通用的 API 架构
-
-为了让同一个 `TextPlugin` 体系既能支撑框架内置的基础选择，又能支撑社区成百上千种创意 Package，API 设计遵循以下四个通用维度：
-
-1. **通用能力原语而非特定业务假设**：
-   - 不为超链接或搜索单独设计特化 API，而是提供原语级别的基础能力：`getBoxesForSelection`、`getPositionForOffset`、`getWordBoundary`、`getLineBoundary`、`getOffsetForCaret`、`backgroundPainter` 与 `foregroundPainter`。
-2. **分层组合与精准筛选机制**：
-   - `TextPluginScope` 支持任意数量的插件分层叠加（背景高亮在最底，超链接在顶）。
-   - 提供 `TextPluginScope.exclude(types: {...})` 允许开发者在 UI 按钮上精准排除特定插件，而不破坏底层的选择高亮。
-3. **响应式视口控制协议**：
-   - 暴露 `disableLazyLoading` 协议，使任何需要全局检索的插件（如搜索、SEO 提取）均可以与 `ListView.builder` 视口无缝联动，临时拓宽缓存区并自动恢复。
-4. **无障碍与语义对齐**：
-   - 提供 `TextPluginSemanticAnnotation` 语义标注扩展路径，使社区插件在视觉上绘制的元素（如链接、股票代码、敏感词）能同步映射为 VoiceOver / TalkBack 屏幕朗读器可识别的独立语义节点。
-
----
-
-## 9. 创建与修改的文件汇总
+## 7. 创建与修改的文件汇总
 
 ### 框架核心层 (`packages/flutter/`)
 - [packages/flutter/lib/src/rendering/text_plugin.dart](rendering/text_plugin.dart) — `TextPlugin` 与 `TextDelegate` 核心接口定义。
