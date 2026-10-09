@@ -90,41 +90,6 @@ To ensure `TextPlugin` scales smoothly from simple core selection to complex com
 
 ![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogImdyYXBoIFREXG4gICAgc3ViZ3JhcGggV2lkZ2V0c1tcIldpZGdldHMgTGF5ZXIgKHBhY2thZ2U6Zmx1dHRlci93aWRnZXRzLmRhcnQpXCJdXG4gICAgICAgIFNjb3BlT3V0ZXJbXCJUZXh0UGx1Z2luU2NvcGUgKE91dGVyOiBlLmcuIFNlYXJjaFBsdWdpbilcIl1cbiAgICAgICAgU2NvcGVJbm5lcltcIlRleHRQbHVnaW5TY29wZS5tdWx0aXBsZSAoSW5uZXI6IFN0b2NrUGx1Z2luLCBMaW5raWZ5UGx1Z2luKVwiXVxuICAgICAgICBTY29wZU5vbmVbXCJUZXh0UGx1Z2luU2NvcGUubm9uZSAoT3B0LW91dCBTdWJ0cmVlKVwiXVxuICAgICAgICBUZXh0V2lkZ2V0W1wiVGV4dCAvIFRleHQucmljaFwiXVxuICAgICAgICBSaWNoVGV4dFdpZGdldFtcIlJpY2hUZXh0XCJdXG4gICAgICAgIEVkaXRhYmxlV2lkZ2V0W1wiRWRpdGFibGVUZXh0IC8gVGV4dEZpZWxkXCJdXG4gICAgZW5kXG5cbiAgICBzdWJncmFwaCBSZW5kZXJpbmdbXCJSZW5kZXJpbmcgTGF5ZXIgKHBhY2thZ2U6Zmx1dHRlci9yZW5kZXJpbmcuZGFydClcIl1cbiAgICAgICAgUlBbXCJSZW5kZXJQYXJhZ3JhcGhcIl1cbiAgICAgICAgUkVbXCJSZW5kZXJFZGl0YWJsZVwiXVxuICAgICAgICBURDFbXCJUZXh0RGVsZWdhdGUgKFNlYXJjaFBsdWdpbilcIl1cbiAgICAgICAgVEQyW1wiVGV4dERlbGVnYXRlIChTdG9ja1BsdWdpbilcIl1cbiAgICAgICAgVEQzW1wiVGV4dERlbGVnYXRlIChMaW5raWZ5UGx1Z2luKVwiXVxuICAgIGVuZFxuXG4gICAgU2NvcGVPdXRlciAtLT4gU2NvcGVJbm5lclxuICAgIFNjb3BlSW5uZXIgLS0-IFRleHRXaWRnZXRcbiAgICBTY29wZUlubmVyIC0tPiBFZGl0YWJsZVdpZGdldFxuICAgIFNjb3BlSW5uZXIgLS0-IFNjb3BlTm9uZVxuICAgIFRleHRXaWRnZXQgLS0-IFJpY2hUZXh0V2lkZ2V0XG4gICAgUmljaFRleHRXaWRnZXQgLS0-fFwidGV4dFBsdWdpbnMgPSBbU2VhcmNoLCBTdG9jaywgTGlua2lmeV1cInwgUlBcbiAgICBFZGl0YWJsZVdpZGdldCAtLT58XCJ0ZXh0UGx1Z2lucyA9IFtTZWFyY2gsIFN0b2NrLCBMaW5raWZ5XVwifCBSRVxuICAgIFJQIC0tPiBURDFcbiAgICBSRSAtLT4gVEQxXG4gICAgUlAgLS0-IFREMlxuICAgIFJFIC0tPiBURDJcbiAgICBSUCAtLT4gVEQzXG4gICAgUkUgLS0-IFREMyIsICJtZXJtYWlkIjogeyJ0aGVtZSI6ICJkZWZhdWx0In19)
 
-*(If you cannot see the image above, see the Mermaid source below)*
-
-```mermaid
-graph TD
-    subgraph Widgets["Widgets Layer (package:flutter/widgets.dart)"]
-        ScopeOuter["TextPluginScope (Outer: e.g. SearchPlugin)"]
-        ScopeInner["TextPluginScope.multiple (Inner: StockPlugin, LinkifyPlugin)"]
-        ScopeNone["TextPluginScope.none (Opt-out Subtree)"]
-        TextWidget["Text / Text.rich"]
-        RichTextWidget["RichText"]
-        EditableWidget["EditableText / TextField"]
-    end
-
-    subgraph Rendering["Rendering Layer (package:flutter/rendering.dart)"]
-        RP["RenderParagraph"]
-        RE["RenderEditable"]
-        TD1["TextDelegate (SearchPlugin)"]
-        TD2["TextDelegate (StockPlugin)"]
-        TD3["TextDelegate (LinkifyPlugin)"]
-    end
-
-    ScopeOuter --> ScopeInner
-    ScopeInner --> TextWidget
-    ScopeInner --> EditableWidget
-    ScopeInner --> ScopeNone
-    TextWidget --> RichTextWidget
-    RichTextWidget -->|"textPlugins = [Search, Stock, Linkify]"| RP
-    EditableWidget -->|"textPlugins = [Search, Stock, Linkify]"| RE
-    RP --> TD1
-    RE --> TD1
-    RP --> TD2
-    RE --> TD2
-    RP --> TD3
-    RE --> TD3
-```
 
 ### 3.1 Layering & File Organization
 
@@ -155,41 +120,6 @@ abstract class TextPlugin {
 
 ![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogInNlcXVlbmNlRGlhZ3JhbVxuICAgIHBhcnRpY2lwYW50IFcgYXMgUmljaFRleHQgKFdpZGdldClcbiAgICBwYXJ0aWNpcGFudCBSUCBhcyBSZW5kZXJQYXJhZ3JhcGhcbiAgICBwYXJ0aWNpcGFudCBURCBhcyBUZXh0RGVsZWdhdGVcbiAgICBwYXJ0aWNpcGFudCBUUCBhcyBUZXh0UGx1Z2luXG5cbiAgICBXLT4-UlA6IGNyZWF0ZVJlbmRlck9iamVjdCAvIHVwZGF0ZVJlbmRlck9iamVjdCAodGV4dFBsdWdpbnMpXG4gICAgUlAtPj5URDogbmV3IFRleHREZWxlZ2F0ZSh0aGlzLCBwbHVnaW4pXG4gICAgUlAtPj5UUDogZGlkQWRkVGV4dChkZWxlZ2F0ZSlcbiAgICBOb3RlIG92ZXIgUlAsVFA6IE5vdGU6IExheW91dCBoYXMgTk9UIHJ1biB5ZXQgb24gaW5pdGlhbCBtb3VudCAoaGFzTGF5b3V0ID09IGZhbHNlKVxuXG4gICAgUlAtPj5SUDogcGVyZm9ybUxheW91dCgpXG4gICAgUlAtPj5URDogbm90aWZ5Q2hhbmdlZCgpXG4gICAgUlAtPj5UUDogZGlkTGF5b3V0VGV4dChkZWxlZ2F0ZSlcbiAgICBOb3RlIG92ZXIgUlAsVFA6IExheW91dCBxdWVyaWVzIChnZXRCb3hlc0ZvclNlbGVjdGlvbiwgc2l6ZSkgYXJlIG5vdyB2YWxpZFxuXG4gICAgUlAtPj5SUDogcGFpbnQoY29udGV4dCwgb2Zmc2V0KVxuICAgIFJQLT4-VEQ6IGJhY2tncm91bmRQYWludGVyPy5wYWludChjYW52YXMsIHNpemUpXG4gICAgUlAtPj5SUDogX3RleHRQYWludGVyLnBhaW50KGNhbnZhcywgb2Zmc2V0KVxuICAgIFJQLT4-VEQ6IGZvcmVncm91bmRQYWludGVyPy5wYWludChjYW52YXMsIHNpemUpXG5cbiAgICBXLT4-UlA6IHVwZGF0ZVJlbmRlck9iamVjdCAodGV4dCBjaGFuZ2VkKVxuICAgIFJQLT4-VEQ6IG5vdGlmeUNoYW5nZWQoKVxuICAgIFJQLT4-VFA6IGRpZFVwZGF0ZVRleHQoZGVsZWdhdGUpXG4gICAgUlAtPj5SUDogcGVyZm9ybUxheW91dCgpXG4gICAgUlAtPj5UUDogZGlkTGF5b3V0VGV4dChkZWxlZ2F0ZSlcblxuICAgIFctPj5SUDogZGlzcG9zZSgpIG9yIHBsdWdpbiByZW1vdmVkIGZyb20gc2NvcGVcbiAgICBSUC0-PlREOiBkZXRhY2hQYWludGVycygpXG4gICAgUlAtPj5UUDogZGlkUmVtb3ZlVGV4dChkZWxlZ2F0ZSlcbiAgICBSUC0-PlREOiBkaXNwb3NlKCkiLCAibWVybWFpZCI6IHsidGhlbWUiOiAiZGVmYXVsdCJ9fQ==)
 
-*(If you cannot see the image above, see the Mermaid source below)*
-
-```mermaid
-sequenceDiagram
-    participant W as RichText (Widget)
-    participant RP as RenderParagraph
-    participant TD as TextDelegate
-    participant TP as TextPlugin
-
-    W->>RP: createRenderObject / updateRenderObject (textPlugins)
-    RP->>TD: new TextDelegate(this, plugin)
-    RP->>TP: didAddText(delegate)
-    Note over RP,TP: Note: Layout has NOT run yet on initial mount (hasLayout == false)
-
-    RP->>RP: performLayout()
-    RP->>TD: notifyChanged()
-    RP->>TP: didLayoutText(delegate)
-    Note over RP,TP: Layout queries (getBoxesForSelection, size) are now valid
-
-    RP->>RP: paint(context, offset)
-    RP->>TD: backgroundPainter?.paint(canvas, size)
-    RP->>RP: _textPainter.paint(canvas, offset)
-    RP->>TD: foregroundPainter?.paint(canvas, size)
-
-    W->>RP: updateRenderObject (text changed)
-    RP->>TD: notifyChanged()
-    RP->>TP: didUpdateText(delegate)
-    RP->>RP: performLayout()
-    RP->>TP: didLayoutText(delegate)
-
-    W->>RP: dispose() or plugin removed from scope
-    RP->>TD: detachPainters()
-    RP->>TP: didRemoveText(delegate)
-    RP->>TD: dispose()
-```
 
 ### 3.3 `TextDelegate`: Capability-Scoped Proxy for `RenderParagraph`
 
@@ -281,30 +211,6 @@ Supporting browser-grade **"Find in Page" (`Ctrl+F`)** across scrollable Flutter
 
 ![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogInNlcXVlbmNlRGlhZ3JhbVxuICAgIHBhcnRpY2lwYW50IFVzZXJcbiAgICBwYXJ0aWNpcGFudCBQbHVnaW4gYXMgU2VhcmNoSW5QYWdlUGx1Z2luXG4gICAgcGFydGljaXBhbnQgU2NvcGUgYXMgVGV4dFBsdWdpblNjb3BlXG4gICAgcGFydGljaXBhbnQgVlAgYXMgVmlld3BvcnQgLyBSZW5kZXJWaWV3cG9ydFxuICAgIHBhcnRpY2lwYW50IFNsaXZlciBhcyBSZW5kZXJTbGl2ZXJMaXN0XG4gICAgcGFydGljaXBhbnQgUGFyYSBhcyBSZW5kZXJQYXJhZ3JhcGggKE9mZnNjcmVlbilcblxuICAgIFVzZXItPj5QbHVnaW46IFByZXNzZXMgQ3RybCtGIChlYWdlckxvYWRPZmZzY3JlZW5UZXh0ID0gdHJ1ZSlcbiAgICBQbHVnaW4tPj5TY29wZTogbm90aWZ5TGlzdGVuZXJzKCkgKGRpc2FibGVMYXp5TG9hZGluZyA9PSB0cnVlKVxuICAgIFNjb3BlLT4-VlA6IF9Jbmhlcml0ZWRUZXh0UGx1Z2luTGF6eUxvYWRpbmcgbm90aWZpZXMgVmlld3BvcnRcbiAgICBWUC0-PlZQOiBzY3JvbGxDYWNoZUV4dGVudCA9IFNjcm9sbENhY2hlRXh0ZW50LnBpeGVscygxZTkpXG4gICAgVlAtPj5TbGl2ZXI6IHBlcmZvcm1MYXlvdXQocmVtYWluaW5nQ2FjaGVFeHRlbnQ6IDFlOSlcbiAgICBTbGl2ZXItPj5QYXJhOiBCdWlsZHMsIG1vdW50cywgYW5kIGxheXMgb3V0IGFsbCBvZmZzY3JlZW4gaXRlbXNcbiAgICBQYXJhLT4-UGx1Z2luOiBhdHRhY2goKSAtPiBkaWRBZGRUZXh0KGRlbGVnYXRlKVxuICAgIFBhcmEtPj5QbHVnaW46IHBlcmZvcm1MYXlvdXQoKSAtPiBkaWRMYXlvdXRUZXh0KGRlbGVnYXRlKVxuICAgIFBsdWdpbi0-PlBsdWdpbjogU29ydHMgZGVsZWdhdGVzIHZpYSBkZWxlZ2F0ZS5jb21wYXJlVG8oKVxuICAgIFVzZXItPj5QbHVnaW46IE5leHQgTWF0Y2ggLyBFbnRlclxuICAgIFBsdWdpbi0-PlBhcmE6IGRlbGVnYXRlLmVuc3VyZVZpc2libGUobWF0Y2gucmFuZ2UpXG4gICAgUGFyYS0-PlZQOiBzaG93T25TY3JlZW4ocmVjdDogdGFyZ2V0UmVjdCkgLT4gc2Nyb2xscyB0byBtYXRjaCIsICJtZXJtYWlkIjogeyJ0aGVtZSI6ICJkZWZhdWx0In19)
 
-*(If you cannot see the image above, see the Mermaid source below)*
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Plugin as SearchInPagePlugin
-    participant Scope as TextPluginScope
-    participant VP as Viewport / RenderViewport
-    participant Sliver as RenderSliverList
-    participant Para as RenderParagraph (Offscreen)
-
-    User->>Plugin: Presses Ctrl+F (eagerLoadOffscreenText = true)
-    Plugin->>Scope: notifyListeners() (disableLazyLoading == true)
-    Scope->>VP: _InheritedTextPluginLazyLoading notifies Viewport
-    VP->>VP: scrollCacheExtent = ScrollCacheExtent.pixels(1e9)
-    VP->>Sliver: performLayout(remainingCacheExtent: 1e9)
-    Sliver->>Para: Builds, mounts, and lays out all offscreen items
-    Para->>Plugin: attach() -> didAddText(delegate)
-    Para->>Plugin: performLayout() -> didLayoutText(delegate)
-    Plugin->>Plugin: Sorts delegates via delegate.compareTo()
-    User->>Plugin: Next Match / Enter
-    Plugin->>Para: delegate.ensureVisible(match.range)
-    Para->>VP: showOnScreen(rect: targetRect) -> scrolls to match
-```
 
 ---
 
@@ -435,17 +341,6 @@ Prototyping `_SelectionHighlightTextPlugin` inside `SelectableRegion` (as explor
 
 ![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogImdyYXBoIFREXG4gICAgU1JbXCJTZWxlY3RhYmxlUmVnaW9uIChOZWFyIEFwcCBSb290KVwiXVxuICAgIFNQU1tcIlRleHRQbHVnaW5TY29wZSAoX1NlbGVjdGlvbkhpZ2hsaWdodFRleHRQbHVnaW4pXCJdXG4gICAgRlBTW1wiVGV4dFBsdWdpblNjb3BlIChJbm5lciBGZWF0dXJlOiBlLmcuIFNlYXJjaEluUGFnZVBsdWdpbilcIl1cbiAgICBUWFRbXCJUZXh0KCdIZWxsbyBHT09HJywgc2VsZWN0aW9uQ29sb3I6IENvbG9ycy5hbWJlcilcIl1cblxuICAgIFNSIC0tPiBTUFMgLS0-IEZQUyAtLT4gVFhUIiwgIm1lcm1haWQiOiB7InRoZW1lIjogImRlZmF1bHQifX0=)
 
-*(If you cannot see the image above, see the Mermaid source below)*
-
-```mermaid
-graph TD
-    SR["SelectableRegion (Near App Root)"]
-    SPS["TextPluginScope (_SelectionHighlightTextPlugin)"]
-    FPS["TextPluginScope (Inner Feature: e.g. SearchInPagePlugin)"]
-    TXT["Text('Hello GOOG', selectionColor: Colors.amber)"]
-
-    SR --> SPS --> FPS --> TXT
-```
 
 #### 1. Root-vs-Leaf Paint Order Inversion
 - `SelectionArea` / `SelectableRegion` is almost always mounted near the root of a page or `Scaffold`, while feature plugins (`SearchInPagePlugin`, `StockTickerPlugin`, `LinkifyPlugin`) are mounted inside the page body.
@@ -726,25 +621,3 @@ When `LinkifyPlugin` or `StockTickerPlugin` visually turns plain text (`'https:/
 - Merge those ranges inside `RenderParagraph.describeSemanticsConfiguration` / `assembleSemanticsNode` alongside `InlineSpanSemanticsInformation` so plugin-detected links and entities become individually focusable and actionable for assistive technologies.
 
 ---
-
-## 7. Summary of Files Created & Modified
-
-### Framework (`packages/flutter/`)
-- [packages/flutter/lib/src/rendering/text_plugin.dart](rendering/text_plugin.dart) — [TextPlugin](rendering/text_plugin.dart#L44-L89) (`disableLazyLoading`, lifecycle & pointer hooks) and [TextDelegate](rendering/text_plugin.dart#L102-L450) (`ensureVisible`, `compareTo`, `placeholderRanges`, `getBoxesForSelection`).
-- [packages/flutter/lib/src/widgets/text_plugin.dart](widgets/text_plugin.dart) — [TextPluginScope](widgets/text_plugin.dart#L35-L132) (`new`, `multiple`, `none`, `of`, `maybeOf`, `shouldDisableLazyLoadingOf`).
-- [packages/flutter/lib/src/widgets/viewport.dart](widgets/viewport.dart) — `Viewport` and `ShrinkWrappingViewport` integration with `TextPluginScope.shouldDisableLazyLoadingOf`.
-- [packages/flutter/lib/src/rendering/paragraph.dart](rendering/paragraph.dart) — [RenderParagraph.textPlugins](rendering/paragraph.dart#L565-L674), attach/detach delegate synchronization, pointer routing, and painter compositing.
-- [packages/flutter/lib/src/widgets/basic.dart](widgets/basic.dart) — [RichText.textPlugins](widgets/basic.dart#L8035) and automatic lookup from [TextPluginScope.maybeOf](widgets/text_plugin.dart#L86-L93).
-- [packages/flutter/lib/rendering.dart](packages/flutter/lib/rendering.dart) & [packages/flutter/lib/widgets.dart](packages/flutter/lib/widgets.dart) — Barrel exports.
-- [packages/flutter/test/widgets/text_plugin_test.dart](packages/flutter/test/widgets/text_plugin_test.dart) — Unit and widget tests (including `ensureVisible`, `compareTo`, and `disableLazyLoading`).
-
-### Demo Application (`examples/text_plugins/`)
-- [examples/text_plugins/lib/main.dart](examples/text_plugins/lib/main.dart) — Interactive multi-plugin workbench composing 7 plugins simultaneously with `CustomScrollView`, offscreen `SliverList.builder`, Read-Aloud karaoke bar, and `Ctrl+F` lazy-load cancellation.
-- [examples/text_plugins/lib/plugins/search_in_page_plugin.dart](examples/text_plugins/lib/plugins/search_in_page_plugin.dart) — [SearchInPagePlugin](examples/text_plugins/lib/plugins/search_in_page_plugin.dart#L46-L273) with `disableLazyLoading`, document-order sorting, and `ensureVisible` scrolling.
-- [examples/text_plugins/lib/plugins/stock_ticker_plugin.dart](examples/text_plugins/lib/plugins/stock_ticker_plugin.dart) — [StockTickerPlugin](examples/text_plugins/lib/plugins/stock_ticker_plugin.dart#L42-L194).
-- [examples/text_plugins/lib/plugins/linkify_plugin.dart](examples/text_plugins/lib/plugins/linkify_plugin.dart) — [LinkifyPlugin](examples/text_plugins/lib/plugins/linkify_plugin.dart#L23-L137).
-- [examples/text_plugins/lib/plugins/seo_extractor_plugin.dart](examples/text_plugins/lib/plugins/seo_extractor_plugin.dart) — [SeoExtractorPlugin](examples/text_plugins/lib/plugins/seo_extractor_plugin.dart#L11-L97).
-- [examples/text_plugins/lib/plugins/pii_redaction_plugin.dart](examples/text_plugins/lib/plugins/pii_redaction_plugin.dart) — [PiiRedactionPlugin](examples/text_plugins/lib/plugins/pii_redaction_plugin.dart#L36-L253) (opaque foreground redaction mask with tap-to-reveal).
-- [examples/text_plugins/lib/plugins/read_aloud_plugin.dart](examples/text_plugins/lib/plugins/read_aloud_plugin.dart) — [ReadAloudPlugin](examples/text_plugins/lib/plugins/read_aloud_plugin.dart#L30-L315) (TTS karaoke word synchronizer with document-order traversal and auto-scroll).
-- [examples/text_plugins/lib/plugins/spellcheck_linter_plugin.dart](examples/text_plugins/lib/plugins/spellcheck_linter_plugin.dart) — [SpellcheckLinterPlugin](examples/text_plugins/lib/plugins/spellcheck_linter_plugin.dart#L39-L227) (wavy red/amber squiggly underlines and tap-for-suggestion diagnostics).
-- [examples/text_plugins/test/widget_test.dart](examples/text_plugins/test/widget_test.dart) — Integration tests for all seven plugins, lazy-loading cancellation, and scroll-to-match.

@@ -90,41 +90,6 @@ Flutter 应用程序经常需要跨页面的横向文本能力，这些能力需
 
 ![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogImdyYXBoIFREXG4gICAgc3ViZ3JhcGggV2lkZ2V0c1tcIldpZGdldHMgXHU1YzQyIChwYWNrYWdlOmZsdXR0ZXIvd2lkZ2V0cy5kYXJ0KVwiXVxuICAgICAgICBTY29wZU91dGVyW1wiVGV4dFBsdWdpblNjb3BlIChcdTU5MTZcdTVjNDI6IFx1NTk4MiBTZWFyY2hQbHVnaW4pXCJdXG4gICAgICAgIFNjb3BlSW5uZXJbXCJUZXh0UGx1Z2luU2NvcGUubXVsdGlwbGUgKFx1NTE4NVx1NWM0MjogU3RvY2tQbHVnaW4sIExpbmtpZnlQbHVnaW4pXCJdXG4gICAgICAgIFNjb3BlTm9uZVtcIlRleHRQbHVnaW5TY29wZS5ub25lIChcdTYzOTJcdTk2NjRcdTViNTBcdTY4MTEpXCJdXG4gICAgICAgIFRleHRXaWRnZXRbXCJUZXh0IC8gVGV4dC5yaWNoXCJdXG4gICAgICAgIFJpY2hUZXh0V2lkZ2V0W1wiUmljaFRleHRcIl1cbiAgICAgICAgRWRpdGFibGVXaWRnZXRbXCJFZGl0YWJsZVRleHQgLyBUZXh0RmllbGRcIl1cbiAgICBlbmRcblxuICAgIHN1YmdyYXBoIFJlbmRlcmluZ1tcIlJlbmRlcmluZyBcdTVjNDIgKHBhY2thZ2U6Zmx1dHRlci9yZW5kZXJpbmcuZGFydClcIl1cbiAgICAgICAgUlBbXCJSZW5kZXJQYXJhZ3JhcGhcIl1cbiAgICAgICAgUkVbXCJSZW5kZXJFZGl0YWJsZVwiXVxuICAgICAgICBURDFbXCJUZXh0RGVsZWdhdGUgKFNlYXJjaFBsdWdpbilcIl1cbiAgICAgICAgVEQyW1wiVGV4dERlbGVnYXRlIChTdG9ja1BsdWdpbilcIl1cbiAgICAgICAgVEQzW1wiVGV4dERlbGVnYXRlIChMaW5raWZ5UGx1Z2luKVwiXVxuICAgIGVuZFxuXG4gICAgU2NvcGVPdXRlciAtLT4gU2NvcGVJbm5lclxuICAgIFNjb3BlSW5uZXIgLS0-IFRleHRXaWRnZXRcbiAgICBTY29wZUlubmVyIC0tPiBFZGl0YWJsZVdpZGdldFxuICAgIFNjb3BlSW5uZXIgLS0-IFNjb3BlTm9uZVxuICAgIFRleHRXaWRnZXQgLS0-IFJpY2hUZXh0V2lkZ2V0XG4gICAgUmljaFRleHRXaWRnZXQgLS0-fFwidGV4dFBsdWdpbnMgPSBbU2VhcmNoLCBTdG9jaywgTGlua2lmeV1cInwgUlBcbiAgICBFZGl0YWJsZVdpZGdldCAtLT58XCJ0ZXh0UGx1Z2lucyA9IFtTZWFyY2gsIFN0b2NrLCBMaW5raWZ5XVwifCBSRVxuICAgIFJQIC0tPiBURDFcbiAgICBSRSAtLT4gVEQxXG4gICAgUlAgLS0-IFREMlxuICAgIFJFIC0tPiBURDJcbiAgICBSUCAtLT4gVEQzXG4gICAgUkUgLS0-IFREMyIsICJtZXJtYWlkIjogeyJ0aGVtZSI6ICJkZWZhdWx0In19)
 
-*(如果您无法看到上图，请参阅下方的 Mermaid 源码)*
-
-```mermaid
-graph TD
-    subgraph Widgets["Widgets 层 (package:flutter/widgets.dart)"]
-        ScopeOuter["TextPluginScope (外层: 如 SearchPlugin)"]
-        ScopeInner["TextPluginScope.multiple (内层: StockPlugin, LinkifyPlugin)"]
-        ScopeNone["TextPluginScope.none (排除子树)"]
-        TextWidget["Text / Text.rich"]
-        RichTextWidget["RichText"]
-        EditableWidget["EditableText / TextField"]
-    end
-
-    subgraph Rendering["Rendering 层 (package:flutter/rendering.dart)"]
-        RP["RenderParagraph"]
-        RE["RenderEditable"]
-        TD1["TextDelegate (SearchPlugin)"]
-        TD2["TextDelegate (StockPlugin)"]
-        TD3["TextDelegate (LinkifyPlugin)"]
-    end
-
-    ScopeOuter --> ScopeInner
-    ScopeInner --> TextWidget
-    ScopeInner --> EditableWidget
-    ScopeInner --> ScopeNone
-    TextWidget --> RichTextWidget
-    RichTextWidget -->|"textPlugins = [Search, Stock, Linkify]"| RP
-    EditableWidget -->|"textPlugins = [Search, Stock, Linkify]"| RE
-    RP --> TD1
-    RE --> TD1
-    RP --> TD2
-    RE --> TD2
-    RP --> TD3
-    RE --> TD3
-```
 
 ### 3.1 分层架构与文件组织
 
@@ -155,41 +120,6 @@ abstract class TextPlugin {
 
 ![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogInNlcXVlbmNlRGlhZ3JhbVxuICAgIHBhcnRpY2lwYW50IFcgYXMgUmljaFRleHQgLyBFZGl0YWJsZVRleHQgKFdpZGdldClcbiAgICBwYXJ0aWNpcGFudCBSIGFzIFJlbmRlclBhcmFncmFwaCAvIFJlbmRlckVkaXRhYmxlXG4gICAgcGFydGljaXBhbnQgVEQgYXMgVGV4dERlbGVnYXRlXG4gICAgcGFydGljaXBhbnQgVFAgYXMgVGV4dFBsdWdpblxuXG4gICAgVy0-PlI6IGNyZWF0ZVJlbmRlck9iamVjdCAvIHVwZGF0ZVJlbmRlck9iamVjdCAodGV4dFBsdWdpbnMpXG4gICAgUi0-PlREOiBuZXcgVGV4dERlbGVnYXRlKHRoaXMsIHBsdWdpbilcbiAgICBSLT4-VFA6IGRpZEFkZFRleHQoZGVsZWdhdGUpXG4gICAgTm90ZSBvdmVyIFIsVFA6IFx1NmNlOFx1NjEwZlx1ZmYxYVx1NTIxZFx1NmIyMVx1NjMwMlx1OGY3ZFx1NjVmNlx1NWUwM1x1NWM0MFx1NWMxYVx1NjcyYVx1NjI2N1x1ODg0YyAoaGFzTGF5b3V0ID09IGZhbHNlKVxuXG4gICAgUi0-PlI6IHBlcmZvcm1MYXlvdXQoKVxuICAgIFItPj5URDogbm90aWZ5Q2hhbmdlZCgpXG4gICAgUi0-PlRQOiBkaWRMYXlvdXRUZXh0KGRlbGVnYXRlKVxuICAgIE5vdGUgb3ZlciBSLFRQOiBcdTVlMDNcdTVjNDBcdTY3ZTVcdThiZTIgKGdldEJveGVzRm9yU2VsZWN0aW9uLCBzaXplKSBcdTczYjBcdTU3MjhcdTVkZjJcdTViODlcdTUxNjhcdTY3MDlcdTY1NDhcblxuICAgIFItPj5SOiBwYWludChjb250ZXh0LCBvZmZzZXQpXG4gICAgUi0-PlREOiBiYWNrZ3JvdW5kUGFpbnRlcj8ucGFpbnQoY2FudmFzLCBzaXplKVxuICAgIFItPj5SOiBfdGV4dFBhaW50ZXIucGFpbnQoY2FudmFzLCBvZmZzZXQpXG4gICAgUi0-PlREOiBmb3JlZ3JvdW5kUGFpbnRlcj8ucGFpbnQoY2FudmFzLCBzaXplKVxuXG4gICAgVy0-PlI6IHVwZGF0ZVJlbmRlck9iamVjdCAoXHU2NTg3XHU2NzJjXHU2NTM5XHU1M2Q4L1x1NjI1M1x1NWI1N1x1OGY5M1x1NTE2NSlcbiAgICBSLT4-VEQ6IG5vdGlmeUNoYW5nZWQoKVxuICAgIFItPj5UUDogZGlkVXBkYXRlVGV4dChkZWxlZ2F0ZSlcbiAgICBSLT4-UjogcGVyZm9ybUxheW91dCgpXG4gICAgUi0-PlRQOiBkaWRMYXlvdXRUZXh0KGRlbGVnYXRlKVxuXG4gICAgVy0-PlI6IGRpc3Bvc2UoKSBcdTYyMTYgXHU2M2QyXHU0ZWY2XHU3OWJiXHU1ZjAwXHU0ZjVjXHU3NTI4XHU1N2RmXG4gICAgUi0-PlREOiBkZXRhY2hQYWludGVycygpXG4gICAgUi0-PlRQOiBkaWRSZW1vdmVUZXh0KGRlbGVnYXRlKVxuICAgIFItPj5URDogZGlzcG9zZSgpIiwgIm1lcm1haWQiOiB7InRoZW1lIjogImRlZmF1bHQifX0=)
 
-*(如果您无法看到上图，请参阅下方的 Mermaid 源码)*
-
-```mermaid
-sequenceDiagram
-    participant W as RichText / EditableText (Widget)
-    participant R as RenderParagraph / RenderEditable
-    participant TD as TextDelegate
-    participant TP as TextPlugin
-
-    W->>R: createRenderObject / updateRenderObject (textPlugins)
-    R->>TD: new TextDelegate(this, plugin)
-    R->>TP: didAddText(delegate)
-    Note over R,TP: 注意：初次挂载时布局尚未执行 (hasLayout == false)
-
-    R->>R: performLayout()
-    R->>TD: notifyChanged()
-    R->>TP: didLayoutText(delegate)
-    Note over R,TP: 布局查询 (getBoxesForSelection, size) 现在已安全有效
-
-    R->>R: paint(context, offset)
-    R->>TD: backgroundPainter?.paint(canvas, size)
-    R->>R: _textPainter.paint(canvas, offset)
-    R->>TD: foregroundPainter?.paint(canvas, size)
-
-    W->>R: updateRenderObject (文本改变/打字输入)
-    R->>TD: notifyChanged()
-    R->>TP: didUpdateText(delegate)
-    R->>R: performLayout()
-    R->>TP: didLayoutText(delegate)
-
-    W->>R: dispose() 或 插件离开作用域
-    R->>TD: detachPainters()
-    R->>TP: didRemoveText(delegate)
-    R->>TD: dispose()
-```
 
 ### 3.3 `TextDelegate`：RenderObject 的能力受限安全代理
 
@@ -259,30 +189,6 @@ sequenceDiagram
 
 ![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogInNlcXVlbmNlRGlhZ3JhbVxuICAgIHBhcnRpY2lwYW50IFVzZXIgYXMgXHU3NTI4XHU2MjM3XG4gICAgcGFydGljaXBhbnQgUGx1Z2luIGFzIFNlYXJjaEluUGFnZVBsdWdpblxuICAgIHBhcnRpY2lwYW50IFNjb3BlIGFzIFRleHRQbHVnaW5TY29wZVxuICAgIHBhcnRpY2lwYW50IFZQIGFzIFZpZXdwb3J0IC8gUmVuZGVyVmlld3BvcnRcbiAgICBwYXJ0aWNpcGFudCBTbGl2ZXIgYXMgUmVuZGVyU2xpdmVyTGlzdFxuICAgIHBhcnRpY2lwYW50IFBhcmEgYXMgUmVuZGVyUGFyYWdyYXBoIC8gUmVuZGVyRWRpdGFibGUgKFx1NWM0Zlx1NWU1NVx1NTkxNilcblxuICAgIFVzZXItPj5QbHVnaW46IFx1NjMwOVx1NGUwYiBDdHJsK0YgKGVhZ2VyTG9hZE9mZnNjcmVlblRleHQgPSB0cnVlKVxuICAgIFBsdWdpbi0-PlNjb3BlOiBub3RpZnlMaXN0ZW5lcnMoKSAoZGlzYWJsZUxhenlMb2FkaW5nID09IHRydWUpXG4gICAgU2NvcGUtPj5WUDogX0luaGVyaXRlZFRleHRQbHVnaW5MYXp5TG9hZGluZyBcdTkwMWFcdTc3ZTVcdTg5YzZcdTUzZTNcbiAgICBWUC0-PlZQOiBzY3JvbGxDYWNoZUV4dGVudCA9IFNjcm9sbENhY2hlRXh0ZW50LnBpeGVscygxZTkpXG4gICAgVlAtPj5TbGl2ZXI6IHBlcmZvcm1MYXlvdXQocmVtYWluaW5nQ2FjaGVFeHRlbnQ6IDFlOSlcbiAgICBTbGl2ZXItPj5QYXJhOiBcdTY3ODRcdTVlZmFcdTMwMDFcdTYzMDJcdThmN2RcdTVlNzZcdTYzOTJcdTcyNDhcdTYyNDBcdTY3MDlcdTVjNGZcdTVlNTVcdTU5MTZcdTUyMTdcdTg4NjhcdTk4NzlcbiAgICBQYXJhLT4-UGx1Z2luOiBhdHRhY2goKSAtPiBkaWRBZGRUZXh0KGRlbGVnYXRlKVxuICAgIFBhcmEtPj5QbHVnaW46IHBlcmZvcm1MYXlvdXQoKSAtPiBkaWRMYXlvdXRUZXh0KGRlbGVnYXRlKVxuICAgIFBsdWdpbi0-PlBsdWdpbjogXHU5MDFhXHU4ZmM3IGRlbGVnYXRlLmNvbXBhcmVUbygpIFx1NjMwOVx1NjU4N1x1Njg2M1x1OTg3YVx1NWU4Zlx1NjM5Mlx1NWU4ZlxuICAgIFVzZXItPj5QbHVnaW46IFx1NzBiOVx1NTFmYlx1NGUwYlx1NGUwMFx1NGUyYVx1NTMzOVx1OTE0ZFx1OTg3OSAvIEVudGVyXG4gICAgUGx1Z2luLT4-UGFyYTogZGVsZWdhdGUuZW5zdXJlVmlzaWJsZShtYXRjaC5yYW5nZSlcbiAgICBQYXJhLT4-VlA6IHNob3dPblNjcmVlbihyZWN0OiB0YXJnZXRSZWN0KSAtPiBcdTVlNzNcdTZlZDFcdTZlZGFcdTUyYThcdTgxZjNcdTUzMzlcdTkxNGRcdTY1ODdcdTViNTciLCAibWVybWFpZCI6IHsidGhlbWUiOiAiZGVmYXVsdCJ9fQ==)
 
-*(如果您无法看到上图，请参阅下方的 Mermaid 源码)*
-
-```mermaid
-sequenceDiagram
-    participant User as 用户
-    participant Plugin as SearchInPagePlugin
-    participant Scope as TextPluginScope
-    participant VP as Viewport / RenderViewport
-    participant Sliver as RenderSliverList
-    participant Para as RenderParagraph / RenderEditable (屏幕外)
-
-    User->>Plugin: 按下 Ctrl+F (eagerLoadOffscreenText = true)
-    Plugin->>Scope: notifyListeners() (disableLazyLoading == true)
-    Scope->>VP: _InheritedTextPluginLazyLoading 通知视口
-    VP->>VP: scrollCacheExtent = ScrollCacheExtent.pixels(1e9)
-    VP->>Sliver: performLayout(remainingCacheExtent: 1e9)
-    Sliver->>Para: 构建、挂载并排版所有屏幕外列表项
-    Para->>Plugin: attach() -> didAddText(delegate)
-    Para->>Plugin: performLayout() -> didLayoutText(delegate)
-    Plugin->>Plugin: 通过 delegate.compareTo() 按文档顺序排序
-    User->>Plugin: 点击下一个匹配项 / Enter
-    Plugin->>Para: delegate.ensureVisible(match.range)
-    Para->>VP: showOnScreen(rect: targetRect) -> 平滑滚动至匹配文字
-```
 
 #### 5.1.1 精确滚动至指定字符区间 (`TextDelegate.ensureVisible`)
 `TextDelegate.ensureVisible(range)` 计算任意 `TextRange` 的字符包围盒矩形，并向上逐级唤醒父级视口（`RenderViewportBase.showInViewport`）进行平滑滚动。支持多层嵌套滚动视图（横向+纵向）自动双轴滚动定位。
@@ -501,20 +407,3 @@ sequenceDiagram
 - 扩展 `TextDelegate` 允许注册语义标注区间 (`TextPluginSemanticAnnotation`)，在 `assembleSemanticsNode` 阶段合并生成独立可聚焦的语义节点。
 
 ---
-
-## 7. 创建与修改的文件汇总
-
-### 框架核心层 (`packages/flutter/`)
-- [packages/flutter/lib/src/rendering/text_plugin.dart](rendering/text_plugin.dart) — `TextPlugin` 与 `TextDelegate` 核心接口定义。
-- [packages/flutter/lib/src/widgets/text_plugin.dart](widgets/text_plugin.dart) — `TextPluginScope` 作用域组件及懒加载控制。
-- [packages/flutter/lib/src/widgets/viewport.dart](widgets/viewport.dart) — Viewport 视口对接 `TextPluginScope.shouldDisableLazyLoadingOf`。
-- [packages/flutter/lib/src/rendering/paragraph.dart](rendering/paragraph.dart) — `RenderParagraph` 静态文本对接。
-- [packages/flutter/lib/src/rendering/editable.dart](rendering/editable.dart) — `RenderEditable` 可编辑文本输入框对接。
-- [packages/flutter/lib/src/widgets/basic.dart](widgets/basic.dart) — `RichText` 自动查找 `TextPluginScope`。
-- [packages/flutter/lib/src/widgets/editable_text.dart](widgets/editable_text.dart) — `EditableText` 自动查找 `TextPluginScope`。
-- [packages/flutter/test/widgets/text_plugin_test.dart](packages/flutter/test/widgets/text_plugin_test.dart) — 完整单元与组件测试。
-
-### 示例应用 (`examples/text_plugins/`)
-- [examples/text_plugins/lib/main.dart](examples/text_plugins/lib/main.dart) — 7 大插件组合展示 Workbench 与交互界面。
-- [examples/text_plugins/lib/plugins/](examples/text_plugins/lib/plugins/) — 7 个完整示范插件实现。
-- [examples/text_plugins/test/widget_test.dart](examples/text_plugins/test/widget_test.dart) — Demo 应用集成测试。
