@@ -562,7 +562,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage> {
                     _searchPlugin.query = value;
                   },
                   onSubmitted: (_) {
-                    _searchPlugin.scrollToActiveMatch();
+                    _searchPlugin.nextMatch();
                   },
                 ),
               ),
