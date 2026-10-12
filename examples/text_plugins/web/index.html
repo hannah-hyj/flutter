@@ -43,6 +43,25 @@
 
   <title>text_plugins</title>
   <link rel="manifest" href="manifest.json">
+  <script>
+    // Intercept Ctrl+F and Cmd+F in the capture phase so the browser does not
+    // open its built-in Find-in-Page bar, while allowing the key event to
+    // propagate to Flutter's HardwareKeyboard handler.
+    window.addEventListener(
+      'keydown',
+      function (e) {
+        if (
+          (e.ctrlKey || e.metaKey) &&
+          !e.altKey &&
+          !e.shiftKey &&
+          (e.key === 'f' || e.key === 'F' || e.code === 'KeyF' || e.keyCode === 70)
+        ) {
+          e.preventDefault();
+        }
+      },
+      { capture: true },
+    );
+  </script>
 </head>
 <body>
   <!--
