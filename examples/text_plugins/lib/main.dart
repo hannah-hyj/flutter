@@ -134,7 +134,6 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
   PiiMatch? _lastTappedPii;
   bool _lastTappedPiiRevealed = false;
   SpellcheckIssue? _lastTappedSpellcheckIssue;
-  String _selectedAreaText = '';
 
   static const String _alphabet = 'abcdefghijklmnopqrstuvwxyz';
   static const Duration _changingTextInterval = Duration(milliseconds: 300);
@@ -457,6 +456,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
           ),
           body: Column(
             children: <Widget>[
+              _buildPluginOverviewBanner(colorScheme),
               _buildPluginControlHeader(colorScheme),
               if (_enableSearchPlugin && !_isFloatingSearchBar)
                 _buildSearchBar(colorScheme),
@@ -512,6 +512,35 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildPluginOverviewBanner(ColorScheme colorScheme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withValues(alpha: 0.45),
+        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.info_outline, size: 18, color: colorScheme.primary),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'First-Party vs. Ecosystem Showcases: Find in Page (Ctrl+F / Cmd+F) will be '
+              'provided as a first-party plugin. The other plugins in this demo—Stock '
+              'Tickers, Linkify URLs, PII Redaction, Spellcheck Linter, Read-Aloud (TTS), '
+              'and SEO Extractor—are showcases illustrating the flexibility of TextPlugin '
+              'and what community packages can potentially achieve.',
+              key: Key('plugin_overview_note'),
+              style: TextStyle(fontSize: 13, height: 1.4),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1371,38 +1400,13 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                       ),
                     ),
                   ),
-                  if (_selectedAreaText.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colorScheme.secondaryContainer,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        'Selected: "${_selectedAreaText.replaceAll('\n', ' ')}"',
-                        key: const Key('selection_area_status'),
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: colorScheme.onSecondaryContainer,
-                        ),
-                      ),
-                    ),
                 ],
               ),
             ),
             const SizedBox(height: 10),
-            SelectionArea(
-              key: const Key('selection_area_zone'),
-              onSelectionChanged: (selectedContent) {
-                setState(() {
-                  _selectedAreaText = selectedContent?.plainText ?? '';
-                });
-              },
-              child: const Column(
+            const SelectionArea(
+              key: Key('selection_area_zone'),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
@@ -1622,7 +1626,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
         final ColorScheme colorScheme = Theme.of(context).colorScheme;
         return Container(
           color: colorScheme.surfaceContainerLowest,
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
@@ -1639,27 +1643,35 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: <Widget>[
-                  Chip(
-                    label: Text(
-                      'Text Widgets: ${_seoPlugin.widgetCount}',
-                      key: const Key('seo_widget_count'),
+              const SizedBox(height: 6),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: <Widget>[
+                    Chip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text(
+                        'Text Widgets: ${_seoPlugin.widgetCount}',
+                        key: const Key('seo_widget_count'),
+                      ),
                     ),
-                  ),
-                  Chip(
-                    label: Text(
-                      'Words: ${_seoPlugin.wordCount}',
-                      key: const Key('seo_word_count'),
+                    const SizedBox(width: 6),
+                    Chip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text(
+                        'Words: ${_seoPlugin.wordCount}',
+                        key: const Key('seo_word_count'),
+                      ),
                     ),
-                  ),
-                  Chip(label: Text('Chars: ${_seoPlugin.characterCount}')),
-                ],
+                    const SizedBox(width: 6),
+                    Chip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text('Chars: ${_seoPlugin.characterCount}'),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Expanded(
                 child: Container(
                   width: double.infinity,

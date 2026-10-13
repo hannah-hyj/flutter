@@ -15,6 +15,8 @@ void main() {
       await tester.pumpWidget(const TextPluginsDemoApp());
       await tester.pump();
 
+      expect(find.byKey(const Key('plugin_overview_note')), findsOneWidget);
+
       // 0. Verify animated moving text card and dynamic changing text card (a -> ab -> ... -> a..z -> a).
       final Finder movingCardFinder = find.byKey(const Key('moving_text_card'));
       final Finder changingTextFinder = find.byKey(
@@ -51,14 +53,14 @@ void main() {
       // Pause both continuous animations so pumpAndSettle can be used for subsequent interactions.
       await Scrollable.ensureVisible(
         tester.element(find.byKey(const Key('moving_card_toggle_button'))),
-        alignment: 0.5,
+        alignment: 0.85,
       );
       await tester.pump();
       await tester.tap(find.byKey(const Key('moving_card_toggle_button')));
       await tester.pump();
       await Scrollable.ensureVisible(
         tester.element(find.byKey(const Key('changing_text_toggle_button'))),
-        alignment: 0.5,
+        alignment: 0.85,
       );
       await tester.pump();
       await tester.tap(find.byKey(const Key('changing_text_toggle_button')));
@@ -208,7 +210,10 @@ void main() {
       final Finder customNote0Finder = find.byKey(
         const Key('custom_note_text_0'),
       );
-      await tester.ensureVisible(customNote0Finder);
+      await Scrollable.ensureVisible(
+        tester.element(customNote0Finder),
+        alignment: 0.5,
+      );
       await tester.pumpAndSettle();
       final RenderParagraph noteParagraph = tester
           .renderObject<RenderParagraph>(
@@ -236,6 +241,11 @@ void main() {
       expect(find.text('Lint "recieve" → "receive"'), findsOneWidget);
 
       // Tap on redacted API key "sk-live-9876543210abcdef" to reveal it, then tap again to mask it.
+      await Scrollable.ensureVisible(
+        tester.element(customNote0Finder),
+        alignment: 0.5,
+      );
+      await tester.pumpAndSettle();
       final int apiKeyIndex = notePlainText.indexOf('sk-live-9876543210abcdef');
       final List<TextBox> apiKeyBoxes = noteParagraph.getBoxesForSelection(
         TextSelection(
