@@ -1,7 +1,22 @@
-# 设计文档：Flutter 可组合文本插件系统 (Composable Text Plugins in Flutter)
+---
+type: rfc
+rfc: '170.0000'
+title: Composable Text Plugins in Flutter
+description: Introduces TextPluginScope, TextPlugin, and TextDelegate for composable cross-cutting text inspection, decoration, and interaction across RenderParagraph and RenderEditable.
+status: draft
+created: 2026-10-14T00:00:00Z
+updated: 2026-10-14T00:00:00Z
+tags:
+  - 170-text-editing-and-selection
+  - 120-rendering
+  - 130-widgets
+  - 160-semantics-and-accessibility
+authors:
+  - https://github.com/hannah-hyj
+---
 
-**作者**: Antigravity & User  
-**状态**: 已实现原型 (`packages/flutter` + `examples/text_plugins`)  
+# RFC 170.0000: Flutter 可组合文本插件系统 (Composable Text Plugins in Flutter)
+
 **参考**: [Text-Plugins-One-Pager.md](Text-Plugins-One-Pager.md) | [英文原版文档](text_plugins_design_doc.md)
 
 ---
@@ -9,7 +24,8 @@
 ## 目录 (Table of Contents)
 
 - [1. 问题背景与动机 (Problem Statement & Motivation)](#1-问题背景与动机-problem-statement--motivation)
-  - [为什么自定义 `Text` 子类方案会失败？](#为什么自定义-text-子类方案会失败)
+  - [1.1 为什么自定义 `Text` 子类方案会失败？](#11-为什么自定义-text-子类方案会失败)
+  - [1.2 历史背景、先期探索与致谢 (Historical Context, Prior Art & Acknowledgments)](#12-历史背景先期探索与致谢-historical-context-prior-art--acknowledgments)
 - [2. 设计目标与 API 划界战略 (Design Goals & Framework/Community Taxonomy)](#2-设计目标与-api-划界战略-design-goals--frameworkcommunity-taxonomy)
   - [2.1 设计目标与非目标 (Design Goals & Non-Goals)](#21-设计目标与非目标-design-goals--non-goals)
   - [设计目标 (Goals)](#设计目标-goals)
@@ -46,7 +62,6 @@
 
 ---
 
-
 ## 1. 问题背景与动机 (Problem Statement & Motivation)
 
 Flutter 应用程序经常需要跨页面的横向文本能力，这些能力需要对整个页面或子树中的文本进行检查、装饰或附加交互：
@@ -56,7 +71,7 @@ Flutter 应用程序经常需要跨页面的横向文本能力，这些能力需
 3. **自动超链接识别 (Automatic Linkification)**：自动识别普通 [Text](widgets/text.dart) 或输入框组件中的 URL（`https://...`, `www....`），绘制链接下划线，并响应点击手势。
 4. **实时内容提取与 SEO (Live Content & SEO Extraction)**：索引子树中可见的文本，生成 Schema.org JSON-LD 元数据、字数/阅读时间分析或搜索引擎抓取快照。
 
-### 为什么自定义 `Text` 子类方案会失败？
+### 1.1 为什么自定义 `Text` 子类方案会失败？
 
 过去，第三方软件包作者通常通过创建替代组件（如 `LinkifyText`, `SearchableText`, `ParsedText`）来解决这些问题。这种方案在实际项目中存在严重的局限性：
 
@@ -66,6 +81,28 @@ Flutter 应用程序经常需要跨页面的横向文本能力，这些能力需
 
 > [!IMPORTANT]
 > **核心架构洞察**：横向文本交叉关注点属于环境上下文，应该通过 `InheritedWidget` ([TextPluginScope](widgets/text_plugin.dart)) 附加，并由 [RenderParagraph](rendering/paragraph.dart) / [RenderEditable](rendering/editable.dart) 直接执行的可组合**插件流水线**，保持标准 [Text](widgets/text.dart)、[RichText](widgets/basic.dart) 和 [EditableText](widgets/editable_text.dart) 代码零修改。
+
+### 1.2 历史背景、先期探索与致谢 (Historical Context, Prior Art & Acknowledgments)
+
+本设计直接建立在 Flutter 团队多年来的一系列探索、原型验证与架构讨论之上。我们在此特别感谢 **Michael Goderbauer (`@goderbauer`)**、**Renzo Olivares (`@Renzo-Olivares`)** 和 **Kevin Moore (`@kevmoo`)** 所做的奠基性贡献：
+
+1. **Michael Goderbauer 的最初 Text Plugins 提案（2023 年 11 月）**
+   - 2023 年末，**Michael Goderbauer** 在使用自定义 `SearchableText` 组件构建早期的[页面内查找 Web Demo](https://goderbauer.github.io/demos/find-in-page/) 后，撰写了最初的 [Text Plugins One-Pager](https://docs.google.com/document/d/1doToFSPGJO29_FJ-VE7mD6XiNgF-s2xVaIi-UC495m8/edit?tab=t.0)（本地保存于 [Text-Plugins-One-Pager.md](Text-Plugins-One-Pager.md)）。
+   - Goderbauer 的核心洞察在于：`SearchableText` 无法与其他横向文本需求（如 SEO 文本提取、自动超链接识别或股票代码交互高亮）组合使用，也无法触及第三方 Package 内部的 `Text` 组件。为此，他提出了奠定本设计基础的核心三元抽象：环境作用域组件 `TextPluginScope`、生命周期接口 `TextPlugin`（`didAddText`, `didUpdateText`, `didRemoveText`）以及能力受限的代理 `TextDelegate`（`text`, `foregroundPainter`, `backgroundPainter`, `getBoxesForSelection`, `handleEvent`）。
+
+2. **Renzo Olivares 的 `Ctrl+F` 与 `TextPluginScope` 原型 ([`Renzo-Olivares:text-plugins-alt`](https://github.com/Renzo-Olivares/flutter/tree/text-plugins-alt))**
+   - **Renzo Olivares** 在其 [`text-plugins-alt`](https://github.com/Renzo-Olivares/flutter/tree/text-plugins-alt) 分支中将上述提案转化为可运行的框架原型，并演示了端到端的 `Ctrl+F`（`SearchInPagePlugin`）以及选区高亮（`_SelectionHighlightTextPlugin`）。
+   - Renzo 的原型解决了多个我们在本设计中继承的关键渲染层问题：
+     - 让 `TextDelegate` 实现 `Listenable`（在 `RenderParagraph.performLayout` 后通知插件）与 `Comparable<TextDelegate>`（通过 `RenderObject` 树的最近公共祖先 LCA 遍历实现视觉文档顺序排序）。
+     - 暴露 `placeholderRanges`（`includePlaceholders: false`），避免正则或子串搜索跨越 `WidgetSpan` 的 `0xFFFC` 占位符边界，并提供 `ensureVisible()` 将当前匹配项滚动到视口内。
+     - 在 `SelectableRegion` 内部实现 `_SelectionHighlightTextPlugin` 原型，验证了选区高亮本身通过 `TextPlugin` 绘制流水线实现的可行性。
+
+3. **Kevin Moore 的页面内查找实验 ([`flutter/flutter#193186`](https://github.com/flutter/flutter/pull/193186) & [`flutter/rfc#25`](https://github.com/flutter/rfc/pull/25))**
+   - **Kevin Moore** 构建了一个端到端的 `Ctrl+F` / `Cmd+F` 原型（[PR #193186](https://github.com/flutter/flutter/pull/193186)、[RFC #25](https://github.com/flutter/rfc/pull/25)），探索了直接基于 `SelectableRegion`、`SelectionRegistrar` 以及 `RenderParagraph` 内部的 `_SelectableFragment` 来实现页面内查找的路径。
+   - 这一实验不仅有力验证了社区对开箱即用 `Ctrl+F` 的迫切需求，还揭示了屏幕外懒加载 Sliver 发现、`Semantics` 标签搜索等关键边界场景，同时也清晰地展现出为什么 `SelectableRegion` 难以作为底层通用基础设施：
+     - **缺乏通用扩展性 (Lack of generality)**：将搜索专有属性（`searchHighlightColor`、`setSearchHighlights`）直接添加到 `Text`、`RenderParagraph` 和 `Selectable` 上虽然能单独解决 `Ctrl+F`，但无法推广到其他横向文本能力（如超链接识别、拼写检查或自定义高亮），也无法支持不向祖先 `SelectableRegion` 注册的 `EditableText`（`TextField`）。
+     - **选区耦合带来的额外开销 (Selection coupling overhead)**：由于 `_SelectableFragment` 依赖 `SelectionRegistrar`，在不需要文本选择的页面上启用查找功能仍需用隐藏的“仅查找” `SelectableRegion`（`_enableSelection: false`）包裹子树，这会为每个 `Text` 额外引入 `SelectionContainer` 元素，并需要特殊逻辑来抑制选区鼠标光标、焦点抢占和手势竞争。
+   - 这些宝贵的实验结论直接促使团队将方向统一到本文档所阐述的可组合 `TextPluginScope` 架构之上。
 
 ---
 
