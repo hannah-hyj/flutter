@@ -118,7 +118,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
   final TextEditingController _customNoteController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
 
-  bool _enableSearchPlugin = true;
+  bool _enableSearchPlugin = false;
   bool _isFloatingSearchBar = true;
   Offset _floatingSearchOffset = const Offset(20, 12);
   bool _enableStockPlugin = true;

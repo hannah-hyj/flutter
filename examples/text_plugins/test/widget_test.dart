@@ -66,8 +66,14 @@ void main() {
       await tester.tap(find.byKey(const Key('changing_text_toggle_button')));
       await tester.pumpAndSettle();
 
-      // 1. SearchInPagePlugin: verify initial search for "Flutter"
-      // finds 5 matches (4 "Flutter" + 1 "https://flutter.dev" including EditableText section).
+      // 1. SearchInPagePlugin: verify the Ctrl+F search widget is initially hidden,
+      // then enable it and verify search for "Flutter" finds 5 matches.
+      expect(find.byKey(const Key('floating_search_bar')), findsNothing);
+      expect(find.byKey(const Key('top_search_bar')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('chip_search_plugin')));
+      await tester.pumpAndSettle();
+
       expect(find.byKey(const Key('floating_search_bar')), findsOneWidget);
       expect(find.byKey(const Key('top_search_bar')), findsNothing);
       expect(find.byKey(const Key('search_match_count')), findsOneWidget);
