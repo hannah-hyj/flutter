@@ -37,14 +37,10 @@ authors:
   - [3.2 `TextPlugin` 生命周期契约](#32-textplugin-生命周期契约)
   - [3.3 `TextDelegate` 文本渲染对象代理](#33-textdelegate-文本渲染对象代理)
   - [3.4 `TextPluginScope` 与层级合并](#34-textpluginscope-与层级合并)
-  - [3.5 `RenderParagraph` 绘制与 Z 轴顺序流水线](#35-renderparagraph-绘制与-z-轴顺序流水线)
+  - [3.5 `RenderParagraph` 与 `RenderEditable` 绘制及 Z 轴顺序流水线](#35-renderparagraph-与-rendereditable-绘制及-z-轴顺序流水线)
 - [4. 社区 Package 应用场景](#4-社区-package-应用场景)
-  - [4.1 无障碍、阅读辅助与语言学习](#41-无障碍阅读辅助与语言学习)
-  - [4.2 交互式剧透遮罩与填空学习遮罩](#42-交互式剧透遮罩与填空学习遮罩)
-  - [4.3 编辑审校、多语言本地化与 QA 工具](#43-编辑审校多语言本地化与-qa-工具)
-  - [4.4 协同标注与多用户光标](#44-协同标注与多用户光标)
-  - [4.5 AI 引用溯源与 120fps 动态特效](#45-ai-引用溯源与-120fps-动态特效)
-  - [4.6 领域特定智能实体识别](#46-领域特定智能实体识别)
+  - [4.1 示例应用中已实现的插件场景](#41-示例应用中已实现的插件场景)
+  - [4.2 其它社区 Package 构想](#42-其它社区-package-构想)
 - [5. 核心特性深度解析](#5-核心特性深度解析)
   - [5.1 视口滚动、文档顺序排序与屏幕外内容渲染](#51-视口滚动文档顺序排序与屏幕外内容渲染)
   - [5.2 文本选择高亮是否应当迁移为 `TextPlugin`？](#52-文本选择高亮是否应当迁移为-textplugin)
@@ -164,9 +160,9 @@ Renzo 的原型解决了多个我们在本设计中沿用的渲染层问题。�
 
 只有具备跨平台标准预期且零外部依赖的插件才内置于 `package:flutter`：
 
-1. `_SelectionHighlightTextPlugin` 是支撑全平台 `SelectionArea` 与 `SelectableRegion` 文本选区高亮的内部插件。
+1. `SearchInPagePlugin` 提供桌面端与 Web 端标准的 `Ctrl+F` 搜索高亮、上下匹配项跳转以及视口屏幕外内容渲染控制。
 
-2. `SearchInPagePlugin` 提供桌面端与 Web 端标准的 `Ctrl+F` 搜索高亮、上下匹配项跳转以及视口屏幕外内容渲染控制。
+2. `_SelectionHighlightTextPlugin` 是将 `SelectionArea` 与 `SelectableRegion` 文本选区高亮迁移至 `TextPlugin` 管线的候选内部插件（详见[第 5.2 节](#52-文本选择高亮是否应当迁移为-textplugin)评估）。
 
 #### 2.2.2 社区 Package 插件（`pub.dev`）
 
@@ -345,89 +341,62 @@ sequenceDiagram
 
 2. 若某个插件实例已存在于祖先作用域中，则保留其外层位置，保证每个 `(RenderParagraph, TextPlugin)` 维持一对一映射。
 
-3. `TextPluginScope.none` 会安装一个 `plugins: const <TextPlugin>[]` 的 `_InheritedTextPluginScope`，为 `child` 子树屏蔽所有祖先插件。
+3. `TextPluginScope.exclude(types: {...})` 会过滤掉 `runtimeType` 匹配 `types` 的祖先插件；而 `TextPluginScope.none` 会安装一个 `plugins: const <TextPlugin>[]` 的 `_InheritedTextPluginScope`，为 `child` 子树屏蔽所有祖先插件。
 
-### 3.5 `RenderParagraph` 绘制与 Z 轴顺序流水线
+### 3.5 `RenderParagraph` 与 `RenderEditable` 绘制及 Z 轴顺序流水线
 
-在 `RenderParagraph.paint` 内部，各图层按照从后到前的固定 Z 轴顺序依次绘制：
+在 `RenderParagraph.paint` 与 `RenderEditable._paintContents` 内部，绘制按从后到前的三个核心阶段依次执行：
 
-1. 插件 `backgroundPainter`（按从根到叶的插件安装顺序执行；若 `_needsClipping` 为 `true` 则裁剪至 `offset & size`）。
+1. 插件 `backgroundPainter`（按从根到叶的 `TextPluginScope` 安装顺序执行；若 `_needsClipping` 为 `true` 则裁剪至 `offset & size`）。
 
-2. 文本选区高亮（当位于 `SelectionArea` 或 `SelectableRegion` 内部时绘制 `_lastSelectableFragments`）。
+2. 段落文本字形与内联子组件（执行 `_textPainter.paint` 与 `paintInlineChildren`，并应用相应的溢出渐变或裁剪）。
 
-3. 段落文本字形与内联子组件（执行 `_textPainter.paint` 与 `paintInlineChildren`，包含溢出渐变或裁剪）。
+3. 插件 `foregroundPainter`（按从根到叶的 `TextPluginScope` 安装顺序执行；若 `_needsClipping` 为 `true` 则应用裁剪）。
 
-4. 插件 `foregroundPainter`（按从根到叶的插件安装顺序执行；若 `_needsClipping` 为 `true` 则应用裁剪）。
-
-5. 选区拖拽手柄（绘制 `_lastSelectableFragments` 的选择手柄图层）。
+在当前的原型实现中，`SelectionArea` 与 `EditableText` 原有的选区绘制仍保留在第二阶段前后（在 `RenderParagraph` 中，`_SelectableFragment.paintSelection` 位于 `_textPainter.paint` 之前，`_SelectableFragment.paintHandles` 位于 `foregroundPainter` 之后；在 `RenderEditable` 中则为 `_backgroundRenderObject` 与 `_foregroundRenderObject`）。若后续将选区高亮迁移为 `_SelectionHighlightTextPlugin`（详见[第 5.2 节](#52-文本选择高亮是否应当迁移为-textplugin)），选区高亮矩形将不再是 `RenderParagraph.paint` 中的独立阶段，而是直接作为第一阶段的标准 `backgroundPainter` 绘制，其与其它插件的上下叠放顺序完全由组件树嵌套顺序决定。
 
 ---
 
 ## 4. 社区 Package 应用场景
 
-`TextPlugin` 结合了文本检查（`plainText`、`placeholderRanges`）、子串几何查询（`getBoxesForSelection`、`getPositionForOffset`、`getWordBoundary`）、自定义画笔（`backgroundPainter`、`foregroundPainter`）、指针事件路由（`handlePointerEvent`）以及视口控制（`ensureVisible`、`compareTo`、`contentAccessIntent`）。这些基础能力可以支撑各类即插即用的社区 Package。
+`TextPlugin` 结合了文本检查（`plainText`、`placeholderRanges`）、子串几何查询（`getBoxesForSelection`、`getPositionForOffset`、`getWordBoundary`）、自定义画笔（`backgroundPainter`、`foregroundPainter`）、指针事件路由（`handlePointerEvent`）以及视口控制（`ensureVisible`、`compareTo`、`contentAccessIntent`）。这些基础原语可以支撑覆盖任意 `Text`、`RichText` 和 `EditableText` 子树的即插即用社区 Package。
 
-### 4.1 无障碍、阅读辅助与语言学习
+### 4.1 示例应用中已实现的插件场景
 
-#### 1. TTS 逐词同步高亮朗读器
+除 `SearchInPagePlugin`（详见[第 5.1 节](#51-视口滚动文档顺序排序与屏幕外内容渲染)）外，我们在示例应用（`examples/text_plugins`）中实现了以下六个社区风格的插件，以验证该 API 在真实交互场景下的表现：
 
-该插件通过 `delegates.sort()`（`TextDelegate.compareTo`）将挂载的 `TextDelegate` 按视觉阅读顺序排列，并在跳过 `0xFFFC` `WidgetSpan` 占位符的同时切分单词。它在 `backgroundPainter` 中为当前朗读段落渲染浅色背景，在 `foregroundPainter` 中为当前发声单词绘制胶囊高亮与下划线，并在朗读跨段时调用 `delegate.ensureVisible(wordRange)` 自动滚动视口。
+#### 1. TTS 逐词同步高亮朗读器（`ReadAloudPlugin`）
 
-逐词 TTS 高亮每秒会更新多次。通过 `CustomPainter` 配合 `TextDelegate.markNeedsPaint()` 仅触发重绘，避免了每次切换单词时重建或重新排版 `RenderParagraph`。
+`ReadAloudPlugin` 通过 `delegates.sort()`（`TextDelegate.compareTo`）将挂载的 `TextDelegate` 按视觉阅读顺序排列，并在跳过 `0xFFFC` `WidgetSpan` 占位符的同时切分单词。它在 `backgroundPainter` 中为当前朗读段落渲染浅色背景，在 `foregroundPainter` 中为当前发声单词绘制胶囊高亮，并在朗读跨段时调用 `delegate.ensureVisible(wordRange)` 自动滚动视口。通过 `CustomPainter` 配合 `TextDelegate.markNeedsPaint()` 仅触发重绘，避免了每次切换单词时重建或重新排版 `RenderParagraph`。
 
-#### 2. 行内词典、翻译与注音查询
+#### 2. 交互式剧透遮罩与填空学习遮罩（`SpoilerMaskPlugin`）
 
-该插件通过 `handlePointerEvent` 监听悬停或长按事件，利用 `getPositionForOffset` 与 `getWordBoundary` 定位目标单词，高亮被选中的词，并将翻译或注音气泡锚定在 `localToGlobal(wordBox.toRect().topCenter)` 位置。
+`SpoilerMaskPlugin` 扫描 `delegate.text` 中的剧透标记（`||...||`、`[spoiler]...[/spoiler]`）或抽认卡完形填空标记（`{{...}}`）。在 `_textPainter.paint()` 之后执行的 `foregroundPainter` 中，它会绘制不透明的圆角遮罩层覆盖隐藏字形；在 `handlePointerEvent` 中，点击被遮罩区域即可切换显示或重新隐藏对应区间，并调用 `markNeedsPaint()`。
 
-#### 3. 专注阅读尺
+#### 3. 只读拼写检查与术语规范检查器（`SpellcheckLinterPlugin`）
 
-该插件跨段落追踪指针的垂直坐标，利用 `foregroundPainter` 压暗周围行，仅在当前阅读行（`getLineBoundary`）上保留高亮窗口。
+`SpellcheckLinterPlugin` 检查渲染文本中的常见拼写错误（如 `recieve`、`seperate`、`occured`、`teh`）及术语规范。它在 `foregroundPainter` 中沿着 `box.toRect().bottom` 使用 `Path` 绘制红色或橙色波浪下划线，并在点击时弹出替换建议。
 
-### 4.2 交互式剧透遮罩与填空学习遮罩
+#### 4. 交互式股票代码徽章（`StockTickerPlugin`）
 
-`SpoilerMaskPlugin` 扫描 `delegate.text` 中的剧透标记（`||...||`、`[spoiler]...[/spoiler]`）或抽认卡完形填空标记（`{{...}}`）。在 `_textPainter.paint()` 之后执行的 `foregroundPainter` 中，它会绘制不透明的圆角遮罩层覆盖隐藏字形。
+`StockTickerPlugin` 识别 `delegate.text` 中的股票代码（`GOOG`、`AAPL`、`MSFT`、`NVDA`），在 `backgroundPainter` 中绘制涨跌胶囊背景，并在 `foregroundPainter` 中绘制底部强调线。在 `handlePointerEvent` 中，它通过比对按下与抬起位移是否小于 `kTouchSlop`，在点击股票代码时弹出实时行情卡片，同时不干扰页面滚动拖拽。
 
-在 `handlePointerEvent` 中，点击被遮罩的区域即可切换显示或重新隐藏对应区间，并调用 `markNeedsPaint()`。论坛或背单词应用只需将文章子树包裹在 `TextPluginScope(plugin: spoilerMaskPlugin)` 中，即可获得点击揭晓遮罩的交互能力，无需将字符串拆分为有状态的内联组件。
+#### 5. 自动 URL 链接识别（`LinkifyPlugin`）
 
-### 4.3 编辑审校、多语言本地化与 QA 工具
+`LinkifyPlugin` 自动检测普通 `Text` 与 `EditableText` 组件中的 URL（`https://...`、`www....`），在 `foregroundPainter` 中绘制链接下划线，并在 `handlePointerEvent` 检测到点击时触发链接跳转回调，无需调用方手动将字符串拆分为带 `TapGestureRecognizer` 的 `TextSpan`。
 
-#### 1. 只读拼写检查与术语规范检查器
+#### 6. 实时内容提取与 SEO 元数据生成（`SeoExtractorPlugin`）
 
-该插件检查渲染出的 `Text` 组件中是否存在拼写错误（如 `recieve`、`seperate`、`occured`、`teh`）或术语违规。它在 `foregroundPainter` 中沿着 `box.toRect().bottom` 使用 `Path` 绘制红色或橙色波浪下划线，并在点击时弹出替换建议。
+`SeoExtractorPlugin` 是一个不挂载任何画笔的无界面（Headless）插件。当子树中的 `TextDelegate` 挂载、更新或卸载时，它按文档顺序（`compareTo`）实时索引可见文本，统计字数、估算阅读时长并生成结构化的 Schema.org JSON-LD 元数据。
 
-#### 2. 未翻译或插值破损检测器
+### 4.2 其它社区 Package 构想
 
-在测试环境构建中，该插件会检测漏翻的原始多语言 Key（如 `auth.login.button_title`）、未替换的占位符（`{userName}`、`%1$s`）或意外出现的 `NaN`、`undefined` 字符串，以品红色高亮标记并打印问题组件位置。
+除示例应用已实现的六个插件外，同一套 `TextPlugin` 原语还可以支持更多潜在的社区 Package 方向：
 
-#### 3. 排版与布局 QA 检查器
-
-该插件比对各行的 `getLineBoundary` 与 `getBoxesForSelection`，在设计走查阶段高亮标记末尾孤行（Widows/Orphans）或发生截断的段落。
-
-### 4.4 协同标注与多用户光标
-
-#### 1. 持久化用户高亮与页边批注
-
-该插件在文章或文档阅读器中持久化用户的字符区间高亮与批注锚点，利用 `backgroundPainter` 绘制荧光笔背景，并在标注区间末尾通过 `foregroundPainter` 绘制批注角标。
-
-#### 2. 多人协同光标与选区展示
-
-在协同文档查看器或评审工具中，该插件利用 `getOffsetForCaret` 与 `getBoxesForSelection` 实时绘制远程协作者的选区范围与带姓名的光标旗标。
-
-### 4.5 AI 引用溯源与 120fps 动态特效
-
-#### 1. RAG 来源溯源标注
-
-该插件高亮 AI 回复中关联了检索来源文档的语句片段，用户悬停或点击高亮区间即可查看对应的文献来源卡片。
-
-#### 2. 零重排 120fps 流光高亮
-
-该插件通过 `foregroundPainter`（传入 `repaint: animationController`）在流式生成的文本或高亮区间上以 120fps 驱动渐变着色器动画，且不会触发 `TextPainter.layout()`。
-
-### 4.6 领域特定智能实体识别
-
-日志查看器插件可以自动识别普通 `Text` 日志中的 UUID、Git 提交 SHA、堆栈路径（`file.dart:123:45`）和 RFC-3339 时间戳，支持点击复制、跳转到源码或预览本地时区时间。
-
-同样，医疗、法律与科研文献插件可以将 ICD-10 编码、法条引用或 `arXiv:`、`DOI:` 标识符转换为可点击的资料卡片。
+- 基于 `getPositionForOffset` 与 `getWordBoundary` 在悬停或长按时弹出翻译/注音卡片的行内词典，或在 `foregroundPainter` 中压暗周围行的专注阅读尺。
+- 在测试环境构建中自动高亮漏翻的多语言 Key（`auth.login.button_title`）、未替换占位符（`{userName}`）或排版孤行（Widows/Orphans）的 QA 检测工具。
+- 面向阅读器或协同文档的持久化用户荧光笔批注，以及利用 `getOffsetForCaret` 定位的多人协同光标旗标。
+- AI 回复中的 RAG 文献溯源高亮、通过 `AnimationController` 驱动 `foregroundPainter` 实现的零重排 120fps 流光着色器特效，以及面向日志查看器的智能实体链接（UUID、Git 提交 SHA、`file.dart:123:45` 堆栈路径与时间戳）。
 
 ---
 
@@ -674,7 +643,7 @@ Flutter 的 `Text.selectionColor` 允许单个 `Text` 组件在自身的 `Render
 | **多片段选区与单组件颜色** | 在 `TextDelegate` 上暴露 `List<TextSelection> get selections` 与 `Color? get selectionColor`。 |
 | **跳过 `WidgetSpan` 占位框** | 通过 `TextDelegate.placeholderRanges` 与 `TextDelegate.getBoxesForSelection` 的 `includePlaceholders: false` 参数实现。 |
 | **移动端拖拽手柄图层** | 允许 `TextDelegate` 注册 `(LayerLink, Offset)` 手柄链接，在 `RenderParagraph.paint` 期间压入图层并更新 `alwaysNeedsCompositing`。 |
-| **正交局部屏蔽** | 新增 `TextPluginScope.exclude(types: {...})` 使局部屏蔽业务插件时不会误关 `SelectionHighlightPlugin`。 |
+| **正交局部屏蔽** | 通过 `TextPluginScope.exclude(types: {...})` 实现，使局部屏蔽特定业务插件时不会误关 `SelectionHighlightPlugin`。 |
 
 #### 5.2.5 将 `SelectionArea` 迁移至 `TextPlugin` 的后续演进路线
 
@@ -684,7 +653,7 @@ Flutter 的 `Text.selectionColor` 允许单个 `Text` 组件在自身的 `Render
 
 2. 在 `TextDelegate` 上扩展 `delegate.registerHandleLayers(startLink, endLink)`，使选区插件可以在 `RenderParagraph.paint` 与 `RenderEditable._paintContents` 期间为移动端拖拽手柄压入 `LeaderLayer`。
 
-3. 在 `TextPluginScope.none` 之外新增 `TextPluginScope.exclude(types: {SearchInPagePlugin, StockTickerPlugin})`，方便开发者在 UI 控件上屏蔽特定业务插件而不影响 `_SelectionHighlightTextPlugin`。
+3. 在 UI 控件上使用 `TextPluginScope.exclude(types: {SearchInPagePlugin, StockTickerPlugin})` 屏蔽特定业务插件，避免影响 `_SelectionHighlightTextPlugin`。
 
 4. 待所有选区容器均接入 `_SelectionHighlightTextPlugin` 后，移除 `RenderParagraph` 与 `RenderEditable` 内部旧的选区高亮绘制代码。
 

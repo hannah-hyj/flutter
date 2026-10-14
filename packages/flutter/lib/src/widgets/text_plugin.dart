@@ -47,6 +47,7 @@ class TextPluginScope extends StatefulWidget {
   /// [TextPluginScope]s.
   const TextPluginScope({super.key, required TextPlugin this.plugin, required this.child})
     : plugins = null,
+      types = null,
       _disabled = false;
 
   /// Creates a scope that installs multiple [plugins] for all [Text],
@@ -57,12 +58,21 @@ class TextPluginScope extends StatefulWidget {
     required List<TextPlugin> this.plugins,
     required this.child,
   }) : plugin = null,
+       types = null,
        _disabled = false;
+
+  /// Creates a scope that excludes any ancestor [TextPlugin]s whose
+  /// [Object.runtimeType] is in [types] for [child].
+  const TextPluginScope.exclude({super.key, required Set<Type> this.types, required this.child})
+    : plugin = null,
+      plugins = null,
+      _disabled = false;
 
   /// Creates a scope that disables any ancestor [TextPluginScope]s for [child].
   const TextPluginScope.none({super.key, required this.child})
     : plugin = null,
       plugins = null,
+      types = null,
       _disabled = true;
 
   /// The single [TextPlugin] installed by this scope, if created with
@@ -72,6 +82,10 @@ class TextPluginScope extends StatefulWidget {
   /// The list of [TextPlugin]s installed by this scope, if created with
   /// [TextPluginScope.multiple].
   final List<TextPlugin>? plugins;
+
+  /// The set of [TextPlugin] runtime types excluded by this scope, if created
+  /// with [TextPluginScope.exclude].
+  final Set<Type>? types;
 
   final bool _disabled;
 
@@ -110,6 +124,8 @@ class TextPluginScope extends StatefulWidget {
       properties.add(DiagnosticsProperty<TextPlugin>('plugin', plugin));
     } else if (plugins != null) {
       properties.add(IterableProperty<TextPlugin>('plugins', plugins));
+    } else if (types != null) {
+      properties.add(IterableProperty<Type>('excludedTypes', types));
     }
   }
 }
@@ -191,7 +207,12 @@ class _TextPluginScopeState extends State<TextPluginScope> {
     }
     final List<TextPlugin> inheritedPlugins = TextPluginScope.of(context);
     final OffscreenRenderingPolicy inheritedPolicy = OffscreenContentRenderingStrategy.of(context);
-    final combined = <TextPlugin>[...inheritedPlugins, ..._ownPlugins];
+    final Set<Type>? excludedTypes = widget.types;
+    final combined = <TextPlugin>[
+      for (final TextPlugin item in inheritedPlugins)
+        if (excludedTypes == null || !excludedTypes.contains(item.runtimeType)) item,
+      ..._ownPlugins,
+    ];
     final uniquePlugins = <TextPlugin>[];
     final seen = <TextPlugin>{};
     for (final item in combined) {
@@ -199,10 +220,16 @@ class _TextPluginScopeState extends State<TextPluginScope> {
         uniquePlugins.add(item);
       }
     }
-    final OffscreenRenderingPolicy effectivePolicy =
-        (inheritedPolicy == OffscreenRenderingPolicy.eager || _localRequiresOffscreenScan)
-        ? OffscreenRenderingPolicy.eager
-        : OffscreenRenderingPolicy.lazy;
+    final bool activePluginsRequireScan = uniquePlugins.any(
+      (TextPlugin item) => item.contentAccessIntent == ContentAccessIntent.scan,
+    );
+    final OffscreenRenderingPolicy effectivePolicy = excludedTypes != null
+        ? (activePluginsRequireScan
+              ? OffscreenRenderingPolicy.eager
+              : OffscreenRenderingPolicy.lazy)
+        : ((inheritedPolicy == OffscreenRenderingPolicy.eager || _localRequiresOffscreenScan)
+              ? OffscreenRenderingPolicy.eager
+              : OffscreenRenderingPolicy.lazy);
     return OffscreenContentRenderingStrategy(
       policy: effectivePolicy,
       child: _InheritedTextPluginScope(

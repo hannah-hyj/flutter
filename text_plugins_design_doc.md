@@ -37,14 +37,10 @@ By attaching plugins through an `InheritedWidget` (`TextPluginScope`) directly t
   - [3.2 `TextPlugin` lifecycle contract](#32-textplugin-lifecycle-contract)
   - [3.3 `TextDelegate` proxy for text render objects](#33-textdelegate-proxy-for-text-render-objects)
   - [3.4 `TextPluginScope` and hierarchical merging](#34-textpluginscope-and-hierarchical-merging)
-  - [3.5 `RenderParagraph` painting and Z-order pipeline](#35-renderparagraph-painting-and-z-order-pipeline)
+  - [3.5 `RenderParagraph` and `RenderEditable` painting and Z-order pipeline](#35-renderparagraph-and-rendereditable-painting-and-z-order-pipeline)
 - [4. Community package use cases](#4-community-package-use-cases)
-  - [4.1 Accessibility, reading aids, and language learning](#41-accessibility-reading-aids-and-language-learning)
-  - [4.2 Interactive spoiler and study-cloze masking](#42-interactive-spoiler-and-study-cloze-masking)
-  - [4.3 Editorial, localization, and QA tooling](#43-editorial-localization-and-qa-tooling)
-  - [4.4 Collaborative annotation and multi-user presence](#44-collaborative-annotation-and-multi-user-presence)
-  - [4.5 AI grounding, citations, and 120fps effects](#45-ai-grounding-citations-and-120fps-effects)
-  - [4.6 Domain-specific smart entities](#46-domain-specific-smart-entities)
+  - [4.1 Use cases implemented in the demo app](#41-use-cases-implemented-in-the-demo-app)
+  - [4.2 Additional community package ideas](#42-additional-community-package-ideas)
 - [5. Feature deep dives](#5-feature-deep-dives)
   - [5.1 Scrolling, document ordering, and offscreen content rendering](#51-scrolling-document-ordering-and-offscreen-content-rendering)
   - [5.2 Should selection highlighting be a `TextPlugin`?](#52-should-selection-highlighting-be-a-textplugin)
@@ -164,9 +160,9 @@ We separate what belongs in the core Flutter framework (`package:flutter`) from 
 
 Only plugins that implement platform-standard features with zero external dependencies belong inside `package:flutter`:
 
-1. `_SelectionHighlightTextPlugin` is an internal plugin supporting `SelectionArea` and `SelectableRegion` text selection highlighting across all platforms.
+1. `SearchInPagePlugin` provides desktop and web `Ctrl+F` search highlighting, sequential match navigation, and viewport offscreen rendering management.
 
-2. `SearchInPagePlugin` provides desktop and web `Ctrl+F` search highlighting, sequential match navigation, and viewport offscreen rendering management.
+2. `_SelectionHighlightTextPlugin` is a candidate internal plugin for migrating `SelectionArea` and `SelectableRegion` selection highlighting onto the `TextPlugin` pipeline (evaluated in [Section 5.2](#52-should-selection-highlighting-be-a-textplugin)).
 
 #### 2.2.2 Community package plugins (`pub.dev`)
 
@@ -345,89 +341,62 @@ Finally, `TextDelegate` provides coordinate conversion and scrolling helpers: `l
 
 2. If a plugin instance is already present in an ancestor scope, it retains its outer position so each `(RenderParagraph, TextPlugin)` pair is 1-to-1.
 
-3. `TextPluginScope.none` installs an `_InheritedTextPluginScope` with `plugins: const <TextPlugin>[]`, shadowing all ancestor scopes for its `child` subtree.
+3. `TextPluginScope.exclude(types: {...})` filters out ancestor plugins whose `runtimeType` matches `types`, while `TextPluginScope.none` installs an `_InheritedTextPluginScope` with `plugins: const <TextPlugin>[]`, shadowing all ancestor scopes for its `child` subtree.
 
-### 3.5 `RenderParagraph` painting and Z-order pipeline
+### 3.5 `RenderParagraph` and `RenderEditable` painting and Z-order pipeline
 
-Within `RenderParagraph.paint`, layers paint in a fixed Z-order from back to front:
+Within `RenderParagraph.paint` and `RenderEditable._paintContents`, painting runs in three core stages from back to front:
 
-1. Plugin `backgroundPainter`s run in root-to-leaf plugin installation order, clipped to `offset & size` if `_needsClipping` is true.
+1. Plugin `backgroundPainter`s run in root-to-leaf `TextPluginScope` installation order, clipped to `offset & size` when `_needsClipping` is true.
 
-2. Selection highlights (`_lastSelectableFragments`) paint when inside a `SelectionArea` or `SelectableRegion`.
+2. Paragraph glyphs and inline children (`_textPainter.paint` and `paintInlineChildren`) paint with any applicable overflow shader or clipping.
 
-3. Paragraph glyphs and inline children (`_textPainter.paint` and `paintInlineChildren`) paint with overflow shader or clipping if applicable.
+3. Plugin `foregroundPainter`s run in root-to-leaf `TextPluginScope` installation order, clipped when `_needsClipping` is true.
 
-4. Plugin `foregroundPainter`s run in root-to-leaf plugin installation order, clipped if `_needsClipping` is true.
-
-5. Selection handles (`_lastSelectableFragments` drag handles) paint on top.
+In our current prototype, existing `SelectionArea` and `EditableText` selection layers remain in place around stage 2 (`_SelectableFragment.paintSelection` before `_textPainter.paint` and `_SelectableFragment.paintHandles` after `foregroundPainter`s in `RenderParagraph`; `_backgroundRenderObject` and `_foregroundRenderObject` in `RenderEditable`). If selection highlighting is migrated to `_SelectionHighlightTextPlugin` (see [Section 5.2](#52-should-selection-highlighting-be-a-textplugin)), selection highlight rectangles are no longer a separate stage in `RenderParagraph.paint`. They simply paint as a standard `backgroundPainter` in stage 1, with their Z-order relative to other plugins determined by widget-tree nesting.
 
 ---
 
 ## 4. Community package use cases
 
-`TextPlugin` combines text inspection (`plainText`, `placeholderRanges`), sub-span geometry (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`), custom painting (`backgroundPainter`, `foregroundPainter`), pointer routing (`handlePointerEvent`), and viewport control (`ensureVisible`, `compareTo`, `contentAccessIntent`). Together, these primitives support a wide range of drop-in packages across any `Text` or `RichText` subtree.
+`TextPlugin` combines text inspection (`plainText`, `placeholderRanges`), sub-span geometry (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`), custom painting (`backgroundPainter`, `foregroundPainter`), pointer routing (`handlePointerEvent`), and viewport control (`ensureVisible`, `compareTo`, `contentAccessIntent`). Together, these primitives support drop-in packages across any `Text`, `RichText`, or `EditableText` subtree.
 
-### 4.1 Accessibility, reading aids, and language learning
+### 4.1 Use cases implemented in the demo app
 
-#### 1. TTS read-aloud karaoke synchronizer
+Alongside `SearchInPagePlugin` (covered in [Section 5.1](#51-scrolling-document-ordering-and-offscreen-content-rendering)), our demo app (`examples/text_plugins`) implements six community-style plugins to validate the API across real interactions:
 
-This plugin sorts mounted `TextDelegate`s in visual reading order via `delegates.sort()` (`TextDelegate.compareTo`) and tokenizes words while skipping `0xFFFC` `WidgetSpan` placeholders. It tints the active paragraph in `backgroundPainter`, paints a pill highlight over the spoken word in `foregroundPainter`, and calls `delegate.ensureVisible(wordRange)` when narration crosses a paragraph boundary.
+#### 1. TTS read-aloud karaoke synchronizer (`ReadAloudPlugin`)
 
-Word-by-word TTS highlighting updates multiple times per second. Painting via `CustomPainter` and `TextDelegate.markNeedsPaint()` avoids rebuilding or re-laying out `RenderParagraph` on every word boundary.
+`ReadAloudPlugin` sorts mounted `TextDelegate`s in visual reading order via `delegates.sort()` (`TextDelegate.compareTo`) and tokenizes words while skipping `0xFFFC` `WidgetSpan` placeholders. It tints the active paragraph in `backgroundPainter`, paints a pill highlight over the spoken word in `foregroundPainter`, and calls `delegate.ensureVisible(wordRange)` when narration crosses a paragraph boundary. Updating word highlights via `CustomPainter` and `TextDelegate.markNeedsPaint()` avoids rebuilding or re-laying out `RenderParagraph` on every word boundary.
 
-#### 2. Inline dictionary, translation, and furigana lookup
+#### 2. Interactive spoiler and study-cloze masking (`SpoilerMaskPlugin`)
 
-This plugin listens for hover or long-press events via `handlePointerEvent` and resolves the target word using `getPositionForOffset` and `getWordBoundary`. It then highlights the hovered word and anchors a translation popover to `localToGlobal(wordBox.toRect().topCenter)`.
+`SpoilerMaskPlugin` scans `delegate.text` for spoiler tags (`||...||`, `[spoiler]...[/spoiler]`) or flashcard cloze-deletion markers (`{{...}}`). In `foregroundPainter` (which runs after `_textPainter.paint()`), it draws an opaque rounded cover over the hidden glyphs. In `handlePointerEvent`, tapping a masked box toggles revealing or re-masking that span and calls `markNeedsPaint()`.
 
-#### 3. Focus reading ruler
+#### 3. Read-only spellcheck and style-guide linter (`SpellcheckLinterPlugin`)
 
-This plugin tracks the pointer's vertical coordinate across paragraphs. It uses `foregroundPainter` to dim surrounding lines while keeping a clear window over the active line (`getLineBoundary`).
+`SpellcheckLinterPlugin` inspects rendered text for common misspellings (`recieve`, `seperate`, `occured`, `teh`) and terminology rules. In `foregroundPainter`, it draws wavy red or amber underlines along `box.toRect().bottom` using `Path`, and shows replacement suggestions when tapped.
 
-### 4.2 Interactive spoiler and study-cloze masking
+#### 4. Interactive financial ticker badges (`StockTickerPlugin`)
 
-`SpoilerMaskPlugin` scans `delegate.text` for spoiler tags (`||...||`, `[spoiler]...[/spoiler]`) or flashcard cloze-deletion markers (`{{...}}`). In `foregroundPainter` (which runs after `_textPainter.paint()`), it draws an opaque rounded cover over the hidden glyphs.
+`StockTickerPlugin` matches financial ticker symbols (`GOOG`, `AAPL`, `MSFT`, `NVDA`) in `delegate.text`, paints green or red pill backgrounds in `backgroundPainter`, and draws underline accents in `foregroundPainter`. In `handlePointerEvent`, it tracks pointer-down and pointer-up movement against `kTouchSlop` so tapping a ticker opens a live quote card without interfering with scroll drags.
 
-In `handlePointerEvent`, tapping a masked box toggles revealing or re-masking that span and calls `markNeedsPaint()`. Forum apps and flashcard apps can wrap any article subtree in `TextPluginScope(plugin: spoilerMaskPlugin)` to get tap-to-reveal masking without splitting strings into stateful inline widgets.
+#### 5. Automatic URL linkification (`LinkifyPlugin`)
 
-### 4.3 Editorial, localization, and QA tooling
+`LinkifyPlugin` detects URLs (`https://...`, `www....`) inside plain `Text` and `EditableText` widgets. It draws link underlines in `foregroundPainter` and triggers a URL launch callback when tapped in `handlePointerEvent`, without requiring callers to manually split strings into `TextSpan`s with `TapGestureRecognizer`s.
 
-#### 1. Read-only spellcheck and style-guide linter
+#### 6. Live content and SEO metadata extraction (`SeoExtractorPlugin`)
 
-This plugin inspects rendered `Text` widgets for spelling errors (`recieve`, `seperate`, `occured`, `teh`) and terminology violations. In `foregroundPainter`, it draws wavy red or amber underlines along `box.toRect().bottom` using `Path`, and shows replacement suggestions on tap.
+`SeoExtractorPlugin` is a headless inspection plugin that attaches no painters. As `TextDelegate`s mount, update, and unmount, it indexes visible text in document order (`compareTo`) to compute live word counts, reading-time estimates, and structured Schema.org JSON-LD metadata.
 
-#### 2. Untranslated or broken-interpolation l10n detector
+### 4.2 Additional community package ideas
 
-In staging builds, this plugin highlights raw translation keys (`auth.login.button_title`), uninterpolated placeholders (`{userName}`, `%1$s`), or `NaN` and `undefined` strings in magenta and logs the widget locations.
+Beyond the plugins implemented in the demo app, the same `TextPlugin` primitives can support other community packages:
 
-#### 3. Typography and layout QA inspector
-
-This plugin compares `getLineBoundary` and `getBoxesForSelection` across lines to flag single-word last lines (widows and orphans) or clipped paragraphs during design QA.
-
-### 4.4 Collaborative annotation and multi-user presence
-
-#### 1. Persistent user highlights and margin notes
-
-This plugin persists character-range highlights and comment anchors in articles or documentation. `backgroundPainter` renders pastel highlighter strokes and `foregroundPainter` draws a comment badge at the end of the annotated span.
-
-#### 2. Multiplayer presence carets
-
-In collaborative document viewers, this plugin renders remote teammates' selection ranges and named cursor flags using `getOffsetForCaret` and `getBoxesForSelection`.
-
-### 4.5 AI grounding, citations, and 120fps effects
-
-#### 1. RAG source attribution spans
-
-This plugin highlights claims in AI-generated responses that map to retrieved source documents. Hovering or tapping a grounded span opens the source citation card.
-
-#### 2. Animated shimmer without relayout
-
-This plugin animates a gradient shader over streaming tokens or highlighted ranges at 120fps via `foregroundPainter` (`repaint: animationController`) with zero `TextPainter.layout()` cost.
-
-### 4.6 Domain-specific smart entities
-
-Log viewer plugins can detect UUIDs, Git commit SHAs, stack-trace `file.dart:123:45` references, and RFC-3339 timestamps inside plain `Text` logs. Users can click them to copy, jump to source, or preview local timezones.
-
-Similarly, medical, legal, and scientific reference plugins can turn ICD-10 codes, statute citations, or `arXiv:` and `DOI:` identifiers into interactive reference cards.
+- Inline dictionary, translation, and furigana popovers triggered by hover or long-press via `getPositionForOffset` and `getWordBoundary`, or focus reading rulers that dim surrounding lines in `foregroundPainter`.
+- Staging-build QA detectors that highlight untranslated l10n keys (`auth.login.button_title`), broken interpolation placeholders (`{userName}`), or typography widows and orphans.
+- Collaborative document annotations, persistent user highlights, and multiplayer presence carets positioned via `getOffsetForCaret`.
+- AI source-attribution citations, 120fps shader shimmer effects driven by an `AnimationController` on `foregroundPainter` without text relayout, and smart entity links for log viewers (UUIDs, Git SHAs, `file.dart:123:45` stack traces, and timestamps).
 
 ---
 
@@ -674,7 +643,7 @@ While selection highlight painting fits into `TextDelegate.backgroundPainter`, t
 | **Per-fragment selection & color** | Expose `List<TextSelection> get selections` and `Color? get selectionColor` on `TextDelegate`. |
 | **Skip `WidgetSpan` boxes** | Implemented via `TextDelegate.placeholderRanges` and `includePlaceholders: false` on `TextDelegate.getBoxesForSelection`. |
 | **Mobile drag handle layers** | Allow `TextDelegate` to register `LeaderLayer` handle links `(LayerLink, Offset)` painted during `RenderParagraph.paint` and reflected in `alwaysNeedsCompositing`. |
-| **Orthogonal opt-out** | Add `TextPluginScope.exclude(types: {...})` so `TextPluginScope.none` does not inadvertently suppress `SelectionHighlightPlugin`. |
+| **Orthogonal opt-out** | Implemented via `TextPluginScope.exclude(types: {...})` so excluding feature plugins does not inadvertently suppress `SelectionHighlightPlugin`. |
 
 #### 5.2.5 Follow-up roadmap for migrating `SelectionArea` to `TextPlugin`
 
@@ -684,7 +653,7 @@ Based on the prototype in [Renzo-Olivares:text-plugins-alt (commit 55f5d0af)](ht
 
 2. Extend `TextDelegate` with `delegate.registerHandleLayers(startLink, endLink)` so selection plugins can push composited `LeaderLayer`s for mobile drag handles during `RenderParagraph.paint` and `RenderEditable._paintContents`.
 
-3. Add `TextPluginScope.exclude(types: {SearchInPagePlugin, StockTickerPlugin})` alongside `TextPluginScope.none` so developers can disable feature plugins on UI chrome without suppressing `_SelectionHighlightTextPlugin`.
+3. Use `TextPluginScope.exclude(types: {SearchInPagePlugin, StockTickerPlugin})` on UI chrome so developers can disable specific feature plugins without suppressing `_SelectionHighlightTextPlugin`.
 
 4. Remove legacy selection highlight painting inside `RenderParagraph` and `RenderEditable` once all selection containers install `_SelectionHighlightTextPlugin`.
 
