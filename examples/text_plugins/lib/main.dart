@@ -9,11 +9,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'plugins/linkify_plugin.dart';
-import 'plugins/pii_redaction_plugin.dart';
 import 'plugins/read_aloud_plugin.dart';
 import 'plugins/search_in_page_plugin.dart';
 import 'plugins/seo_extractor_plugin.dart';
 import 'plugins/spellcheck_linter_plugin.dart';
+import 'plugins/spoiler_mask_plugin.dart';
 import 'plugins/stock_ticker_plugin.dart';
 
 void main() {
@@ -108,7 +108,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
   late final StockTickerPlugin _stockTickerPlugin;
   late final LinkifyPlugin _linkifyPlugin;
   late final SeoExtractorPlugin _seoPlugin;
-  late final PiiRedactionPlugin _piiPlugin;
+  late final SpoilerMaskPlugin _spoilerPlugin;
   late final ReadAloudPlugin _readAloudPlugin;
   late final SpellcheckLinterPlugin _spellcheckPlugin;
 
@@ -124,15 +124,15 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
   bool _enableStockPlugin = true;
   bool _enableLinkifyPlugin = true;
   bool _enableSeoPlugin = true;
-  bool _enablePiiPlugin = true;
+  bool _enableSpoilerPlugin = true;
   bool _enableReadAloudPlugin = true;
   bool _enableSpellcheckPlugin = true;
   bool _showSeoInspector = true;
 
   StockTickerInfo? _lastTappedTicker;
   String? _lastTappedUrl;
-  PiiMatch? _lastTappedPii;
-  bool _lastTappedPiiRevealed = false;
+  SpoilerMaskMatch? _lastTappedSpoiler;
+  bool _lastTappedSpoilerRevealed = false;
   SpellcheckIssue? _lastTappedSpellcheckIssue;
 
   static const String _alphabet = 'abcdefghijklmnopqrstuvwxyz';
@@ -147,7 +147,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
 
   static const String _initialCustomNote =
       r'Try $NVDA or $AAPL at https://pub.dev — teams recieve seperate alerts '
-      r'and utilize token sk-live-9876543210abcdef (contact ops@example.com or SSN 123-45-6789).';
+      r'and utilize spoiler ||Rosebud is the sled|| (or cloze study {{RenderParagraph}}).';
 
   final List<String> _customNotes = <String>[_initialCustomNote];
 
@@ -158,7 +158,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     _stockTickerPlugin = StockTickerPlugin(onTickerTapped: _handleTickerTapped);
     _linkifyPlugin = LinkifyPlugin(onLinkTapped: _handleLinkTapped);
     _seoPlugin = SeoExtractorPlugin();
-    _piiPlugin = PiiRedactionPlugin(onMatchTapped: _handlePiiTapped);
+    _spoilerPlugin = SpoilerMaskPlugin(onMatchTapped: _handleSpoilerTapped);
     _readAloudPlugin = ReadAloudPlugin();
     _spellcheckPlugin = SpellcheckLinterPlugin(
       onIssueTapped: _handleSpellcheckTapped,
@@ -231,7 +231,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     _moveController.dispose();
     _searchPlugin.dispose();
     _seoPlugin.dispose();
-    _piiPlugin.dispose();
+    _spoilerPlugin.dispose();
     _readAloudPlugin.dispose();
     _searchController.dispose();
     _customNoteController.dispose();
@@ -239,10 +239,13 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     super.dispose();
   }
 
-  void _handlePiiTapped(PiiMatch match, {required bool isRevealed}) {
+  void _handleSpoilerTapped(
+    SpoilerMaskMatch match, {
+    required bool isRevealed,
+  }) {
     setState(() {
-      _lastTappedPii = match;
-      _lastTappedPiiRevealed = isRevealed;
+      _lastTappedSpoiler = match;
+      _lastTappedSpoilerRevealed = isRevealed;
     });
   }
 
@@ -375,7 +378,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     if (_enableSpellcheckPlugin) _spellcheckPlugin,
     if (_enableReadAloudPlugin) _readAloudPlugin,
     if (_enableSearchPlugin) _searchPlugin,
-    if (_enablePiiPlugin) _piiPlugin,
+    if (_enableSpoilerPlugin) _spoilerPlugin,
     if (_enableSeoPlugin) _seoPlugin,
   ];
 
@@ -463,7 +466,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
               if (_enableReadAloudPlugin) _buildReadAloudBar(colorScheme),
               if (_lastTappedTicker != null ||
                   _lastTappedUrl != null ||
-                  _lastTappedPii != null ||
+                  _lastTappedSpoiler != null ||
                   _lastTappedSpellcheckIssue != null)
                 _buildInteractionBanner(colorScheme),
               Expanded(
@@ -533,7 +536,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
             child: Text(
               'First-Party vs. Ecosystem Showcases: Find in Page (Ctrl+F / Cmd+F) will be '
               'provided as a first-party plugin. The other plugins in this demo—Stock '
-              'Tickers, Linkify URLs, PII Redaction, Spellcheck Linter, Read-Aloud (TTS), '
+              'Tickers, Linkify URLs, Spoiler & Cloze Mask, Spellcheck Linter, Read-Aloud (TTS), '
               'and SEO Extractor—are showcases illustrating the flexibility of TextPlugin '
               'and what community packages can potentially achieve.',
               key: Key('plugin_overview_note'),
@@ -603,15 +606,15 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
             ),
             const SizedBox(width: 6),
             FilterChip(
-              key: const Key('chip_pii_plugin'),
+              key: const Key('chip_spoiler_plugin'),
               visualDensity: VisualDensity.compact,
               showCheckmark: false,
               avatar: const Icon(Icons.visibility_off_outlined, size: 16),
-              label: const Text('PII Redaction'),
-              selected: _enablePiiPlugin,
+              label: const Text('Spoiler & Cloze Mask'),
+              selected: _enableSpoilerPlugin,
               onSelected: (bool value) {
                 setState(() {
-                  _enablePiiPlugin = value;
+                  _enableSpoilerPlugin = value;
                 });
               },
             ),
@@ -1061,11 +1064,11 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                 fontWeight: FontWeight.w600,
               ),
             ),
-          if (_lastTappedPii != null)
+          if (_lastTappedSpoiler != null)
             Text(
-              'PII (${_lastTappedPii!.kind.label}): '
-              '${_lastTappedPiiRevealed ? "Revealed (${_lastTappedPii!.rawValue})" : "Masked (••••••••)"}',
-              key: const Key('last_tapped_pii'),
+              '${_lastTappedSpoiler!.kind.label}: '
+              '${_lastTappedSpoilerRevealed ? "Revealed (${_lastTappedSpoiler!.rawValue})" : "Masked (••••••••)"}',
+              key: const Key('last_tapped_spoiler'),
               style: TextStyle(
                 color: colorScheme.onSecondaryContainer,
                 fontWeight: FontWeight.w600,
@@ -1412,7 +1415,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                   Text(
                     'Drag across these paragraphs to select text while TextPlugins '
                     'simultaneously highlight GOOG, AAPL, and https://dart.dev, lint '
-                    'seperate typos, and redact SSN 123-45-6789.',
+                    'seperate typos, and mask spoiler ||Hidden plot twist||.',
                     key: Key('selection_area_paragraph_1'),
                     style: TextStyle(fontSize: 15, height: 1.5),
                   ),

@@ -23,7 +23,7 @@
   - [3.5 `RenderParagraph` Painting & Z-Order Pipeline](#35-renderparagraph-painting--z-order-pipeline)
 - [4. Broader Ecosystem Use Cases](#4-broader-ecosystem-use-cases)
   - [4.1 Accessibility, Reading Aids & Language Learning](#41-accessibility-reading-aids--language-learning)
-  - [4.2 Security, Privacy & Compliance](#42-security-privacy--compliance)
+  - [4.2 Interactive Spoiler & Study-Cloze Masking](#42-interactive-spoiler--study-cloze-masking)
   - [4.3 Editorial, Localization (l10n) & QA Tooling](#43-editorial-localization-l10n--qa-tooling)
   - [4.4 Collaborative Annotation & Multi-User Presence](#44-collaborative-annotation--multi-user-presence)
   - [4.5 AI / LLM Grounding, Citations & 120fps Effects](#45-ai--llm-grounding-citations--120fps-effects)
@@ -31,7 +31,11 @@
 - [5. Feature Deep Dives](#5-feature-deep-dives)
   - [5.1 Scrolling, Document Ordering, and Canceling Lazy Loading (`Ctrl+F`)](#51-scrolling-document-ordering-and-canceling-lazy-loading-ctrlf)
   - [5.2 Deep Dive: Should Selection Highlighting Be a `TextPlugin`?](#52-deep-dive-should-selection-highlighting-be-a-textplugin)
-- [6. Exhaustive Corner Cases & Architectural Analysis](#6-exhaustive-corner-cases--architectural-analysis)
+- [6. Future Directions & Forward-Compatible API Design](#6-future-directions--forward-compatible-api-design)
+  - [6.1 Non-Text Widgets with Searchable Labels (`Image`, `Icon`, & `Semantics`)](#61-non-text-widgets-with-searchable-labels-image-icon--semantics)
+  - [6.2 Native Text Fields & Platform Views (W3C `Range` & CSS Custom Highlight API)](#62-native-text-fields--platform-views-w3c-range--css-custom-highlight-api)
+  - [6.3 Declarative Offscreen Content Access (`ContentAccessIntent` & `OffscreenContentRenderingStrategy`)](#63-declarative-offscreen-content-access-contentaccessintent--offscreencontentrenderingstrategy)
+- [7. Exhaustive Corner Cases & Architectural Analysis](#7-exhaustive-corner-cases--architectural-analysis)
   - [Corner Case 1: `ChangeNotifier` / `setState` Re-entrancy During Build, Layout, and Dispose](#corner-case-1-changenotifier--setstate-re-entrancy-during-build-layout-and-dispose)
   - [Corner Case 2: Calling Layout Queries in `didAddText` or `didUpdateText` (`!delegate.hasLayout`)](#corner-case-2-calling-layout-queries-in-didaddtext-or-didupdatetext-delegatehaslayout)
   - [Corner Case 3: Embedded `WidgetSpan`s (`PlaceholderSpan`) and UTF-16 Offset Alignment](#corner-case-3-embedded-widgetspans-placeholderspan-and-utf-16-offset-alignment)
@@ -81,10 +85,14 @@ Historically, package authors solved these problems by creating custom drop-in r
 - **Encapsulation of RenderObjects**: Plugins interact with a capability-scoped [TextDelegate](rendering/text_plugin.dart#L108) wrapping either `RenderParagraph` or `RenderEditable`, rather than mutating RenderObject internals directly.
 - **Subtree opt-out**: Subtrees (such as toolbars, search inputs, or decorative chrome) can opt out of ancestor plugins via [TextPluginScope.none](widgets/text_plugin.dart#L48-L52).
 - **Strict layer separation**: Rendering primitives live in `package:flutter/rendering.dart` ([rendering/text_plugin.dart](rendering/text_plugin.dart)); widget scoping lives in `package:flutter/widgets.dart` ([widgets/text_plugin.dart](widgets/text_plugin.dart)). Neither depends on Material or Cupertino.
+- **Forward-compatible API boundaries**: While the initial implementation targets `RenderParagraph` and `RenderEditable`, `TextDelegate` and `TextPluginScope` are designed so non-text widgets (via searchable labels) and native platform-view text fields (via DOM/OS range & highlight APIs) can be integrated in the future without breaking existing plugins (see [Section 6](#6-future-directions--forward-compatible-api-design)).
 
 ### Non-Goals (Current Scope)
-- **Mutating the input `InlineSpan` tree or changing text metrics**: Plugins decorate and observe laid-out text via [CustomPainter](rendering/custom_paint.dart)s (`backgroundPainter` / `foregroundPainter`); they do not rewrite font sizes or insert layout-shifting inline widgets during layout.
 - **Implementing all plugins upfront**: Our goal is to define the extensible architecture and provide a few minimal core plugins (like `SearchInPagePlugin` and `_SelectionHighlightTextPlugin`). We expect the community to build and publish the long tail of domain-specific plugins (linkifiers, spelling linters, etc.).
+- **Supporting non-text widgets (in the initial scope)**: `TextPlugin` initially targets Flutter's text render objects ([RenderParagraph](rendering/paragraph.dart#L317-L1381) and [RenderEditable](rendering/editable.dart#L285)). Inspecting or highlighting non-text widgets (`Image`, `Icon`, custom `RenderBox`es) via their `semanticLabel` is out of the initial scope, though the `TextDelegate` API is shaped to support whole-box delegation in the future (see [Section 6.1](#61-non-text-widgets-with-searchable-labels-image-icon--semantics)).
+- **Supporting native platform-view text fields (in the initial scope)**: Text rendered by native OS or browser DOM views inside a Platform View (`HtmlElementView` on Web, `UITextView` on iOS, `EditText` on Android) is not wired into `TextPluginScope` in the initial scope. See [Section 6.2](#62-native-text-fields--platform-views-w3c-range--css-custom-highlight-api) for how `TextDelegate` can bridge to the W3C `Range` and CSS Custom Highlight APIs (`CSS.highlights`) in a future phase.
+- **Security / PII redaction & compliance masking**: Because `TextPlugin` operates purely as a visual paint and inspection layer over `RenderParagraph` and `RenderEditable`, drawing an opaque bar in `foregroundPainter` only obscures glyphs visually on screen—the underlying plain text remains exposed to `Ctrl+F` (`SearchInPagePlugin` could even be used as a character-by-character oracle to read hidden text), `SelectionArea` copy-paste (`Ctrl+C`), the `Semantics` accessibility tree, and DevTools inspection. True PII/security redaction must scrub or tokenize sensitive strings at the data layer before passing them to `Text` widgets.
+- **Mutating the input `InlineSpan` tree or changing text metrics**: Plugins decorate and observe laid-out text via [CustomPainter](rendering/custom_paint.dart)s (`backgroundPainter` / `foregroundPainter`); they do not rewrite font sizes or insert layout-shifting inline widgets during layout.
 
 ---
 
@@ -107,10 +115,10 @@ Domain-specific, opinionated, or third-party-dependent features should be mainta
 1. **`SpellCheckPlugin` (`package:flutter_spellcheck`)**: Integration for IME spellcheck squiggly underlines and grammar suggestions.
 1. **`LinkifyPlugin` (`package:flutter_linkify_plugin`)**: Regex URL parsing, custom link styles, and integration with `url_launcher`.
 2. **`StockTickerPlugin` / `FinancialTextPlugin`**: Financial symbol decoration (`GOOG`, `AAPL`), crypto address detection, and currency conversions.
-3. **`PiiRedactionPlugin` (`package:flutter_pii_redaction`)**: Compliance masking for SSNs, API keys, and sensitive data with tap-to-reveal mechanisms.
+3. **`SpoilerMaskPlugin` / `ClozeStudyPlugin` (`package:flutter_spoiler_mask`)**: Interactive tap-to-reveal spoiler bars (`||...||`) and flashcard cloze-deletion study masks (`{{...}}`).
 4. **`ReadAloudPlugin` (`package:flutter_read_aloud`)**: TTS karaoke narration synchronizers integrated with `flutter_tts` or cloud speech APIs.
 5. **`SeoExtractorPlugin` (`package:flutter_seo_text`)**: Scraping plain text for Schema.org JSON-LD web crawlers.
-6. **`AiGroundingPlugin` / `SpoilerBlurPlugin`**: LLM citation grounding popups and animated spoiler blur shaders.
+6. **`AiGroundingPlugin`**: LLM citation grounding popups and interactive source attribution spans.
 
 #### 2.2.3 Principles for Designing a Universal, Generic API
 
@@ -124,7 +132,7 @@ To ensure `TextPlugin` scales smoothly from simple core selection to complex com
 3. **Reactive Viewport Control Protocol**:
    - The `disableLazyLoading` protocol lets document-wide plugins (search, SEO) temporarily request full sliver materialization across `ListView.builder` viewports without tight coupling between plugins and scroll widgets.
 4. **Semantics & Accessibility Alignment**:
-   - `TextDelegate` provides a path to register `TextPluginSemanticAnnotation`s so visually decorated text (links, tickers, redacted text) automatically maps to focusable, accessible `SemanticsNode`s for screen readers.
+   - `TextDelegate` provides a path to register `TextPluginSemanticAnnotation`s so visually decorated text (links, tickers, spoiler/study masks) automatically maps to focusable, accessible `SemanticsNode`s for screen readers.
 
 ---
 
@@ -136,13 +144,13 @@ Before diving into the internal rendering pipeline, here is what the developer e
 TextPluginScope.multiple(
   plugins: [
     SearchInPagePlugin(query: 'Flutter'),
-    PiiRedactionPlugin(), // e.g., auto-redacts sensitive info
+    SpoilerMaskPlugin(), // e.g., tap-to-reveal ||spoiler|| & {{cloze}} masks
   ],
   child: Column(
     children: [
       // Standard widgets automatically participate in the plugin pipeline!
-      Text('Welcome to Flutter!'),  // Automatically highlighted & redacted
-      TextField(),                  // Text input also automatically inspected
+      Text('Welcome to Flutter! ||Plot twist||'), // Automatically highlighted & masked
+      TextField(),                                // Text input also automatically inspected
       
       // Developers can easily firewall UI chrome from being affected:
       TextPluginScope.none(
@@ -235,10 +243,10 @@ Below is a summary of six broader ecosystem categories:
 3. **Dyslexia / Focus Reading Ruler & Bionic Reading Guide**:
    - **How it works**: Tracks the pointer's vertical coordinate across paragraphs and uses `foregroundPainter` to dim surrounding lines while keeping a crisp spotlight window over the active line (`getLineBoundary`).
 
-### 4.2 Security, Privacy & Compliance
-1. **Live PII Redaction / Screen-Share Privacy Mask**:
-   - **How it works**: Scans `delegate.plainText` for sensitive patterns (API keys like `sk-...`, SSNs, credit cards, email addresses). In `foregroundPainter` (which paints **after** `textPainter.paint()`), draws an opaque dark rounded badge with diagonal hazard stripes and `••••` dots completely covering the underlying sensitive glyphs. In `handlePointerEvent`, tapping a redacted box toggles revealing/masking that specific span (`markNeedsPaint()`).
-   - **Why `TextPlugin` shines**: Banking, healthcare, and customer-support apps can wrap their entire app in `TextPluginScope(plugin: piiPlugin)` during screen-sharing, bug-report screenshots, or public demos without auditing thousands of individual `Text` widgets.
+### 4.2 Interactive Spoiler & Study-Cloze Masking
+1. **Tap-to-Reveal Spoiler Bars & Flashcard Cloze Study Masks (`SpoilerMaskPlugin`)**:
+   - **How it works**: Scans `delegate.text` for spoiler tags (`||...||`, `[spoiler]...[/spoiler]`) or flashcard cloze-deletion study markers (`{{...}}`). In `foregroundPainter` (which paints **after** `_textPainter.paint()`), draws an opaque dark rounded cover with diagonal stripes hiding the underlying answer or spoiler glyphs. In `handlePointerEvent`, tapping a masked box toggles revealing or re-masking that specific span (`markNeedsPaint()`).
+   - **Why `TextPlugin` shines**: Forum/chat apps (like Discord/Reddit-style spoiler bars) and education/flashcard apps (like Anki/Quizlet cloze passages) can wrap any existing article or note subtree in `TextPluginScope(plugin: spoilerMaskPlugin)` to get interactive tap-to-reveal masking without splitting strings into custom stateful inline widgets.
 
 ### 4.3 Editorial, Localization (l10n) & QA Tooling
 1. **Read-Only Spellcheck, Grammar & Style-Guide Linter**:
@@ -257,8 +265,8 @@ Below is a summary of six broader ecosystem categories:
 ### 4.5 AI / LLM Grounding, Citations & 120fps Effects
 1. **RAG Source Attribution & Fact-Check Grounding Spans**:
    - **How it works**: Highlights claims in AI-generated responses that map to retrieved source documents; hovering or tapping a grounded span reveals the source citation card.
-2. **Zero-Relayout Animated Shimmer / Spoiler Blur**:
-   - **How it works**: Animates a gradient shader or blur mask over specific character ranges (`[spoiler]...[/spoiler]` or streaming tokens) at 120fps via `foregroundPainter` (`repaint: animationController`) with **zero** `TextPainter.layout()` cost.
+2. **Zero-Relayout Animated Shimmer**:
+   - **How it works**: Animates a gradient shader over streaming LLM tokens or highlighted ranges at 120fps via `foregroundPainter` (`repaint: animationController`) with **zero** `TextPainter.layout()` cost.
 
 ### 4.6 Domain-Specific Smart Entities
 1. **DevOps & Log Viewers**: Auto-detects UUIDs, Git commit SHAs, stack-trace `file.dart:123:45` references, and RFC-3339 timestamps inside plain `Text` logs—making them clickable to copy, jump to source, or preview local timezones.
@@ -472,7 +480,120 @@ Based on the prototype analysis of [`Renzo-Olivares:text-plugins-alt` (commit 55
 
 ---
 
-## 6. Exhaustive Corner Cases & Architectural Analysis
+## 6. Future Directions & Forward-Compatible API Design
+
+Although the initial scope targets Flutter's `RenderParagraph` and `RenderEditable`, we intentionally shaped `TextDelegate`, `TextPlugin`, and `TextPluginScope` so the architecture can expand to **non-text widgets**, **native platform-view text fields**, and **declarative offscreen rendering policies** without breaking existing plugins.
+
+---
+
+### 6.1 Non-Text Widgets with Searchable Labels (`Image`, `Icon`, & `Semantics`)
+
+#### Motivation
+Users searching a page (`Ctrl+F` via `SearchInPagePlugin`) or listening to an article (`ReadAloudPlugin`) often expect labeled non-text widgets—such as `Image(semanticLabel: 'Golden retriever playing in the park')`, `Icon(semanticLabel: 'Settings')`, or custom data visualizations (`BarChart`, `Sparkline`, `PieChart`)—to be discoverable, highlighted, scrolled into view, and narrated in natural document order alongside paragraphs.
+
+#### 1. Simple Non-Text Widgets: Whole-Widget Bounding Box Mapping
+- **`RenderBox`-Backed `TextDelegate`**:
+  [TextDelegate.renderObject](rendering/text_plugin.dart#L122) is typed as `RenderBox` rather than `RenderParagraph`. Document-order sorting (`compareTo`), viewport reveal (`showOnScreen`, `ensureVisible`), coordinate conversion (`localToGlobal`, `globalToLocal`), and painter attachment (`backgroundPainter`, `foregroundPainter`) already work on any `RenderBox`.
+- **Whole-Box Geometry Fallback**:
+  Unlike a paragraph where substrings map to individual glyph boxes, a simple non-text `RenderBox` (such as `Image` or `Icon`) exposing a searchable `label` maps any valid non-empty `TextSelection` within `0..label.length` to the widget's full bounding box:
+  ```dart
+  [ui.TextBox.fromLTRBD(0, 0, size.width, size.height, textDirection)]
+  ```
+- **API Safeguards (`hasCharacterBoxes` & Foreground Painting)**:
+  - While whole-widget highlighting is ideal for Search, TTS, and SEO, character-level typographic plugins like `SpellCheckPlugin` (which draws wavy underlines under individual words) should not underline an entire `Image`. Exposing `bool get hasCharacterBoxes` on `TextDelegate` allows character-specific plugins to skip non-text delegates cleanly.
+  - Because an `Image` paints opaque pixels across its entire bounds, a `backgroundPainter` highlight would be occluded; non-text delegates (or plugins inspecting `!delegate.hasCharacterBoxes`) can render highlight borders/tints in `foregroundPainter`.
+
+#### 2. Complex Non-Text Widgets (`BarChart`, `Sparkline`, Custom Graphics): Widget-Owned Highlight Rendering
+What if a widget has its own opinion about *how* to highlight matched content—for example, a `BarChart` or `Sparkline` that uses arbitrary vector shapes and graphics where a generic rectangular `CustomPainter` overlay wouldn't know how to highlight the inside of a bar, pie slice, or sparkline vertex?
+
+- **Why a Widget Contributing Its Own `TextPlugin` Is Insufficient**:
+  In a scenario like `Ctrl+F` (`SearchInPagePlugin`) or TTS (`ReadAloudPlugin`), the **plugin** owns the document-wide coordinator state (the active search query, the `"3 of 12"` match count, and Next/Previous navigation), while the **widget** (`BarChart`) owns the domain-specific rendering of its data series.
+- **Separating Match Discovery (Plugin) from Highlight Rendering (Widget / Host)**:
+  By allowing plugins to pass structured highlight ranges to `TextDelegate` (with the plugin's `CustomPainter` serving as the default fallback when a widget does not override highlight rendering):
+  ```dart
+  class TextPluginHighlight {
+    const TextPluginHighlight({
+      required this.range,
+      required this.role, // e.g., searchMatch, activeSearchMatch, spokenWord
+      this.fallbackStyle, // Default color/decoration if host uses default painter
+    });
+
+    final ui.TextRange range;
+    final Object role;
+    final TextHighlightStyle? fallbackStyle;
+  }
+  ```
+  1. **Exposing Structured Series Text**: A `BarChart` exposes its data labels to `TextDelegate` (e.g., `"Q1: $10M\nQ2: $15M\nQ3: $22M\nQ4: $18M"`).
+  2. **Sub-Element Geometry for Scrolling (`getBoxesForSelection`)**: When `SearchInPagePlugin` queries `delegate.getBoxesForSelection(rangeForQ3)` for `ensureVisible`, the `BarChart` returns the bounding `Rect` of the Q3 bar specifically so `Ctrl+F` scrolls directly to that bar.
+  3. **Custom Graphic Highlight (`onHighlightsChanged`)**: Instead of painting a flat yellow rectangle over the chart, the `BarChart` intercepts the active `List<TextPluginHighlight>`, maps range `18..26` (`"Q3: $22M"`) back to `barIndex = 2`, and highlights the bar or sparkline vertex using its own graphics (e.g., glowing the bar fill, pulsing the sparkline node, or popping up the Q3 tooltip).
+
+#### Unifying Spectrum Across All Target Widgets
+
+| Target Widget | How `TextDelegate.text` Is Provided | How `getBoxesForSelection(range)` Works | Who Renders the Highlight? |
+| :--- | :--- | :--- | :--- |
+| **Standard `Text` / `EditableText`** | `InlineSpan.toPlainText()` | `TextPainter` glyph boxes | **Plugin's default painter** (`CustomPainter` on `RenderParagraph`) |
+| **Simple `Image` / `Icon`** | `semanticLabel` | Whole widget bounding box (`0..w, 0..h`) | **Plugin's default painter** (or foreground border/tint) |
+| **Complex Graphic (`BarChart`, `Sparkline`)** | Concatenated series / datum labels | Bounding box of the matched bar / datum | **The Chart Widget itself** (glows bar, pulses sparkline point, elevates slice) |
+| **Native Platform View (`HtmlElementView`, `UITextView`)** | DOM `textContent` / native text | W3C `Range.getClientRects()` / `UITextInput` | **The Platform View itself** (via W3C `CSS.highlights` / `::highlight()` or `NSLayoutManager`) |
+
+---
+
+### 6.2 Native Text Fields & Platform Views (W3C `Range` & CSS Custom Highlight API)
+
+#### Motivation
+On Web and mobile platforms, apps (and future Flutter native text input implementations) may embed platform-rendered text fields or rich HTML views via Platform Views (`HtmlElementView`, `UiKitView`, `AndroidView`), where text shaping and painting happen inside the browser DOM or native OS toolkit rather than Flutter's `TextPainter`.
+
+#### Mapping `TextDelegate` to W3C `Range` & `CSS.highlights`
+On Web (`HtmlElementView`), the **W3C `Range` API** and **W3C CSS Custom Highlight API** (`CSS.highlights` + `::highlight()`) were designed for the exact same non-destructive decoration model as `TextPlugin`:
+
+| `TextDelegate` Capability | Flutter (`RenderParagraph` / `RenderEditable`) | Web Platform View (W3C DOM APIs) | iOS / Android Native Text Views |
+| :--- | :--- | :--- | :--- |
+| **`text`** | `InlineSpan.toPlainText()` | `element.textContent` | `UITextView.text` / `EditText.getText()` |
+| **`getBoxesForSelection(range)`** | `ui.Paragraph.getBoxesForRange` | `Range.getClientRects()` (mapped to local `RenderBox` coordinates) | `UITextInput.selectionRects(for:)` / `Layout.getSelectionPath` |
+| **`getPositionForOffset(point)`** | `TextPainter.getPositionForOffset` | `document.caretPositionFromPoint(x, y)` | `UITextInput.closestPosition(to:)` / `Layout.getOffsetForHorizontal` |
+| **`ensureVisible(range)`** | `RenderObject.showOnScreen(rect)` | `Range.getBoundingClientRect()` + `scrollIntoView` / `showOnScreen` | `UITextView.scrollRangeToVisible` |
+| **Range Decoration** | `CustomPainter` (`backgroundPainter` / `foregroundPainter`) | **`CSS.highlights.set(id, new Highlight(range))`** + `::highlight(id)` | `NSLayoutManager` temporary attributes / `Spannable` `CharacterStyle` |
+
+#### Forward-Compatible API Design Choices
+1. **Decoupling `TextDelegate` via a Host Interface (`TextDelegateHost`)**:
+   - Rather than restricting `TextDelegate` to `RenderParagraph` and `RenderEditable` forever, `TextDelegate` can delegate text, geometry, and painting hooks to a `TextDelegateHost` mixin/interface that Platform View render objects can also implement.
+2. **Bridging Imperative `CustomPainter` and Declarative `Highlight` Ranges**:
+   - A Flutter `CustomPainter` cannot easily paint *between* a native platform view's background and its text glyphs, nor can a Flutter canvas overlay stay frame-synchronized with internal DOM compositor scrolling.
+   - By adding a declarative highlight primitive on `TextDelegate` (e.g., `setHighlights(Object pluginKey, List<TextHighlight> highlights)` specifying `TextRange`, `backgroundColor`, `textColor`, and `decorationStyle`) alongside `CustomPainter`:
+     - `RenderParagraph` and `RenderEditable` render those declarative ranges using an internal `CustomPainter`.
+     - Web Platform Views translate those ranges directly into W3C `StaticRange` / `Range` instances registered in `CSS.highlights` (`::highlight()`), painting native backgrounds and wavy/solid underlines behind DOM glyphs at 120fps.
+   - Plugins that still use imperative `foregroundPainter`s (e.g., custom badges or shaders) continue to work over Platform Views via `Range.getClientRects()` geometry and Flutter overlay layers.
+3. **Web DOM Nuance (`contenteditable` vs. `<input>` / `<textarea>`)**:
+   - In browsers, W3C `Range` and `CSS.highlights` operate on DOM `Text` nodes. Because HTML `<input>` and `<textarea>` store their text inside a closed User-Agent shadow root (`.value`), native web text fields participating in `CSS.highlights` should use `<div contenteditable="plaintext-only">` (or a synchronized mirror DOM node) so character offsets map to real DOM `Text` nodes.
+
+---
+
+### 6.3 Declarative Offscreen Content Access (`ContentAccessIntent` & `OffscreenContentRenderingStrategy`)
+
+In our initial prototype, `TextPlugin.disableLazyLoading` (`bool`) and `TextPluginScope.shouldDisableLazyLoadingOf(context)` allow `SearchInPagePlugin` to materialize offscreen items in `ListView.builder`. Looking ahead, two refinements make this contract cleaner and more general:
+
+1. **Declarative `ContentAccessIntent` on `TextPlugin` (Instead of `bool disableLazyLoading`)**:
+   - A `TextPlugin` should declare *what content it needs access to* rather than *how* a `Viewport` renders:
+     ```dart
+     enum ContentAccessIntent {
+       /// The plugin only decorates or interacts with visible onscreen text
+       /// (e.g., StockTickerPlugin, LinkifyPlugin, SpoilerMaskPlugin).
+       highlight,
+
+       /// The plugin scans the document and needs offscreen content materialized
+       /// (e.g., active Ctrl+F SearchInPagePlugin, SeoExtractorPlugin).
+       scan,
+     }
+     ```
+   - **Conflict-free composition**: When multiple plugins are active in a `TextPluginScope`, their intents combine via a simple upper bound (`scan` if *any* active plugin requests `scan`, otherwise `highlight`), avoiding any apparent contradiction between plugins with `false` vs. `true`.
+   - **Future extensibility**: An enum can later grow intermediate intents (such as `lookahead` for TTS `ReadAloudPlugin` pre-rendering the next 1–2 screens) without breaking API compatibility.
+2. **Standalone `OffscreenContentRenderingStrategy` (Decoupling `Viewport` from `TextPluginScope`)**:
+   - Eagerly rendering offscreen sliver children (disabling **lazy rendering**, distinct from network "lazy loading") is useful beyond text plugins—for example, pre-rendering `Image.network` items in a `ListView` to avoid blank images while scrolling, or eliminating first-scroll jank on complex finite lists.
+   - Extracting `_InheritedTextPluginLazyLoading` into a standalone `OffscreenContentRenderingStrategy` widget in `package:flutter/widgets.dart` means `Viewport` only queries `OffscreenContentRenderingStrategy.of(context)` and has **zero dependency on `TextPluginScope`**, while `TextPluginScope` simply installs `OffscreenContentRenderingStrategy` when any active plugin requests `ContentAccessIntent.scan`.
+
+---
+
+## 7. Exhaustive Corner Cases & Architectural Analysis
 
 Below are the 12 critical corner cases identified during design and implementation, how our implementation handles them today, and what additional safeguards or trade-offs apply.
 
@@ -649,7 +770,7 @@ In a `ListView.builder` or `CustomScrollView` with 1,000 paragraphs, Flutter by 
   1. **Out-of-order mounting when scrolling upward**: Items mounted while scrolling upward register via `didAddText` in reverse document order.
   2. **Scrolling to a specific substring match**: A match inside a tall paragraph or nested scroll view needs character-level scroll-to-range rather than just scrolling to the widget's top edge.
   3. **Offscreen unbuilt items in lazy lists (`Ctrl+F`)**: Unbuilt items outside `cacheExtent` have no `RenderParagraph` until lazy loading is canceled.
-- **How We Solved All Three**: See **Section 6 (Scrolling, Document Ordering, and Canceling Lazy Loading)** below for the full architecture (`TextDelegate.compareTo`, `TextDelegate.ensureVisible`, and `TextPlugin.disableLazyLoading`).
+- **How We Solved All Three**: See [Section 5.1 (Scrolling, Document Ordering, and Canceling Lazy Loading)](#51-scrolling-document-ordering-and-canceling-lazy-loading-ctrlf) above for the full architecture (`TextDelegate.compareTo`, `TextDelegate.ensureVisible`, and `TextPlugin.disableLazyLoading`).
 
 ---
 
@@ -663,3 +784,5 @@ Because all plugin `backgroundPainter`s and `foregroundPainter`s share the `Pain
 - In debug mode, it records `canvas.getSaveCount()` before and after `painter.paint(canvas, size)` and throws a descriptive `FlutterError` pinpointing the exact offending `CustomPainter` if its `save()`/`restore()` calls are unbalanced.
 
 ---
+
+

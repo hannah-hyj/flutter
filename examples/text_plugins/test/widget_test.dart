@@ -209,7 +209,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Speaking: "Text" (2/'), findsOneWidget);
 
-      // 6. SpellcheckLinterPlugin & PiiRedactionPlugin on custom_note_text_0:
+      // 6. SpellcheckLinterPlugin & SpoilerMaskPlugin on custom_note_text_0:
       final Finder customNote0Finder = find.byKey(
         const Key('custom_note_text_0'),
       );
@@ -240,29 +240,29 @@ void main() {
       expect(find.byKey(const Key('last_tapped_spellcheck')), findsOneWidget);
       expect(find.text('Lint "recieve" → "receive"'), findsOneWidget);
 
-      // Tap on redacted API key "sk-live-9876543210abcdef" to reveal it, then tap again to mask it.
-      final int apiKeyIndex = notePlainText.indexOf('sk-live-9876543210abcdef');
-      final List<TextBox> apiKeyBoxes = noteParagraph.getBoxesForSelection(
+      // Tap on masked spoiler "||Rosebud is the sled||" to reveal it, then tap again to mask it.
+      final int spoilerIndex = notePlainText.indexOf('||Rosebud is the sled||');
+      final List<TextBox> spoilerBoxes = noteParagraph.getBoxesForSelection(
         TextSelection(
-          baseOffset: apiKeyIndex,
-          extentOffset: apiKeyIndex + 'sk-live-9876543210abcdef'.length,
+          baseOffset: spoilerIndex,
+          extentOffset: spoilerIndex + '||Rosebud is the sled||'.length,
         ),
       );
       await tester.tapAt(
-        noteParagraph.localToGlobal(apiKeyBoxes.first.toRect().center),
+        noteParagraph.localToGlobal(spoilerBoxes.first.toRect().center),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('last_tapped_pii')), findsOneWidget);
+      expect(find.byKey(const Key('last_tapped_spoiler')), findsOneWidget);
       expect(
-        find.text('PII (API Key): Revealed (sk-live-9876543210abcdef)'),
+        find.text('Spoiler: Revealed (||Rosebud is the sled||)'),
         findsOneWidget,
       );
 
       await tester.tapAt(
-        noteParagraph.localToGlobal(apiKeyBoxes.first.toRect().center),
+        noteParagraph.localToGlobal(spoilerBoxes.first.toRect().center),
       );
       await tester.pumpAndSettle();
-      expect(find.text('PII (API Key): Masked (••••••••)'), findsOneWidget);
+      expect(find.text('Spoiler: Masked (••••••••)'), findsOneWidget);
 
       // 7. Verify SelectionArea coexistence zone under the Opt-Out Zone.
       final Finder selectionAreaZoneFinder = find.byKey(
