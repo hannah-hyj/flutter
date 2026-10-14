@@ -9,7 +9,8 @@
 ## Table of Contents
 
 - [1. Problem Statement & Motivation](#1-problem-statement--motivation)
-  - [Why Custom `Text` Subclasses Fail](#why-custom-text-subclasses-fail)
+  - [1.1 Why Custom `Text` Subclasses Fail](#11-why-custom-text-subclasses-fail)
+  - [1.2 Historical Context, Prior Art & Acknowledgments](#12-historical-context-prior-art--acknowledgments)
 - [2. Design Goals & Framework/Community Taxonomy](#2-design-goals--frameworkcommunity-taxonomy)
   - [2.1 Design Goals & Non-Goals](#21-design-goals--non-goals)
   - [Goals](#goals)
@@ -60,7 +61,7 @@ Flutter applications frequently need cross-cutting text capabilities that inspec
 3. **Automatic Linkification**: Detecting URLs (`https://...`, `www....`) in plain [Text](widgets/text.dart) widgets, painting link underlines, and handling tap gestures.
 4. **Live Content & SEO Extraction**: Indexing visible text across a subtree to generate Schema.org JSON-LD metadata, word/reading-time analytics, or crawler snapshots.
 
-### Why Custom `Text` Subclasses Fail
+### 1.1 Why Custom `Text` Subclasses Fail
 
 Historically, package authors solved these problems by creating custom drop-in replacement widgets (`LinkifyText`, `SearchableText`, `ParsedText`). This approach breaks down in real applications:
 
@@ -70,6 +71,28 @@ Historically, package authors solved these problems by creating custom drop-in r
 
 > [!IMPORTANT]
 > **Core Architectural Insight**: Text cross-cutting concerns belong in an ambient, composable **plugin pipeline** attached via `InheritedWidget` ([TextPluginScope](widgets/text_plugin.dart#L30-L117)) and executed directly by [RenderParagraph](rendering/paragraph.dart#L317-L1381), leaving standard [Text](widgets/text.dart) and [RichText](widgets/basic.dart#L7892-L8098) widgets unchanged.
+
+### 1.2 Historical Context, Prior Art & Acknowledgments
+
+This design builds directly upon years of exploration, prototyping, and architectural discussions across the Flutter team. We want to specially thank **Michael Goderbauer (`@goderbauer`)**, **Renzo Olivares (`@Renzo-Olivares`)**, and **Kevin Moore (`@kevmoo`)** for their foundational contributions:
+
+1. **Michael Goderbauer's Original Text Plugins Proposal (November 2023)**
+   - In late 2023, **Michael Goderbauer** authored the original [Text Plugins One-Pager](https://docs.google.com/document/d/1doToFSPGJO29_FJ-VE7mD6XiNgF-s2xVaIi-UC495m8/edit?tab=t.0) (preserved locally in [Text-Plugins-One-Pager.md](Text-Plugins-One-Pager.md)) after building an early [Find-in-Page web demo](https://goderbauer.github.io/demos/find-in-page/) using a custom `SearchableText` widget.
+   - Goderbauer's key realization was that `SearchableText` could not compose with other cross-cutting text needs—such as SEO text extraction, auto-linkification, or interactive stock ticker highlighting—nor could it reach `Text` widgets inside third-party packages. He proposed the core abstraction triplet that anchors this design today: an ambient `TextPluginScope` widget, a `TextPlugin` lifecycle interface (`didAddText`, `didUpdateText`, `didRemoveText`), and a capability-scoped `TextDelegate` (`text`, `foregroundPainter`, `backgroundPainter`, `getBoxesForSelection`, `handleEvent`).
+
+2. **Renzo Olivares's `Ctrl+F` & `TextPluginScope` Prototype ([`Renzo-Olivares:text-plugins-alt`](https://github.com/Renzo-Olivares/flutter/tree/text-plugins-alt))**
+   - **Renzo Olivares** turned the one-pager into a working framework prototype on his [`text-plugins-alt`](https://github.com/Renzo-Olivares/flutter/tree/text-plugins-alt) branch and demoed end-to-end `Ctrl+F` (`SearchInPagePlugin`) alongside selection highlighting (`_SelectionHighlightTextPlugin`).
+   - Renzo's branch solved several crucial rendering-layer problems that we carry forward in this design:
+     - Making `TextDelegate` implement `Listenable` (notifying plugins after `RenderParagraph.performLayout`) and `Comparable<TextDelegate>` (sorting delegates in visual document order via a Lowest Common Ancestor walk of the `RenderObject` tree).
+     - Exposing `placeholderRanges` (`includePlaceholders: false`) so regex/substring queries do not match across `WidgetSpan` `0xFFFC` object replacement boundaries, plus `ensureVisible()` to scroll active matches into view.
+     - Prototyping `_SelectionHighlightTextPlugin` inside `SelectableRegion` to validate whether selection highlighting itself could use the `TextPlugin` paint pipeline.
+
+3. **Kevin Moore's Find-in-Page Experiment ([`flutter/flutter#193186`](https://github.com/flutter/flutter/pull/193186) & [`flutter/rfc#25`](https://github.com/flutter/rfc/pull/25))**
+   - **Kevin Moore** built an end-to-end `Ctrl+F` / `Cmd+F` prototype ([PR #193186](https://github.com/flutter/flutter/pull/193186), [RFC #25](https://github.com/flutter/rfc/pull/25)) that explored implementing Find-in-Page directly on top of `SelectableRegion`, `SelectionRegistrar`, and `RenderParagraph`'s internal `_SelectableFragment`.
+   - This experiment was instrumental in validating developer demand and surfacing key edge cases—such as offscreen lazy sliver discovery and `Semantics` label search—while also revealing why `SelectableRegion` could not serve as the underlying foundation:
+     - **Lack of generality**: Adding search-specific properties (`searchHighlightColor`, `setSearchHighlights`) directly onto `Text`, `RenderParagraph`, and `Selectable` solved `Ctrl+F` in isolation, but could not generalize to other cross-cutting features (like linkification, spellcheck, or custom highlights) or support `EditableText` (`TextField`), which does not register with an ancestor `SelectableRegion`.
+     - **Selection coupling overhead**: Because `_SelectableFragment` requires a `SelectionRegistrar`, searching non-selectable pages required wrapping the subtree in a hidden "find-only" `SelectableRegion` (`_enableSelection: false`), which still added extra `SelectionContainer` elements per `Text` widget and required special handling to suppress selection cursors, focus changes, and gesture recognizers.
+   - These findings directly motivated unifying our efforts around the composable `TextPluginScope` architecture presented in this document.
 
 ---
 
