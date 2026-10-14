@@ -145,6 +145,9 @@ void main() {
         find.text('Last tapped link: https://flutter.dev'),
         findsOneWidget,
       );
+      ScaffoldMessenger.of(tester.element(reportParagraphFinder))
+          .clearSnackBars();
+      await tester.pumpAndSettle();
 
       // 3. SeoExtractorPlugin: record initial widget count and verify adding a note increments it.
       // (includes static paragraphs + EditableText / TextField in TextPluginScope).
@@ -210,10 +213,7 @@ void main() {
       final Finder customNote0Finder = find.byKey(
         const Key('custom_note_text_0'),
       );
-      await Scrollable.ensureVisible(
-        tester.element(customNote0Finder),
-        alignment: 0.5,
-      );
+      await tester.ensureVisible(customNote0Finder);
       await tester.pumpAndSettle();
       final RenderParagraph noteParagraph = tester
           .renderObject<RenderParagraph>(
@@ -241,11 +241,6 @@ void main() {
       expect(find.text('Lint "recieve" → "receive"'), findsOneWidget);
 
       // Tap on redacted API key "sk-live-9876543210abcdef" to reveal it, then tap again to mask it.
-      await Scrollable.ensureVisible(
-        tester.element(customNote0Finder),
-        alignment: 0.5,
-      );
-      await tester.pumpAndSettle();
       final int apiKeyIndex = notePlainText.indexOf('sk-live-9876543210abcdef');
       final List<TextBox> apiKeyBoxes = noteParagraph.getBoxesForSelection(
         TextSelection(
