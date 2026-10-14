@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 /// @docImport 'basic.dart';
+/// @docImport 'editable_text.dart';
+/// @docImport 'scroll_view.dart';
 /// @docImport 'text.dart';
 library;
 
@@ -10,9 +12,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 
 import 'framework.dart';
+import 'viewport.dart';
 
-/// A widget that installs one or more [TextPlugin]s for all [Text] and
-/// [RichText] widgets in its [child] subtree.
+/// A widget that installs one or more [TextPlugin]s for all [Text],
+/// [RichText], and [EditableText] widgets in its [child] subtree.
 ///
 /// When multiple [TextPluginScope] widgets are nested, their plugins are
 /// composed in installation order: plugins from outer [TextPluginScope]s
@@ -22,34 +25,36 @@ import 'framework.dart';
 /// To exclude a subtree from any ancestor [TextPluginScope]s, wrap the subtree
 /// in [TextPluginScope.none].
 ///
-/// If [disableLazyLoading] is `true`, or if any installed [TextPlugin] has
-/// [TextPlugin.disableLazyLoading] set to `true`, scrollable viewports (such as
-/// [ListView], [CustomScrollView], and [Viewport]) within the scope expand
-/// their cache extent to eagerly materialize offscreen sliver children.
+/// If any installed [TextPlugin] has [TextPlugin.contentAccessIntent] set to
+/// [ContentAccessIntent.scan], [TextPluginScope] configures descendant
+/// scrollable viewports (such as [ListView], [CustomScrollView], and
+/// [Viewport]) via [OffscreenContentRenderingStrategy] with
+/// [OffscreenRenderingPolicy.eager] so that offscreen sliver children are
+/// eagerly rendered. Applications can also place an
+/// [OffscreenContentRenderingStrategy] directly inside a [TextPluginScope] to
+/// override the policy for a specific scrollable subtree.
 ///
 /// See also:
 ///
 ///  * [TextPlugin], the interface implemented by text plugins.
 ///  * [TextDelegate], the handle given to a [TextPlugin] for each text widget
 ///    in its scope.
+///  * [OffscreenContentRenderingStrategy], which controls how descendant
+///    viewports render offscreen sliver content.
 class TextPluginScope extends StatefulWidget {
-  /// Creates a scope that installs [plugin] for all [Text] and [RichText]
-  /// widgets in [child], composing with any ancestor [TextPluginScope]s.
-  const TextPluginScope({
-    super.key,
-    required TextPlugin this.plugin,
-    this.disableLazyLoading,
-    required this.child,
-  }) : plugins = null,
-       _disabled = false;
-
-  /// Creates a scope that installs multiple [plugins] for all [Text] and
-  /// [RichText] widgets in [child], composing with any ancestor
+  /// Creates a scope that installs [plugin] for all [Text], [RichText], and
+  /// [EditableText] widgets in [child], composing with any ancestor
   /// [TextPluginScope]s.
+  const TextPluginScope({super.key, required TextPlugin this.plugin, required this.child})
+    : plugins = null,
+      _disabled = false;
+
+  /// Creates a scope that installs multiple [plugins] for all [Text],
+  /// [RichText], and [EditableText] widgets in [child], composing with any
+  /// ancestor [TextPluginScope]s.
   const TextPluginScope.multiple({
     super.key,
     required List<TextPlugin> this.plugins,
-    this.disableLazyLoading,
     required this.child,
   }) : plugin = null,
        _disabled = false;
@@ -58,7 +63,6 @@ class TextPluginScope extends StatefulWidget {
   const TextPluginScope.none({super.key, required this.child})
     : plugin = null,
       plugins = null,
-      disableLazyLoading = false,
       _disabled = true;
 
   /// The single [TextPlugin] installed by this scope, if created with
@@ -68,14 +72,6 @@ class TextPluginScope extends StatefulWidget {
   /// The list of [TextPlugin]s installed by this scope, if created with
   /// [TextPluginScope.multiple].
   final List<TextPlugin>? plugins;
-
-  /// Whether scrollable viewports within this scope should disable lazy loading
-  /// and eagerly lay out offscreen sliver children.
-  ///
-  /// When `null`, defaults to `true` if any active [TextPlugin] in this scope
-  /// (or an ancestor scope) returns `true` for [TextPlugin.disableLazyLoading],
-  /// and `false` otherwise.
-  final bool? disableLazyLoading;
 
   final bool _disabled;
 
@@ -102,14 +98,6 @@ class TextPluginScope extends StatefulWidget {
     return maybeOf(context) ?? const <TextPlugin>[];
   }
 
-  /// Returns whether scrollable viewports enclosing the given [context] should
-  /// disable lazy loading and eagerly lay out offscreen sliver children.
-  static bool shouldDisableLazyLoadingOf(BuildContext context) {
-    final _InheritedTextPluginLazyLoading? scope = context
-        .dependOnInheritedWidgetOfExactType<_InheritedTextPluginLazyLoading>();
-    return scope?.disableLazyLoading ?? false;
-  }
-
   @override
   State<TextPluginScope> createState() => _TextPluginScopeState();
 
@@ -123,30 +111,24 @@ class TextPluginScope extends StatefulWidget {
     } else if (plugins != null) {
       properties.add(IterableProperty<TextPlugin>('plugins', plugins));
     }
-    properties.add(
-      DiagnosticsProperty<bool?>('disableLazyLoading', disableLazyLoading, defaultValue: null),
-    );
   }
 }
 
 class _TextPluginScopeState extends State<TextPluginScope> {
   final List<Listenable> _listenedPlugins = <Listenable>[];
-  bool _localDisableLazyLoading = false;
+  bool _localRequiresOffscreenScan = false;
 
   List<TextPlugin> get _ownPlugins => <TextPlugin>[
     if (widget.plugin != null) widget.plugin!,
     ...?widget.plugins,
   ];
 
-  bool _computeLocalDisableLazyLoading() {
+  bool _computeLocalRequiresOffscreenScan() {
     if (widget._disabled) {
       return false;
     }
-    if (widget.disableLazyLoading != null) {
-      return widget.disableLazyLoading!;
-    }
     for (final TextPlugin item in _ownPlugins) {
-      if (item.disableLazyLoading) {
+      if (item.contentAccessIntent == ContentAccessIntent.scan) {
         return true;
       }
     }
@@ -161,7 +143,7 @@ class _TextPluginScopeState extends State<TextPluginScope> {
         _listenedPlugins.add(listenable);
       }
     }
-    _localDisableLazyLoading = _computeLocalDisableLazyLoading();
+    _localRequiresOffscreenScan = _computeLocalRequiresOffscreenScan();
   }
 
   void _unsubscribeFromPlugins() {
@@ -172,10 +154,10 @@ class _TextPluginScopeState extends State<TextPluginScope> {
   }
 
   void _handlePluginChanged() {
-    final bool updated = _computeLocalDisableLazyLoading();
-    if (updated != _localDisableLazyLoading) {
+    final bool updated = _computeLocalRequiresOffscreenScan();
+    if (updated != _localRequiresOffscreenScan) {
       setState(() {
-        _localDisableLazyLoading = updated;
+        _localRequiresOffscreenScan = updated;
       });
     }
   }
@@ -202,13 +184,13 @@ class _TextPluginScopeState extends State<TextPluginScope> {
   @override
   Widget build(BuildContext context) {
     if (widget._disabled) {
-      return _InheritedTextPluginLazyLoading(
-        disableLazyLoading: false,
+      return OffscreenContentRenderingStrategy(
+        policy: OffscreenRenderingPolicy.lazy,
         child: _InheritedTextPluginScope(plugins: const <TextPlugin>[], child: widget.child),
       );
     }
     final List<TextPlugin> inheritedPlugins = TextPluginScope.of(context);
-    final bool inheritedDisableLazyLoading = TextPluginScope.shouldDisableLazyLoadingOf(context);
+    final OffscreenRenderingPolicy inheritedPolicy = OffscreenContentRenderingStrategy.of(context);
     final combined = <TextPlugin>[...inheritedPlugins, ..._ownPlugins];
     final uniquePlugins = <TextPlugin>[];
     final seen = <TextPlugin>{};
@@ -217,10 +199,12 @@ class _TextPluginScopeState extends State<TextPluginScope> {
         uniquePlugins.add(item);
       }
     }
-    final bool effectiveDisableLazyLoading =
-        widget.disableLazyLoading ?? (inheritedDisableLazyLoading || _localDisableLazyLoading);
-    return _InheritedTextPluginLazyLoading(
-      disableLazyLoading: effectiveDisableLazyLoading,
+    final OffscreenRenderingPolicy effectivePolicy =
+        (inheritedPolicy == OffscreenRenderingPolicy.eager || _localRequiresOffscreenScan)
+        ? OffscreenRenderingPolicy.eager
+        : OffscreenRenderingPolicy.lazy;
+    return OffscreenContentRenderingStrategy(
+      policy: effectivePolicy,
       child: _InheritedTextPluginScope(
         plugins: List<TextPlugin>.unmodifiable(uniquePlugins),
         child: widget.child,
@@ -237,16 +221,5 @@ class _InheritedTextPluginScope extends InheritedWidget {
   @override
   bool updateShouldNotify(_InheritedTextPluginScope oldWidget) {
     return !listEquals(plugins, oldWidget.plugins);
-  }
-}
-
-class _InheritedTextPluginLazyLoading extends InheritedWidget {
-  const _InheritedTextPluginLazyLoading({required this.disableLazyLoading, required super.child});
-
-  final bool disableLazyLoading;
-
-  @override
-  bool updateShouldNotify(_InheritedTextPluginLazyLoading oldWidget) {
-    return disableLazyLoading != oldWidget.disableLazyLoading;
   }
 }

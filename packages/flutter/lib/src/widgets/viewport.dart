@@ -7,6 +7,7 @@
 /// @docImport 'scroll_view.dart';
 /// @docImport 'scrollable.dart';
 /// @docImport 'sliver.dart';
+/// @docImport 'text_plugin.dart';
 library;
 
 import 'package:flutter/rendering.dart';
@@ -15,7 +16,6 @@ import 'basic.dart';
 import 'debug.dart';
 import 'framework.dart';
 import 'scroll_notification.dart';
-import 'text_plugin.dart';
 
 export 'package:flutter/rendering.dart'
     show AxisDirection, GrowthDirection, ScrollCacheExtent, SliverPaintOrder;
@@ -168,7 +168,7 @@ class Viewport extends MultiChildRenderObjectWidget {
   static const ScrollCacheExtent _eagerScrollCacheExtent = ScrollCacheExtent.pixels(1e9);
 
   ScrollCacheExtent? _effectiveScrollCacheExtent(BuildContext context) {
-    if (TextPluginScope.shouldDisableLazyLoadingOf(context)) {
+    if (OffscreenContentRenderingStrategy.of(context) == OffscreenRenderingPolicy.eager) {
       return _eagerScrollCacheExtent;
     }
     if (scrollCacheExtent != null) {
@@ -474,7 +474,7 @@ class ShrinkWrappingViewport extends MultiChildRenderObjectWidget {
   final ScrollCacheExtent? scrollCacheExtent;
 
   ScrollCacheExtent? _effectiveScrollCacheExtent(BuildContext context) {
-    if (TextPluginScope.shouldDisableLazyLoadingOf(context)) {
+    if (OffscreenContentRenderingStrategy.of(context) == OffscreenRenderingPolicy.eager) {
       return Viewport._eagerScrollCacheExtent;
     }
     if (scrollCacheExtent != null) {
@@ -531,5 +531,69 @@ class ShrinkWrappingViewport extends MultiChildRenderObjectWidget {
         defaultValue: null,
       ),
     );
+  }
+}
+
+/// Policy controlling how scrollable viewports render offscreen sliver content.
+///
+/// Used by [OffscreenContentRenderingStrategy] to configure descendant
+/// [Viewport] and [ShrinkWrappingViewport] widgets.
+enum OffscreenRenderingPolicy {
+  /// Offscreen sliver children beyond the viewport's normal cache extent are
+  /// built and laid out lazily on demand as they scroll into view.
+  lazy,
+
+  /// Offscreen sliver children in finite slivers are eagerly built and laid out
+  /// so that their content can be scanned, measured, or scrolled to before
+  /// entering the visible viewport.
+  eager,
+}
+
+/// An inherited widget that controls how descendant [Viewport] and
+/// [ShrinkWrappingViewport] widgets render offscreen sliver content.
+///
+/// By default, Flutter's scrollable viewports ([ListView], [CustomScrollView],
+/// [Viewport]) use [OffscreenRenderingPolicy.lazy], only building and laying
+/// out sliver children within the visible viewport plus a small cache extent.
+///
+/// Wrapping a scrollable subtree in [OffscreenContentRenderingStrategy] with
+/// [OffscreenRenderingPolicy.eager] instructs descendant viewports to expand
+/// their cache extent and eagerly render offscreen sliver children. This is
+/// used automatically by [TextPluginScope] when an active [TextPlugin] declares
+/// [ContentAccessIntent.scan] (for example, during "Find in Page" / `Ctrl+F`
+/// search), and can also be placed directly in the widget tree by applications
+/// to override the offscreen rendering policy for a specific subtree.
+class OffscreenContentRenderingStrategy extends InheritedWidget {
+  /// Creates an [OffscreenContentRenderingStrategy] that applies [policy] to
+  /// descendant scrollable viewports.
+  const OffscreenContentRenderingStrategy({super.key, required this.policy, required super.child});
+
+  /// The offscreen content rendering policy for descendant viewports.
+  final OffscreenRenderingPolicy policy;
+
+  /// Returns the [OffscreenRenderingPolicy] from the closest
+  /// [OffscreenContentRenderingStrategy] ancestor that encloses the given
+  /// [context], or `null` if there is no such ancestor.
+  static OffscreenRenderingPolicy? maybeOf(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<OffscreenContentRenderingStrategy>()?.policy;
+  }
+
+  /// Returns the [OffscreenRenderingPolicy] from the closest
+  /// [OffscreenContentRenderingStrategy] ancestor that encloses the given
+  /// [context], defaulting to [OffscreenRenderingPolicy.lazy] if none is
+  /// present.
+  static OffscreenRenderingPolicy of(BuildContext context) {
+    return maybeOf(context) ?? OffscreenRenderingPolicy.lazy;
+  }
+
+  @override
+  bool updateShouldNotify(OffscreenContentRenderingStrategy oldWidget) {
+    return policy != oldWidget.policy;
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(EnumProperty<OffscreenRenderingPolicy>('policy', policy));
   }
 }

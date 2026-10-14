@@ -19,6 +19,34 @@ import 'editable.dart';
 import 'object.dart';
 import 'paragraph.dart';
 
+/// Describes whether a [TextPlugin] only needs to decorate visible onscreen
+/// content or requires offscreen content in scrollable viewports to be
+/// rendered.
+///
+/// See also:
+///
+///  * [TextPlugin.contentAccessIntent], which declares a plugin's intent.
+///  * [OffscreenContentRenderingStrategy], which configures how scrollable
+///    viewports render offscreen content.
+enum ContentAccessIntent {
+  /// The plugin only decorates or interacts with visible onscreen content
+  /// (for example, link detection, interactive tickers, or spoiler masking).
+  ///
+  /// Scrollable viewports continue to use their default lazy rendering policy
+  /// for offscreen children.
+  highlight,
+
+  /// The plugin scans content across the UI and requires offscreen children in
+  /// scrollable viewports to be rendered so they can be discovered and
+  /// navigated to (for example, "Find in Page" / `Ctrl+F` search).
+  ///
+  /// When any active [TextPlugin] in a [TextPluginScope] returns
+  /// [ContentAccessIntent.scan], [TextPluginScope] configures descendant
+  /// viewports via [OffscreenContentRenderingStrategy] to eagerly render
+  /// offscreen sliver children.
+  scan,
+}
+
 /// An interface for plugins that interact with and change the visual appearance
 /// of text rendered by [RenderParagraph] and [RenderEditable] (such as via [Text],
 /// [RichText], and [EditableText] widgets) within a [TextPluginScope].
@@ -48,23 +76,28 @@ abstract class TextPlugin {
   /// const constructors so that they can be used in const expressions.
   const TextPlugin();
 
-  /// Whether scrollable viewports within the enclosing [TextPluginScope]
-  /// should disable lazy loading and eagerly lay out all sliver children.
+  /// Whether this plugin only highlights visible onscreen text
+  /// ([ContentAccessIntent.highlight]) or scans across the UI and requires
+  /// offscreen content in scrollable viewports to be rendered
+  /// ([ContentAccessIntent.scan]).
   ///
-  /// When `true`, viewports (such as [ListView], [CustomScrollView], and
-  /// [Viewport]) within the [TextPluginScope] expand their cache extent so
-  /// that offscreen children in finite lazy lists are built and laid out
-  /// immediately. This allows plugins such as "Find in Page" (`Ctrl+F`) to
-  /// discover, highlight, and scroll to text matches in items that have not
-  /// yet been scrolled into view.
+  /// When any active [TextPlugin] within a [TextPluginScope] returns
+  /// [ContentAccessIntent.scan], [TextPluginScope] installs an
+  /// [OffscreenContentRenderingStrategy] with
+  /// [OffscreenRenderingPolicy.eager] so that scrollable viewports (such as
+  /// [ListView], [CustomScrollView], and [Viewport]) within the scope expand
+  /// their cache extent and eagerly render offscreen sliver children. This
+  /// allows plugins such as "Find in Page" (`Ctrl+F`) to discover, highlight,
+  /// and scroll to text matches in items that have not yet been scrolled into
+  /// view.
   ///
   /// If a [TextPlugin] also implements [Listenable] (for example, by extending
   /// or mixing in [ChangeNotifier]), [TextPluginScope] automatically listens
-  /// to the plugin and updates enclosing viewports whenever
-  /// [disableLazyLoading] changes.
+  /// to the plugin and updates the [OffscreenContentRenderingStrategy] whenever
+  /// [contentAccessIntent] changes.
   ///
-  /// Defaults to `false`.
-  bool get disableLazyLoading => false;
+  /// Defaults to [ContentAccessIntent.highlight].
+  ContentAccessIntent get contentAccessIntent => ContentAccessIntent.highlight;
 
   /// Called whenever a new text widget ([Text], [RichText], or [EditableText])
   /// appears in the subtree covered by this plugin.

@@ -29,12 +29,11 @@
   - [4.5 AI / LLM Grounding, Citations & 120fps Effects](#45-ai--llm-grounding-citations--120fps-effects)
   - [4.6 Domain-Specific Smart Entities](#46-domain-specific-smart-entities)
 - [5. Feature Deep Dives](#5-feature-deep-dives)
-  - [5.1 Scrolling, Document Ordering, and Canceling Lazy Loading (`Ctrl+F`)](#51-scrolling-document-ordering-and-canceling-lazy-loading-ctrlf)
+  - [5.1 Scrolling, Document Ordering, and Offscreen Content Rendering (`Ctrl+F`)](#51-scrolling-document-ordering-and-offscreen-content-rendering-ctrlf)
   - [5.2 Deep Dive: Should Selection Highlighting Be a `TextPlugin`?](#52-deep-dive-should-selection-highlighting-be-a-textplugin)
 - [6. Future Directions & Forward-Compatible API Design](#6-future-directions--forward-compatible-api-design)
   - [6.1 Non-Text Widgets with Searchable Labels (`Image`, `Icon`, & `Semantics`)](#61-non-text-widgets-with-searchable-labels-image-icon--semantics)
   - [6.2 Native Text Fields & Platform Views (W3C `Range` & CSS Custom Highlight API)](#62-native-text-fields--platform-views-w3c-range--css-custom-highlight-api)
-  - [6.3 Declarative Offscreen Content Access (`ContentAccessIntent` & `OffscreenContentRenderingStrategy`)](#63-declarative-offscreen-content-access-contentaccessintent--offscreencontentrenderingstrategy)
 - [7. Exhaustive Corner Cases & Architectural Analysis](#7-exhaustive-corner-cases--architectural-analysis)
   - [Corner Case 1: `ChangeNotifier` / `setState` Re-entrancy During Build, Layout, and Dispose](#corner-case-1-changenotifier--setstate-re-entrancy-during-build-layout-and-dispose)
   - [Corner Case 2: Calling Layout Queries in `didAddText` or `didUpdateText` (`!delegate.hasLayout`)](#corner-case-2-calling-layout-queries-in-didaddtext-or-didupdatetext-delegatehaslayout)
@@ -129,8 +128,8 @@ To ensure `TextPlugin` scales smoothly from simple core selection to complex com
 2. **Layered Composability & Selective Filtering**:
    - `TextPluginScope` permits stacking arbitrary numbers of plugins.
    - `TextPluginScope.exclude(types: {...})` provides typed subtree filtering so app developers can exclude specific plugins on UI chrome without breaking core plugins like `_SelectionHighlightTextPlugin`.
-3. **Reactive Viewport Control Protocol**:
-   - The `disableLazyLoading` protocol lets document-wide plugins (search, SEO) temporarily request full sliver materialization across `ListView.builder` viewports without tight coupling between plugins and scroll widgets.
+3. **Declarative Offscreen Content Rendering Protocol**:
+   - The `ContentAccessIntent` (`highlight` vs. `scan`) property on `TextPlugin` and the standalone `OffscreenContentRenderingStrategy` widget (`OffscreenRenderingPolicy.lazy` vs. `OffscreenRenderingPolicy.eager`) let document-wide plugins (search, SEO) temporarily request eager offscreen sliver rendering across `ListView.builder` viewports while keeping `Viewport` completely decoupled from `TextPluginScope`.
 4. **Semantics & Accessibility Alignment**:
    - `TextDelegate` provides a path to register `TextPluginSemanticAnnotation`s so visually decorated text (links, tickers, spoiler/study masks) automatically maps to focusable, accessible `SemanticsNode`s for screen readers.
 
@@ -169,20 +168,25 @@ TextPluginScope.multiple(
 
 | Layer | File | Public Symbols | Responsibility |
 | :--- | :--- | :--- | :--- |
-| **Rendering** | [rendering/text_plugin.dart](rendering/text_plugin.dart) | [TextPlugin](rendering/text_plugin.dart), [TextDelegate](rendering/text_plugin.dart#L108) | Defines the plugin lifecycle interface and the unified delegate handle wrapping `RenderParagraph` or `RenderEditable`. |
-| **Rendering** | [rendering/paragraph.dart](rendering/paragraph.dart) | [RenderParagraph.textPlugins](rendering/paragraph.dart#L565-L575) | Reconciles delegates, dispatches lifecycle & pointer events, and executes painters for static text. |
-| **Rendering** | [rendering/editable.dart](rendering/editable.dart) | [RenderEditable.textPlugins](rendering/editable.dart#L285) | Reconciles delegates, dispatches typing/layout & pointer events, and executes painters for editable text fields. |
-| **Widgets** | [widgets/text_plugin.dart](widgets/text_plugin.dart) | [TextPluginScope](widgets/text_plugin.dart#L30-L117) | Scopes and merges `TextPlugin` lists down the widget tree via `_InheritedTextPluginScope`. |
-| **Widgets** | [widgets/basic.dart](widgets/basic.dart) | [RichText.textPlugins](widgets/basic.dart#L8035) | Resolves `textPlugins ?? TextPluginScope.maybeOf(context)` and forwards to `RenderParagraph`. |
-| **Widgets** | [widgets/editable_text.dart](widgets/editable_text.dart) | [EditableText.textPlugins](widgets/editable_text.dart#L947) | Resolves `textPlugins ?? TextPluginScope.maybeOf(context)` and forwards to `_Editable` / `RenderEditable`. |
+| **Rendering** | [rendering/text_plugin.dart](packages/flutter/lib/src/rendering/text_plugin.dart) | [ContentAccessIntent](packages/flutter/lib/src/rendering/text_plugin.dart#L31-L48), [TextPlugin](packages/flutter/lib/src/rendering/text_plugin.dart#L74-L123), [TextDelegate](packages/flutter/lib/src/rendering/text_plugin.dart#L139) | Defines the plugin lifecycle interface, `ContentAccessIntent`, and the unified delegate handle wrapping `RenderParagraph` or `RenderEditable`. |
+| **Rendering** | [rendering/paragraph.dart](packages/flutter/lib/src/rendering/paragraph.dart) | [RenderParagraph.textPlugins](packages/flutter/lib/src/rendering/paragraph.dart#L565-L575) | Reconciles delegates, dispatches lifecycle & pointer events, and executes painters for static text. |
+| **Rendering** | [rendering/editable.dart](packages/flutter/lib/src/rendering/editable.dart) | [RenderEditable.textPlugins](packages/flutter/lib/src/rendering/editable.dart#L285) | Reconciles delegates, dispatches typing/layout & pointer events, and executes painters for editable text fields. |
+| **Widgets** | [widgets/text_plugin.dart](packages/flutter/lib/src/widgets/text_plugin.dart) | [TextPluginScope](packages/flutter/lib/src/widgets/text_plugin.dart#L44-L115) | Scopes and merges `TextPlugin` lists down the widget tree and configures `OffscreenContentRenderingStrategy` when any active plugin requests `ContentAccessIntent.scan`. |
+| **Widgets** | [widgets/viewport.dart](packages/flutter/lib/src/widgets/viewport.dart) | [OffscreenRenderingPolicy](packages/flutter/lib/src/widgets/viewport.dart#L540-L549), [OffscreenContentRenderingStrategy](packages/flutter/lib/src/widgets/viewport.dart#L565-L604) | General-purpose inherited strategy controlling whether descendant `Viewport` and `ShrinkWrappingViewport` widgets render offscreen sliver content lazily or eagerly. |
+| **Widgets** | [widgets/basic.dart](packages/flutter/lib/src/widgets/basic.dart) | [RichText.textPlugins](packages/flutter/lib/src/widgets/basic.dart#L6652) | Resolves `textPlugins ?? TextPluginScope.maybeOf(context)` and forwards to `RenderParagraph`. |
+| **Widgets** | [widgets/editable_text.dart](packages/flutter/lib/src/widgets/editable_text.dart) | [EditableText.textPlugins](packages/flutter/lib/src/widgets/editable_text.dart#L947) | Resolves `textPlugins ?? TextPluginScope.maybeOf(context)` and forwards to `_Editable` / `RenderEditable`. |
 
 ### 3.2 `TextPlugin` Lifecycle Contract
 
-Defined in [rendering/text_plugin.dart](rendering/text_plugin.dart#L44-L71), `TextPlugin` exposes five hooks:
+Defined in [rendering/text_plugin.dart](packages/flutter/lib/src/rendering/text_plugin.dart#L74-L123), `TextPlugin` exposes a declarative `contentAccessIntent` property and five lifecycle hooks:
 
 ```dart
+enum ContentAccessIntent { highlight, scan }
+
 abstract class TextPlugin {
   const TextPlugin();
+
+  ContentAccessIntent get contentAccessIntent => ContentAccessIntent.highlight;
 
   void didAddText(TextDelegate delegate) {}
   void didUpdateText(TextDelegate delegate) {}
@@ -230,7 +234,7 @@ Within [RenderParagraph.paint](rendering/paragraph.dart#L1218-L1319), layers are
 
 ## 4. Broader Ecosystem Use Cases
 
-Because `TextPlugin` combines **text inspection** (`plainText`, `placeholderRanges`), **sub-span geometry** (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`), **composited painting** (`backgroundPainter`, `foregroundPainter` without re-laying out text), **pointer routing** (`handlePointerEvent`), and **viewport control** (`ensureVisible`, `compareTo`, `disableLazyLoading`), it unlocks a broad ecosystem of drop-in plugins across any existing `Text` or `RichText` subtree.
+Because `TextPlugin` combines **text inspection** (`plainText`, `placeholderRanges`), **sub-span geometry** (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`), **composited painting** (`backgroundPainter`, `foregroundPainter` without re-laying out text), **pointer routing** (`handlePointerEvent`), and **viewport control** (`ensureVisible`, `compareTo`, `contentAccessIntent` / `OffscreenContentRenderingStrategy`), it unlocks a broad ecosystem of drop-in plugins across any existing `Text` or `RichText` subtree.
 
 Below is a summary of six broader ecosystem categories:
 
@@ -276,14 +280,14 @@ Below is a summary of six broader ecosystem categories:
 
 ## 5. Feature Deep Dives
 
-### 5.1 Scrolling, Document Ordering, and Canceling Lazy Loading (`Ctrl+F`)
+### 5.1 Scrolling, Document Ordering, and Offscreen Content Rendering (`Ctrl+F`)
 
 Supporting browser-grade **"Find in Page" (`Ctrl+F`)** across scrollable Flutter views requires solving three interconnected problems at the rendering and widget layers:
 1. **Scrolling to a matched character range** (`TextDelegate.ensureVisible`).
 2. **Sorting matches in true document order** regardless of lazy mount order (`TextDelegate.compareTo`).
-3. **Canceling lazy loading** in `ListView.builder` / `SliverList.builder` / `CustomScrollView` when `Ctrl+F` is active so offscreen items are materialized and searchable (`TextPlugin.disableLazyLoading` + `Viewport` integration).
+3. **Eagerly rendering offscreen content** in `ListView.builder` / `SliverList.builder` / `CustomScrollView` when `Ctrl+F` is active so offscreen items are built, laid out, and searchable (`TextPlugin.contentAccessIntent` + `OffscreenContentRenderingStrategy` integration).
 
-![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogInNlcXVlbmNlRGlhZ3JhbVxuICAgIHBhcnRpY2lwYW50IFVzZXJcbiAgICBwYXJ0aWNpcGFudCBQbHVnaW4gYXMgU2VhcmNoSW5QYWdlUGx1Z2luXG4gICAgcGFydGljaXBhbnQgU2NvcGUgYXMgVGV4dFBsdWdpblNjb3BlXG4gICAgcGFydGljaXBhbnQgVlAgYXMgVmlld3BvcnQgLyBSZW5kZXJWaWV3cG9ydFxuICAgIHBhcnRpY2lwYW50IFNsaXZlciBhcyBSZW5kZXJTbGl2ZXJMaXN0XG4gICAgcGFydGljaXBhbnQgUGFyYSBhcyBSZW5kZXJQYXJhZ3JhcGggKE9mZnNjcmVlbilcblxuICAgIFVzZXItPj5QbHVnaW46IFByZXNzZXMgQ3RybCtGIChlYWdlckxvYWRPZmZzY3JlZW5UZXh0ID0gdHJ1ZSlcbiAgICBQbHVnaW4tPj5TY29wZTogbm90aWZ5TGlzdGVuZXJzKCkgKGRpc2FibGVMYXp5TG9hZGluZyA9PSB0cnVlKVxuICAgIFNjb3BlLT4-VlA6IF9Jbmhlcml0ZWRUZXh0UGx1Z2luTGF6eUxvYWRpbmcgbm90aWZpZXMgVmlld3BvcnRcbiAgICBWUC0-PlZQOiBzY3JvbGxDYWNoZUV4dGVudCA9IFNjcm9sbENhY2hlRXh0ZW50LnBpeGVscygxZTkpXG4gICAgVlAtPj5TbGl2ZXI6IHBlcmZvcm1MYXlvdXQocmVtYWluaW5nQ2FjaGVFeHRlbnQ6IDFlOSlcbiAgICBTbGl2ZXItPj5QYXJhOiBCdWlsZHMsIG1vdW50cywgYW5kIGxheXMgb3V0IGFsbCBvZmZzY3JlZW4gaXRlbXNcbiAgICBQYXJhLT4-UGx1Z2luOiBhdHRhY2goKSAtPiBkaWRBZGRUZXh0KGRlbGVnYXRlKVxuICAgIFBhcmEtPj5QbHVnaW46IHBlcmZvcm1MYXlvdXQoKSAtPiBkaWRMYXlvdXRUZXh0KGRlbGVnYXRlKVxuICAgIFBsdWdpbi0-PlBsdWdpbjogU29ydHMgZGVsZWdhdGVzIHZpYSBkZWxlZ2F0ZS5jb21wYXJlVG8oKVxuICAgIFVzZXItPj5QbHVnaW46IE5leHQgTWF0Y2ggLyBFbnRlclxuICAgIFBsdWdpbi0-PlBhcmE6IGRlbGVnYXRlLmVuc3VyZVZpc2libGUobWF0Y2gucmFuZ2UpXG4gICAgUGFyYS0-PlZQOiBzaG93T25TY3JlZW4ocmVjdDogdGFyZ2V0UmVjdCkgLT4gc2Nyb2xscyB0byBtYXRjaCIsICJtZXJtYWlkIjogeyJ0aGVtZSI6ICJkZWZhdWx0In19)
+![Mermaid Diagram](https://mermaid.ink/img/eyJjb2RlIjogInNlcXVlbmNlRGlhZ3JhbVxuICAgIHBhcnRpY2lwYW50IFVzZXJcbiAgICBwYXJ0aWNpcGFudCBQbHVnaW4gYXMgU2VhcmNoSW5QYWdlUGx1Z2luXG4gICAgcGFydGljaXBhbnQgU2NvcGUgYXMgVGV4dFBsdWdpblNjb3BlXG4gICAgcGFydGljaXBhbnQgVlAgYXMgVmlld3BvcnQgLyBSZW5kZXJWaWV3cG9ydFxuICAgIHBhcnRpY2lwYW50IFNsaXZlciBhcyBSZW5kZXJTbGl2ZXJMaXN0XG4gICAgcGFydGljaXBhbnQgUGFyYSBhcyBSZW5kZXJQYXJhZ3JhcGggKE9mZnNjcmVlbilcblxuICAgIFVzZXItPj5QbHVnaW46IFByZXNzZXMgQ3RybCtGIChlYWdlckxvYWRPZmZzY3JlZW5UZXh0ID0gdHJ1ZSlcbiAgICBQbHVnaW4tPj5TY29wZTogbm90aWZ5TGlzdGVuZXJzKCkgKGNvbnRlbnRBY2Nlc3NJbnRlbnQgPT0gc2NhbilcbiAgICBTY29wZS0-PlZQOiBPZmZzY3JlZW5Db250ZW50UmVuZGVyaW5nU3RyYXRlZ3kgbm90aWZpZXMgVmlld3BvcnRcbiAgICBWUC0-PlZQOiBzY3JvbGxDYWNoZUV4dGVudCA9IFNjcm9sbENhY2hlRXh0ZW50LnBpeGVscygxZTkpXG4gICAgVlAtPj5TbGl2ZXI6IHBlcmZvcm1MYXlvdXQocmVtYWluaW5nQ2FjaGVFeHRlbnQ6IDFlOSlcbiAgICBTbGl2ZXItPj5QYXJhOiBCdWlsZHMsIG1vdW50cywgYW5kIGxheXMgb3V0IGFsbCBvZmZzY3JlZW4gaXRlbXNcbiAgICBQYXJhLT4-UGx1Z2luOiBhdHRhY2goKSAtPiBkaWRBZGRUZXh0KGRlbGVnYXRlKVxuICAgIFBhcmEtPj5QbHVnaW46IHBlcmZvcm1MYXlvdXQoKSAtPiBkaWRMYXlvdXRUZXh0KGRlbGVnYXRlKVxuICAgIFBsdWdpbi0-PlBsdWdpbjogU29ydHMgZGVsZWdhdGVzIHZpYSBkZWxlZ2F0ZS5jb21wYXJlVG8oKVxuICAgIFVzZXItPj5QbHVnaW46IE5leHQgTWF0Y2ggLyBFbnRlclxuICAgIFBsdWdpbi0-PlBhcmE6IGRlbGVnYXRlLmVuc3VyZVZpc2libGUobWF0Y2gucmFuZ2UpXG4gICAgUGFyYS0-PlZQOiBzaG93T25TY3JlZW4ocmVjdDogdGFyZ2V0UmVjdCkgLT4gc2Nyb2xscyB0byBtYXRjaCIsICJtZXJtYWlkIjogeyJ0aGVtZSI6ICJkZWZhdWx0In19)
 
 
 ---
@@ -292,7 +296,7 @@ Supporting browser-grade **"Find in Page" (`Ctrl+F`)** across scrollable Flutter
 
 Scrolling to an entire `RenderParagraph` (`showOnScreen(rect: null)`) is insufficient when a paragraph is a multi-screen article block or when a horizontal/vertical nested scroll view clips part of a line.
 
-[TextDelegate.ensureVisible](rendering/text_plugin.dart#L314-L342) computes the exact glyph bounding rectangle for any `TextRange` and reveals it across all enclosing viewports:
+[TextDelegate.ensureVisible](packages/flutter/lib/src/rendering/text_plugin.dart#L345-L373) computes the exact glyph bounding rectangle for any `TextRange` and reveals it across all enclosing viewports:
 
 ```dart
 void ensureVisible(
@@ -327,7 +331,7 @@ void ensureVisible(
 
 #### How `showOnScreen` Traverses Slivers & Nested Viewports
 1. `_paragraph.showOnScreen(descendant: _paragraph, rect: targetRect, duration: duration, curve: curve)` walks up the `RenderObject.parent` chain.
-2. Each enclosing [RenderViewportBase](rendering/viewport.dart#L1429-L1517) invokes `RenderViewportBase.showInViewport`, querying `viewport.getOffsetToReveal(descendant, 0.0, rect: rect)` (leading edge) and `viewport.getOffsetToReveal(descendant, 1.0, rect: rect)` (trailing edge).
+2. Each enclosing [RenderViewportBase](packages/flutter/lib/src/rendering/viewport.dart#L1429-L1517) invokes `RenderViewportBase.showInViewport`, querying `viewport.getOffsetToReveal(descendant, 0.0, rect: rect)` (leading edge) and `viewport.getOffsetToReveal(descendant, 1.0, rect: rect)` (trailing edge).
 3. If `targetRect` is already fully visible between the leading and trailing edges of the viewport, `RevealedOffset.clampOffset` returns `null` and no unnecessary scroll occurs.
 4. Otherwise, `offset.moveTo(targetOffset.offset, duration: duration, curve: curve)` scrolls (or animates) the minimal distance required to bring `targetRect` onscreen, and then continues walking up `super.showOnScreen` so **nested scroll views** (e.g., a horizontal scrollable inside a vertical `CustomScrollView`) scroll both axes into view.
 5. **Deferred Scroll on Newly Mounted Items**: If [SearchInPagePlugin.scrollToActiveMatch](examples/text_plugins/lib/plugins/search_in_page_plugin.dart#L156-L171) is invoked while a newly mounted delegate has not yet completed layout (`!delegate.hasLayout`), the plugin sets `_pendingScrollToActiveMatch = true` and triggers `ensureVisible` inside `didLayoutText(delegate)` as soon as layout completes.
@@ -342,47 +346,74 @@ When a user starts at the middle of a `ListView.builder` (say at `Item 10`) and 
 Furthermore, comparing global screen coordinates (`localToGlobal(Offset.zero).dy`) is insufficient for general layouts because two columns side-by-side or wrapped flex items may have overlapping vertical coordinates despite having a well-defined logical reading order in the widget tree.
 
 #### How We Solved It: Lowest Common Ancestor Render-Tree Traversal
-1. **Attach-Synchronized Registration**: [RenderParagraph](rendering/paragraph.dart#L568-L674) registers its `TextDelegate`s in `attach(PipelineOwner)` (when `RenderParagraph.parent` and the entire ancestor chain up to the root are already linked) and unregisters them immediately in `detach()`.
-2. **Tree-Order Comparison ([TextDelegate.compareTo](rendering/text_plugin.dart#L353-L409))**:
+1. **Attach-Synchronized Registration**: [RenderParagraph](packages/flutter/lib/src/rendering/paragraph.dart#L568-L674) registers its `TextDelegate`s in `attach(PipelineOwner)` (when `RenderParagraph.parent` and the entire ancestor chain up to the root are already linked) and unregisters them immediately in `detach()`.
+2. **Tree-Order Comparison ([TextDelegate.compareTo](packages/flutter/lib/src/rendering/text_plugin.dart#L384-L440))**:
    - Walks up `RenderObject.parent` from both `this._paragraph` and `other._paragraph` to find their **lowest common ancestor** (`commonParent`) and the two diverging child branches (`thisBranch` and `otherBranch`).
    - Calls `commonParent.visitChildren(...)` to determine which branch precedes the other.
    - Because `ContainerRenderObjectMixin.visitChildren` (used by `RenderFlex`, `RenderWrap`, `RenderViewport`, and `RenderSliverMultiBoxAdaptor` / `RenderSliverList`) always visits children from `firstChild` to `lastChild` in ascending logical index order—even when `insertAndLayoutLeadingChild` prepends children while scrolling upward—`delegates.sort()` guarantees true top-to-bottom document ordering.
 
 ---
 
-#### 5.1.3 Canceling Lazy Loading on `Ctrl+F` (`TextPlugin.disableLazyLoading`)
+#### 5.1.3 Declarative Offscreen Content Rendering (`ContentAccessIntent` & `OffscreenContentRenderingStrategy`)
 
-#### Why Lazy Lists Hide Offscreen Text
-In Flutter's sliver protocol ([RenderViewport._attemptLayout](rendering/viewport.dart#L1765-L1844) and [RenderSliverList.performLayout](rendering/sliver_list.dart#L46-L320)):
+#### Why Lazy Sliver Rendering Hides Offscreen Text
+In Flutter's sliver protocol ([RenderViewport._attemptLayout](packages/flutter/lib/src/rendering/viewport.dart#L1765-L1844) and [RenderSliverList.performLayout](packages/flutter/lib/src/rendering/sliver_list.dart#L46-L320)):
 - `RenderViewport` computes `_calculatedCacheExtent` from `scrollCacheExtent` (defaulting to `250.0` logical pixels before and after the visible viewport).
 - `RenderSliverList` only builds and lays out children whose layout offsets fall within `[scrollOffset + cacheOrigin, scrollOffset + cacheOrigin + remainingCacheExtent]`, and calls `collectGarbage(leadingGarbage, trailingGarbage)` to destroy children outside that window.
 - Therefore, in a `ListView.builder` or `SliverList.builder` with 50 items, items #10–#50 do not exist in the Element or RenderObject trees until scrolled near the viewport.
 
-#### How `TextPlugin.disableLazyLoading` Materializes Offscreen Slivers
-We added a declarative, reactive mechanism that lets any `TextPlugin` (or `TextPluginScope`) temporarily cancel lazy loading in descendant viewports:
+#### Decoupling Plugin Intent (`ContentAccessIntent`) from Viewport Policy (`OffscreenContentRenderingStrategy`)
+Rather than coupling `Viewport` directly to `TextPluginScope` or exposing a low-level boolean flag on `TextPlugin`, we split the design into two clean, composable abstractions using **offscreen content rendering** (as opposed to network "lazy loading") terminology:
 
-1. **Plugin Opt-In ([TextPlugin.disableLazyLoading](rendering/text_plugin.dart#L65))**:
+1. **Declarative Plugin Intent ([ContentAccessIntent](packages/flutter/lib/src/rendering/text_plugin.dart#L31-L48) on [TextPlugin.contentAccessIntent](packages/flutter/lib/src/rendering/text_plugin.dart#L101))**:
    ```dart
-   bool get disableLazyLoading => false;
+   enum ContentAccessIntent {
+     /// The plugin only decorates or interacts with visible onscreen content
+     /// (e.g., StockTickerPlugin, LinkifyPlugin, SpoilerMaskPlugin).
+     highlight,
+
+     /// The plugin scans content across the UI and requires offscreen children
+     /// in scrollable viewports to be rendered (e.g., active Ctrl+F SearchInPagePlugin).
+     scan,
+   }
    ```
-   In [SearchInPagePlugin](examples/text_plugins/lib/plugins/search_in_page_plugin.dart#L69-L82), pressing `Ctrl+F` / `Cmd+F` (or toggling the **"Cancel Lazy Load"** chip) sets `eagerLoadOffscreenText = true` (`disableLazyLoading => true`) and calls `notifyListeners()`.
-2. **Split Inherited Scope in [TextPluginScope](widgets/text_plugin.dart#L120-L246)**:
-   - `_TextPluginScopeState` automatically subscribes to any installed `TextPlugin` that implements `Listenable`.
-   - Crucially, `TextPluginScope` separates `_InheritedTextPluginScope` (which provides `List<TextPlugin>` to `RichText`) from `_InheritedTextPluginLazyLoading` (which provides `bool disableLazyLoading` via `TextPluginScope.shouldDisableLazyLoadingOf(context)`).
-   - When `disableLazyLoading` flips from `false` to `true`, **only** `Viewport` and `ShrinkWrappingViewport` are notified—existing onscreen `RichText` widgets are **not** rebuilt!
-3. **Viewport Cache Expansion ([Viewport._effectiveScrollCacheExtent](widgets/viewport.dart#L168-L185))**:
-   - Both `Viewport` and `ShrinkWrappingViewport` check `TextPluginScope.shouldDisableLazyLoadingOf(context)`.
+   - **Conflict-free multi-plugin composition**: Each plugin declares *what content it needs access to* rather than *how* a `Viewport` renders. When multiple plugins are composed in a `TextPluginScope`, their intents combine via a simple upper bound (`scan` if *any* active plugin requests `ContentAccessIntent.scan`, otherwise `highlight`).
+   - **Future extensibility**: `ContentAccessIntent` can later grow intermediate intents (such as `lookahead` for `ReadAloudPlugin` pre-rendering the next 1–2 screens) without breaking API compatibility.
+   - In [SearchInPagePlugin](examples/text_plugins/lib/plugins/search_in_page_plugin.dart#L77-L80), pressing `Ctrl+F` / `Cmd+F` (or toggling the **"Cancel Lazy Load"** chip) sets `eagerLoadOffscreenText = true` (`contentAccessIntent => ContentAccessIntent.scan`) and calls `notifyListeners()`.
+
+2. **Standalone Inherited Strategy ([OffscreenContentRenderingStrategy](packages/flutter/lib/src/widgets/viewport.dart#L565-L604) in `package:flutter/widgets.dart`)**:
+   ```dart
+   enum OffscreenRenderingPolicy { lazy, eager }
+
+   class OffscreenContentRenderingStrategy extends InheritedWidget {
+     const OffscreenContentRenderingStrategy({
+       super.key,
+       required this.policy,
+       required super.child,
+     });
+
+     final OffscreenRenderingPolicy policy;
+     static OffscreenRenderingPolicy of(BuildContext context) { ... }
+   }
+   ```
+   - **Zero coupling from `Viewport` to `TextPluginScope`**: `Viewport` and `ShrinkWrappingViewport` in [widgets/viewport.dart](packages/flutter/lib/src/widgets/viewport.dart) do not import `text_plugin.dart`; they only query `OffscreenContentRenderingStrategy.of(context)`.
+   - **Split Inherited Notification**: [TextPluginScope](packages/flutter/lib/src/widgets/text_plugin.dart#L117-L214) separates `_InheritedTextPluginScope` (which provides `List<TextPlugin>` to `RichText` and `EditableText`) from `OffscreenContentRenderingStrategy` (which provides `OffscreenRenderingPolicy` to `Viewport`). When a plugin's `contentAccessIntent` flips between `highlight` and `scan`, **only** `Viewport` and `ShrinkWrappingViewport` are notified—existing onscreen `RichText` widgets are **not** rebuilt!
+   - **General-purpose & overridable per subtree**: Because `OffscreenContentRenderingStrategy` is a standalone widget in `package:flutter/widgets.dart`, developers can also place it directly in the widget tree—either to pre-render offscreen items in a complex finite `ListView` without a `TextPlugin`, or to wrap an unbounded feed in `OffscreenContentRenderingStrategy(policy: OffscreenRenderingPolicy.lazy, child: ...)` so it stays lazy even inside a `Ctrl+F` scope.
+
+3. **Viewport Cache Expansion ([Viewport._effectiveScrollCacheExtent](packages/flutter/lib/src/widgets/viewport.dart#L170-L187))**:
+   - Both `Viewport` and `ShrinkWrappingViewport` check `OffscreenContentRenderingStrategy.of(context) == OffscreenRenderingPolicy.eager`.
    - When `true`, they apply `const ScrollCacheExtent.pixels(1e9)`.
    - Why `1e9` (`1,000,000,000.0` logical pixels) instead of `double.maxFinite` or `double.infinity`?
-     - In [RenderViewport._attemptLayout](rendering/viewport.dart#L1793-L1804), `fullCacheExtent = mainAxisExtent + 2 * _calculatedCacheExtent` and `centerCacheOffset = centerOffset + _calculatedCacheExtent`.
+     - In [RenderViewport._attemptLayout](packages/flutter/lib/src/rendering/viewport.dart#L1793-L1804), `fullCacheExtent = mainAxisExtent + 2 * _calculatedCacheExtent` and `centerCacheOffset = centerOffset + _calculatedCacheExtent`.
      - Using `double.maxFinite` (`1.79e308`) overflows `2 * _calculatedCacheExtent` to `double.infinity` (producing `NaN` in `fullCacheExtent - centerCacheOffset`) and loses all floating-point mantissa precision when adding `centerOffset`.
-     - `1e9` pixels (equivalent to ~1,600,000 screens of scroll) is well within IEEE-754 float64's exact precision (`9e15`), preserving sub-pixel layout accuracy while forcing finite `SliverList` / `SliverGrid` / `ListView.builder` delegates to materialize and lay out all children from index `0` to `itemCount - 1`.
+     - `1e9` pixels (equivalent to ~1,600,000 screens of scroll) is well within IEEE-754 float64's exact precision (`9e15`), preserving sub-pixel layout accuracy while forcing finite `SliverList` / `SliverGrid` / `ListView.builder` delegates to render and lay out all children from index `0` to `itemCount - 1`.
+
 4. **Automatic Restoration**:
-   - When the user closes `Ctrl+F` (`eagerLoadOffscreenText = false`), `_InheritedTextPluginLazyLoading` notifies the `Viewport` to restore its normal `250.0` pixel `cacheExtent`. On the very next layout pass, `RenderSliverList.collectGarbage` unmounts offscreen items and triggers `didRemoveText` for each one.
+   - When the user closes `Ctrl+F` (`eagerLoadOffscreenText = false`), `OffscreenContentRenderingStrategy` switches back to `OffscreenRenderingPolicy.lazy` and notifies the `Viewport` to restore its normal `250.0` pixel `cacheExtent`. On the very next layout pass, `RenderSliverList.collectGarbage` unmounts offscreen items and triggers `didRemoveText` for each one.
 
 > [!WARNING]
 > **Unbounded Infinite Lists (`itemCount == null`)**:  
-> Developers should only enable `disableLazyLoading` on finite lists (`itemCount != null`). If a `SliverChildBuilderDelegate` has `childCount == null` (an infinite procedural generator that never returns `null`), expanding the cache extent will build items until the builder returns `null`.
+> Developers should only use `OffscreenRenderingPolicy.eager` (`ContentAccessIntent.scan`) on finite lists (`itemCount != null`). If a `SliverChildBuilderDelegate` has `childCount == null` (an infinite procedural generator that never returns `null`), wrap that specific scroll view in `OffscreenContentRenderingStrategy(policy: OffscreenRenderingPolicy.lazy, child: ...)` so it does not build unbounded items.
 
 ---
 
@@ -568,31 +599,6 @@ On Web (`HtmlElementView`), the **W3C `Range` API** and **W3C CSS Custom Highlig
 
 ---
 
-### 6.3 Declarative Offscreen Content Access (`ContentAccessIntent` & `OffscreenContentRenderingStrategy`)
-
-In our initial prototype, `TextPlugin.disableLazyLoading` (`bool`) and `TextPluginScope.shouldDisableLazyLoadingOf(context)` allow `SearchInPagePlugin` to materialize offscreen items in `ListView.builder`. Looking ahead, two refinements make this contract cleaner and more general:
-
-1. **Declarative `ContentAccessIntent` on `TextPlugin` (Instead of `bool disableLazyLoading`)**:
-   - A `TextPlugin` should declare *what content it needs access to* rather than *how* a `Viewport` renders:
-     ```dart
-     enum ContentAccessIntent {
-       /// The plugin only decorates or interacts with visible onscreen text
-       /// (e.g., StockTickerPlugin, LinkifyPlugin, SpoilerMaskPlugin).
-       highlight,
-
-       /// The plugin scans the document and needs offscreen content materialized
-       /// (e.g., active Ctrl+F SearchInPagePlugin, SeoExtractorPlugin).
-       scan,
-     }
-     ```
-   - **Conflict-free composition**: When multiple plugins are active in a `TextPluginScope`, their intents combine via a simple upper bound (`scan` if *any* active plugin requests `scan`, otherwise `highlight`), avoiding any apparent contradiction between plugins with `false` vs. `true`.
-   - **Future extensibility**: An enum can later grow intermediate intents (such as `lookahead` for TTS `ReadAloudPlugin` pre-rendering the next 1–2 screens) without breaking API compatibility.
-2. **Standalone `OffscreenContentRenderingStrategy` (Decoupling `Viewport` from `TextPluginScope`)**:
-   - Eagerly rendering offscreen sliver children (disabling **lazy rendering**, distinct from network "lazy loading") is useful beyond text plugins—for example, pre-rendering `Image.network` items in a `ListView` to avoid blank images while scrolling, or eliminating first-scroll jank on complex finite lists.
-   - Extracting `_InheritedTextPluginLazyLoading` into a standalone `OffscreenContentRenderingStrategy` widget in `package:flutter/widgets.dart` means `Viewport` only queries `OffscreenContentRenderingStrategy.of(context)` and has **zero dependency on `TextPluginScope`**, while `TextPluginScope` simply installs `OffscreenContentRenderingStrategy` when any active plugin requests `ContentAccessIntent.scan`.
-
----
-
 ## 7. Exhaustive Corner Cases & Architectural Analysis
 
 Below are the 12 critical corner cases identified during design and implementation, how our implementation handles them today, and what additional safeguards or trade-offs apply.
@@ -769,8 +775,8 @@ In a `ListView.builder` or `CustomScrollView` with 1,000 paragraphs, Flutter by 
 - For **document-wide plugins** (`SearchInPagePlugin`, `SeoExtractorPlugin`), three scrolling challenges arise:
   1. **Out-of-order mounting when scrolling upward**: Items mounted while scrolling upward register via `didAddText` in reverse document order.
   2. **Scrolling to a specific substring match**: A match inside a tall paragraph or nested scroll view needs character-level scroll-to-range rather than just scrolling to the widget's top edge.
-  3. **Offscreen unbuilt items in lazy lists (`Ctrl+F`)**: Unbuilt items outside `cacheExtent` have no `RenderParagraph` until lazy loading is canceled.
-- **How We Solved All Three**: See [Section 5.1 (Scrolling, Document Ordering, and Canceling Lazy Loading)](#51-scrolling-document-ordering-and-canceling-lazy-loading-ctrlf) above for the full architecture (`TextDelegate.compareTo`, `TextDelegate.ensureVisible`, and `TextPlugin.disableLazyLoading`).
+  3. **Offscreen unbuilt items in lazy lists (`Ctrl+F`)**: Unbuilt items outside `cacheExtent` have no `RenderParagraph` until offscreen content rendering is switched to `OffscreenRenderingPolicy.eager`.
+- **How We Solved All Three**: See [Section 5.1 (Scrolling, Document Ordering, and Offscreen Content Rendering)](#51-scrolling-document-ordering-and-offscreen-content-rendering-ctrlf) above for the full architecture (`TextDelegate.compareTo`, `TextDelegate.ensureVisible`, `TextPlugin.contentAccessIntent`, and `OffscreenContentRenderingStrategy`).
 
 ---
 

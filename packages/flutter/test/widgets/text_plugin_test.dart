@@ -400,28 +400,79 @@ void main() {
     },
   );
 
-  testWidgets('TextPlugin.disableLazyLoading cancels lazy loading in ListView.builder', (
+  testWidgets(
+    'TextPlugin.contentAccessIntent configures OffscreenContentRenderingStrategy in ListView.builder',
+    (WidgetTester tester) async {
+      final plugin = _EagerToggleTextPlugin();
+      addTearDown(plugin.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: TextPluginScope(
+            plugin: plugin,
+            child: Center(
+              child: SizedBox(
+                height: 200,
+                width: 400,
+                child: ListView.builder(
+                  controller: scrollController,
+                  itemExtent: 100.0,
+                  itemCount: 30,
+                  itemBuilder: (BuildContext context, int index) => Text('Lazy Item $index'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // With ContentAccessIntent.highlight (default), only visible + cacheExtent items are mounted (< 30).
+      expect(plugin.activeDelegates.length, lessThan(10));
+      expect(plugin.activeDelegates.any((TextDelegate d) => d.text == 'Lazy Item 29'), isFalse);
+
+      // Simulate Ctrl+F switching contentAccessIntent to ContentAccessIntent.scan on the plugin.
+      plugin.contentAccessIntent = ContentAccessIntent.scan;
+      await tester.pump();
+
+      // All 30 items in the ListView.builder are now rendered and registered!
+      expect(plugin.activeDelegates, hasLength(30));
+      final TextDelegate lastItem = plugin.activeDelegates.firstWhere(
+        (TextDelegate d) => d.text == 'Lazy Item 29',
+      );
+      expect(lastItem.hasLayout, isTrue);
+
+      // And we can scroll directly to the previously offscreen item 29 via ensureVisible!
+      lastItem.ensureVisible(const TextRange(start: 0, end: 12));
+      await tester.pumpAndSettle();
+      expect(scrollController.offset, greaterThan(2500.0));
+    },
+  );
+
+  testWidgets('OffscreenContentRenderingStrategy can override policy for a subtree', (
     WidgetTester tester,
   ) async {
-    final plugin = _EagerToggleTextPlugin();
+    final plugin = _EagerToggleTextPlugin()..contentAccessIntent = ContentAccessIntent.scan;
     addTearDown(plugin.dispose);
-    final scrollController = ScrollController();
-    addTearDown(scrollController.dispose);
 
     await tester.pumpWidget(
       Directionality(
         textDirection: TextDirection.ltr,
         child: TextPluginScope(
           plugin: plugin,
-          child: Center(
-            child: SizedBox(
-              height: 200,
-              width: 400,
-              child: ListView.builder(
-                controller: scrollController,
-                itemExtent: 100.0,
-                itemCount: 30,
-                itemBuilder: (BuildContext context, int index) => Text('Lazy Item $index'),
+          child: OffscreenContentRenderingStrategy(
+            policy: OffscreenRenderingPolicy.lazy,
+            child: Center(
+              child: SizedBox(
+                height: 200,
+                width: 400,
+                child: ListView.builder(
+                  itemExtent: 100.0,
+                  itemCount: 30,
+                  itemBuilder: (BuildContext context, int index) => Text('OptOut Item $index'),
+                ),
               ),
             ),
           ),
@@ -429,25 +480,11 @@ void main() {
       ),
     );
 
-    // With lazy loading active (default), only visible + cacheExtent items are mounted (< 30).
+    // Because the inner OffscreenContentRenderingStrategy explicitly sets lazy,
+    // offscreen items beyond the normal cache extent remain unmounted even though
+    // the enclosing plugin has ContentAccessIntent.scan.
     expect(plugin.activeDelegates.length, lessThan(10));
-    expect(plugin.activeDelegates.any((TextDelegate d) => d.text == 'Lazy Item 29'), isFalse);
-
-    // Simulate Ctrl+F enabling disableLazyLoading on the plugin.
-    plugin.disableLazyLoading = true;
-    await tester.pump();
-
-    // All 30 items in the ListView.builder are now materialized and registered!
-    expect(plugin.activeDelegates, hasLength(30));
-    final TextDelegate lastItem = plugin.activeDelegates.firstWhere(
-      (TextDelegate d) => d.text == 'Lazy Item 29',
-    );
-    expect(lastItem.hasLayout, isTrue);
-
-    // And we can scroll directly to the previously offscreen item 29 via ensureVisible!
-    lastItem.ensureVisible(const TextRange(start: 0, end: 12));
-    await tester.pumpAndSettle();
-    expect(scrollController.offset, greaterThan(2500.0));
+    expect(plugin.activeDelegates.any((TextDelegate d) => d.text == 'OptOut Item 29'), isFalse);
   });
 
   testWidgets('TextPlugin tracks lifecycle and typing updates of EditableText in subtree', (
@@ -504,14 +541,14 @@ void main() {
 class _EagerToggleTextPlugin extends TextPlugin with ChangeNotifier {
   final List<TextDelegate> activeDelegates = <TextDelegate>[];
 
-  bool _disableLazyLoading = false;
+  ContentAccessIntent _contentAccessIntent = ContentAccessIntent.highlight;
   @override
-  bool get disableLazyLoading => _disableLazyLoading;
-  set disableLazyLoading(bool value) {
-    if (_disableLazyLoading == value) {
+  ContentAccessIntent get contentAccessIntent => _contentAccessIntent;
+  set contentAccessIntent(ContentAccessIntent value) {
+    if (_contentAccessIntent == value) {
       return;
     }
-    _disableLazyLoading = value;
+    _contentAccessIntent = value;
     notifyListeners();
   }
 

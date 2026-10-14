@@ -35,7 +35,9 @@ class SearchMatch {
     if (identical(this, other)) {
       return true;
     }
-    return other is SearchMatch && other.delegate == delegate && other.range == range;
+    return other is SearchMatch &&
+        other.delegate == delegate &&
+        other.range == range;
   }
 
   @override
@@ -75,11 +77,13 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   bool _disposed = false;
 
   @override
-  bool get disableLazyLoading => _eagerLoadOffscreenText;
+  ContentAccessIntent get contentAccessIntent => _eagerLoadOffscreenText
+      ? ContentAccessIntent.scan
+      : ContentAccessIntent.highlight;
 
-  /// Whether enclosing scrollable viewports should cancel lazy loading and
-  /// eagerly build offscreen sliver items so all text in the scroll view can
-  /// be searched and scrolled to.
+  /// Whether enclosing scrollable viewports should eagerly render offscreen
+  /// sliver items so all text in the scroll view can be searched and scrolled
+  /// to.
   bool get eagerLoadOffscreenText => _eagerLoadOffscreenText;
   set eagerLoadOffscreenText(bool value) {
     if (_eagerLoadOffscreenText == value) {
@@ -99,7 +103,8 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     if (_disposed) {
       return;
     }
-    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
       if (!_notificationScheduled) {
         _notificationScheduled = true;
         SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -144,7 +149,8 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   int get activeMatchIndex => _activeMatchIndex;
 
   /// The currently focused [SearchMatch], or `null` if there are no matches.
-  SearchMatch? get activeMatch => (_activeMatchIndex >= 0 && _activeMatchIndex < _matches.length)
+  SearchMatch? get activeMatch =>
+      (_activeMatchIndex >= 0 && _activeMatchIndex < _matches.length)
       ? _matches[_activeMatchIndex]
       : null;
 
@@ -164,7 +170,8 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     if (_matches.isEmpty) {
       return;
     }
-    _activeMatchIndex = (_activeMatchIndex - 1 + _matches.length) % _matches.length;
+    _activeMatchIndex =
+        (_activeMatchIndex - 1 + _matches.length) % _matches.length;
     _updatePainters();
     scrollToActiveMatch();
     _notifyListenersSafely();
@@ -185,7 +192,11 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
       return;
     }
     _pendingScrollToActiveMatch = false;
-    current.delegate.ensureVisible(current.range, duration: duration, curve: curve);
+    current.delegate.ensureVisible(
+      current.range,
+      duration: duration,
+      curve: curve,
+    );
   }
 
   @override
@@ -205,7 +216,9 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     if (_pendingScrollToActiveMatch && activeMatch?.delegate == delegate) {
       _pendingScrollToActiveMatch = false;
       SchedulerBinding.instance.addPostFrameCallback((_) {
-        if (!_disposed && activeMatch?.delegate == delegate && delegate.hasLayout) {
+        if (!_disposed &&
+            activeMatch?.delegate == delegate &&
+            delegate.hasLayout) {
           delegate.ensureVisible(
             activeMatch!.range,
             duration: const Duration(milliseconds: 250),
@@ -232,7 +245,9 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
       final List<TextDelegate> sortedDelegates = _delegates.toList()..sort();
       for (final delegate in sortedDelegates) {
         final String rawText = delegate.text;
-        final String haystack = _caseSensitive ? rawText : rawText.toLowerCase();
+        final String haystack = _caseSensitive
+            ? rawText
+            : rawText.toLowerCase();
         var start = 0;
         while (start <= haystack.length - needle.length) {
           final int index = haystack.indexOf(needle, start);
@@ -256,7 +271,8 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
       final int preservedIndex = _matches.indexOf(previousActive);
       if (preservedIndex != -1) {
         _activeMatchIndex = preservedIndex;
-      } else if (_activeMatchIndex < 0 || _activeMatchIndex >= _matches.length) {
+      } else if (_activeMatchIndex < 0 ||
+          _activeMatchIndex >= _matches.length) {
         _activeMatchIndex = 0;
       }
     } else if (_activeMatchIndex < 0 || _activeMatchIndex >= _matches.length) {
@@ -277,9 +293,8 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
         delegate.backgroundPainter = null;
         delegate.foregroundPainter = null;
       } else {
-        final SearchMatch? activeInDelegate = currentActive?.delegate == delegate
-            ? currentActive
-            : null;
+        final SearchMatch? activeInDelegate =
+            currentActive?.delegate == delegate ? currentActive : null;
         delegate.backgroundPainter = _SearchBackgroundPainter(
           delegate: delegate,
           matches: delegateMatches,
@@ -370,13 +385,17 @@ class _SearchForegroundPainter extends CustomPainter {
       ..strokeWidth = 1.75;
 
     for (final ui.TextBox box in activeMatch.getBoxes()) {
-      final rrect = RRect.fromRectAndRadius(box.toRect().inflate(2.0), const Radius.circular(3.5));
+      final rrect = RRect.fromRectAndRadius(
+        box.toRect().inflate(2.0),
+        const Radius.circular(3.5),
+      );
       canvas.drawRRect(rrect, borderPaint);
     }
   }
 
   @override
   bool shouldRepaint(covariant _SearchForegroundPainter oldDelegate) {
-    return oldDelegate.activeMatch != activeMatch || oldDelegate.borderColor != borderColor;
+    return oldDelegate.activeMatch != activeMatch ||
+        oldDelegate.borderColor != borderColor;
   }
 }
