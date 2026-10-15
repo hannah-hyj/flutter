@@ -653,11 +653,11 @@ class OffscreenContentRenderingStrategy extends InheritedWidget {
 
 ### 5.2 文本选择高亮是否应当迁移为 `TextPlugin`？
 
-一个很自然的架构问题是：Flutter 内置的文本选区高亮（[packages/flutter/lib/src/rendering/paragraph.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/paragraph.dart) 中的 `_SelectableFragment.paintSelection`）是否也应当迁移为由 [SelectableRegion](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/selectable_region.dart) 安装的标准 `TextPlugin`？
+当用户在 [SelectionArea](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/material/selection_area.dart) 或 [SelectableRegion](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/selectable_region.dart) 内拖拽选择文字时，Flutter 会在选中文本下方绘制一层彩色背景框。从架构角度来看，一个核心问题是：文本选区的哪些部分可以用 `TextPlugin` 实现，哪些部分不能？
 
-#### 5.2.1 将选区高亮迁移为 `TextPlugin` 的收益
+#### 5.2.1 `TextPlugin` 能够胜任的部分：绘制选区高亮背景
 
-目前 `RenderParagraph` 内部的 `_SelectableFragment.paintSelection` 实现如下：
+在目前的 `RenderParagraph` 中，选区高亮绘制（`_SelectableFragment.paintSelection`）会在绘制文字字形前调用 `getBoxesForSelection` 并在画布上绘制矩形：
 
 ```dart
 for (final TextBox textBox in paragraph.getBoxesForSelection(selection)) {
@@ -665,88 +665,73 @@ for (final TextBox textBox in paragraph.getBoxesForSelection(selection)) {
 }
 ```
 
-从机制上看，这与 `TextPlugin` 在 `TextDelegate` 上挂载 `backgroundPainter` 完全一致。将选区高亮提取为 `TextPlugin` 有三点收益：
+这一操作与插件的 `backgroundPainter` 完全一致。因此，`SelectableRegion` 可以通过 `TextPluginScope` 安装一个 `_SelectionHighlightTextPlugin`，从 `TextDelegate` 读取当前段落的选区并绘制高亮背景框。
 
-1. 不必再在 `RenderParagraph.paint` 中硬编码选区高亮绘制在插件 `backgroundPainter` 之上还是之下，图层先后顺序直接由作用域嵌套顺序决定。
-
-2. 应用可以通过标准 `TextPlugin` 定制选区视觉效果（如圆角 `RRect` 选区、渐变选区或类似 Google Docs 的多人协同选区光标），无需修改 `RenderParagraph`。
-
-3. 目前 `paragraph.dart` 中有超过 2,100 行代码属于 `_SelectableFragment`。将选区高亮绘制从 `RenderParagraph` 中解耦出来，可以显著精简核心文本渲染对象。
+将选区背景绘制迁移到 `TextPlugin` 可以精简 `RenderParagraph.paint` 的内部逻辑，同时允许应用通过标准的插件机制自定义选区外观（例如圆角选区框或多人协作光标）。
 
 ---
 
-#### 5.2.2 迁移选区高亮时发现的五个边界问题
+#### 5.2.2 架构权衡与仅靠 `TextPlugin` 无法解决的边界
 
-在 `SelectableRegion` 中原型化 `_SelectionHighlightTextPlugin`（如 [Renzo-Olivares:text-plugins-alt](https://github.com/Renzo-Olivares/flutter/commit/55f5d0af4503fe7950374addd625a5fd9ae8efb5) 所探索的方案）揭示了五个在正式迁移前必须解决的边界情况：
+评估将选区作为 `TextPlugin` 实现时，有四个高层架构权衡与能力边界需要考量：
 
-```mermaid
-graph TD
-    SR["SelectableRegion (Near App Root)"]
-    SPS["TextPluginScope (_SelectionHighlightTextPlugin)"]
-    FPS["TextPluginScope (Inner Feature: e.g. SearchInPagePlugin)"]
-    TXT["Text('Hello GOOG', selectionColor: Colors.amber)"]
+##### 1. `SelectionArea` 与内层业务插件的图层顺序冲突
 
-    SR --> SPS --> FPS --> TXT
+在实际应用中，`SelectionArea` 通常挂在页面最外层，而业务插件（例如为 `"GOOG"` 绘制不透明绿色胶囊背景的 `StockTickerPlugin`）通常挂在页面内部：
+
+```dart
+SelectionArea( // 外层作用域：选区背景高亮
+  child: Scaffold(
+    body: TextPluginScope(
+      plugin: stockTickerPlugin, // 内层作用域：不透明绿色胶囊背景
+      child: const Text('Buy GOOG today'),
+    ),
+  ),
+)
 ```
 
-#### 1. 根到叶绘制顺序反转问题
+在外层插件先画（位于底层）、内层插件后画（位于上层）的规则下，内层不透明的 `"GOOG"` 绿色胶囊会盖住外层的选区高亮，使 `"GOOG"` 看起来像未被选中。若反过来让外层作用域画在最上层，虽然能解决 `SelectionArea` 的遮挡，却违背了常规组件树中“更具体的内层 `TextPluginScope` 覆盖外层 `TextPluginScope`”的组合直觉。
 
-`SelectionArea` 与 `SelectableRegion` 通常挂载在页面或 `Scaffold` 的顶层附近，而业务插件（`SearchInPagePlugin`、`StockTickerPlugin`、`LinkifyPlugin`）往往挂载在页面主体内部。
+##### 2. 单组件 `Text(selectionColor: ...)` 与内嵌 `WidgetSpan` 状态
 
-在“从根到叶”的绘制顺序下（外层作用域先画、位于底层），外层的 `_SelectionHighlightTextPlugin` 会画在内层业务插件之下，导致内层插件的不透明背景徽章遮挡住用户的文本选区高亮。反之，如果把所有插件反转为“从叶到根”绘制（让外层 `SelectableRegion` 画在最上层），又会违背内层更具体的 `TextPluginScope` 覆盖外层 `TextPluginScope` 的组件组合直觉。
+安装在顶层 `SelectableRegion` 的 `_SelectionHighlightTextPlugin` 默认只知道顶层的 `DefaultSelectionStyle`。如果某个子孙 `Text('Warning', selectionColor: Colors.red)` 自定义了选区颜色，或者 `Text.rich` 内嵌了 `WidgetSpan` 导致段落被拆分为多段选区，`TextDelegate` 就必须额外暴露单段落的 `selectionColor` 与 `selections` 列表（并配合 `includePlaceholders: false` 跳过内嵌组件框），插件才能正确绘制。
 
-#### 2. 单组件 `Text(selectionColor: ...)` 覆盖丢失
+##### 3. 局部屏蔽插件（`TextPluginScope.none` 与 `TextPluginScope.exclude`）
 
-Flutter 的 `Text.selectionColor` 允许单个 `Text` 组件在自身的 `RenderParagraph` 上覆盖 `DefaultSelectionStyle.of(context).selectionColor`。
+如果开发者为了不让 `SeoExtractorPlugin` 抓取侧边栏文字而使用 `TextPluginScope.none` 包裹侧边栏，`TextPluginScope.none` 会移除包括 `_SelectionHighlightTextPlugin` 在内的所有祖先插件，导致侧边栏文字虽然仍能复制却看不见选区高亮。因此需要通过 `TextPluginScope.exclude(types: {SeoExtractorPlugin})` 按类型排除特定业务插件，而不影响选区高亮。
 
-如果 `SelectableRegion` 仅在选区作用域根节点安装一个 `_SelectionHighlightTextPlugin(color: defaultHighlightColor)` 且画笔直接使用 `plugin.color`，那么单组件的 `Text(selectionColor: ...)` 颜色覆盖就会丢失，除非 `TextDelegate` 暴露底层 `RenderParagraph` 的 `Color? get selectionColor`。
+##### 4. 移动端拖拽手柄与跨组件框选
 
-#### 3. 跨内嵌 `WidgetSpan` 的非连续选区
+虽然 `CustomPainter` 可以在 `Canvas` 上绘制选区背景矩形，但它无法替代 `RenderParagraph` 中 `_SelectableFragment` 的其余职责：
 
-当 `RenderParagraph` 包含内联 `WidgetSpan`（例如 `"First [WidgetSpan] Second"`）时，`RenderParagraph` 会在每个 `\uFFFC` 占位符处拆分为多个 `_SelectableFragment`。
+1. 移动端选区两端的拖拽水滴手柄（Android 和 iOS 选区手柄）需要在 `RenderParagraph.paint` 期间向 `PaintingContext` 压入合成层 `LeaderLayer`（`context.pushLayer(LeaderLayer(...))`）。`CustomPainter` 只能访问 `Canvas`，无法压入合成图层。
 
-若将 `_lastSelectableFragments` 合并为 `TextDelegate` 上的单个 `TextSelection?` 并集区间（`[minOffset, maxOffset]`），会带来两个问题：一是直接对该并集调用 `getBoxesForSelection` 会把 `\uFFFC` 占位符本身的矩形也包含进去，除非传入 `includePlaceholders: false` 跳过 `TextDelegate.placeholderRanges`；二是当嵌套可选择组件导致多段选区不连续时，单个并集区间无法表达断开的多个片段，需要在 `TextDelegate` 上暴露 `List<TextSelection> get selections`。
-
-#### 4. 旧版绘制回退抑制 Bug（`skipLegacyHighlight`）
-
-为了避免 `_SelectionHighlightTextPlugin` 启用时半透明选区颜色被重复绘制两次，`_SelectableFragment.paintSelection` 需要判断当前是否已有插件负责绘制选区高亮。
-
-如果简单判断 `final bool skipLegacyHighlight = paragraph.textPlugins.isNotEmpty;` 会产生 Bug：当开发者使用自定义 `SelectionRegistrar`（未通过 `SelectableRegion`）并挂载了 `LinkifyPlugin` 时，`textPlugins.isNotEmpty` 为 `true`，会在没有安装选区高亮插件的情况下把选区高亮静默关掉。正确的做法是彻底移除 `_SelectableFragment` 中的旧版选区绘制（由 `SelectionContainer` 统一安装选区高亮插件），或显式维护 `bool handlesSelectionHighlight` 标记。
-
-#### 5. 局部屏蔽耦合（`TextPluginScope.none` 与 `SelectionContainer.disabled`）
-
-如果 `SelectableRegion` 依赖 `TextPluginScope` 来绘制选区高亮，那么用 `TextPluginScope.none` 包裹某个子树（原本只想排除 `SeoExtractorPlugin` 或 `StockTickerPlugin`）也会同时关掉该子树内的选区高亮绘制，尽管 `_SelectableFragment` 依然注册在 `SelectionContainer` 中且可以无视觉反馈地复制文本。引入按类型过滤的 `TextPluginScope.exclude` 可以避免 `TextPluginScope.none` 误伤选区高亮。
+2. `SelectionArea` 需要跨文本（`RenderParagraph`）与非文本组件（如可选择图片）统一协调框选手势，因此 `RenderParagraph` 仍需将可选择片段注册到 `SelectionRegistrar`。
 
 ---
 
-#### 5.2.3 为什么完整选区（`_SelectableFragment`）不能仅靠 `CustomPainter` 实现
+#### 5.2.3 总结：哪些能力可以迁移至 `TextPlugin`，哪些不能
 
-虽然选区高亮背景绘制可以放入 `TextDelegate.backgroundPainter`，但 `_SelectableFragment` 的其余职责在不扩展 `TextDelegate` 的前提下无法迁出 `RenderParagraph`：
+| 选区职责 | 能否作为 `TextPlugin`？ | 架构原因 |
+| :--- | :--- | :--- |
+| **绘制选区高亮背景框** | **可以** | 直接对应 `TextDelegate.backgroundPainter` + `getBoxesForSelection(..., includePlaceholders: false)`（需 `TextDelegate` 暴露 `selections` 与 `selectionColor`）。 |
+| **自定义选区样式（圆角、动画等）** | **可以** | 自定义 `TextPlugin` 画笔可以在选中字形下方或上方绘制任意 `Canvas` 装饰。 |
+| **移动端拖拽手柄定位（`LeaderLayer`）** | **否（仅靠 `CustomPainter` 不可行）** | 需要调用 `PaintingContext.pushLayer(LeaderLayer(...))` 并在 `RenderParagraph` 上设置 `alwaysNeedsCompositing`。 |
+| **手势分发与跨组件框选** | **否** | 由 `SelectableRegion` 与 `SelectionRegistrar` 跨文本与非文本 `Selectable` 渲染对象统一管理。 |
 
-1. `_SelectableFragment.paintHandles` 需要通过 `context.pushLayer(LeaderLayer(link: _startHandleLayerLink!, ...))` 压入合成层 `LeaderLayer` 来锚定移动端拖拽手柄，并要求 `RenderParagraph.alwaysNeedsCompositing` 返回 `true`。而 `CustomPainter` 只接收 `Canvas`，无法压入合成图层。
+#### 5.2.4 后续演进路线：若要将 `SelectionArea` 彻底迁移至 `TextPlugin` 需要做什么
 
-2. `SelectionArea` 需要跨文本（`RenderParagraph`）与非文本 `Selectable`（如可选择图片）统一框选，任何选区插件仍需将自身的文本片段接入 `SelectionRegistrar`。
+是否将 `SelectionArea` 的文本选区职责全部迁入 `TextPlugin` 存在一个核心架构权衡：这样做可以将约 2,100 行 `_SelectableFragment` 代码从 `RenderParagraph` 中剥离出来，但也意味着 `TextDelegate` 不能只做纯粹的文本检查与画布绘制代理，而必须进一步承担合成层（`LeaderLayer`）管理以及与 `SelectionRegistrar` 的桥接职责。
 
-#### 5.2.4 将选区提取为 `TextPlugin` 所需的 API 能力清单
+基于这一权衡，本提案在首期保持 Flutter 现有的选区实现不变，优先落地简洁的 `TextPlugin` 核心管线。如果后续我们决定将 `SelectionArea` 完整迁移为 `TextPlugin`，需要分四步推进：
 
-| 所需能力 | `TextDelegate` / `TextPluginScope` 需提供的 API |
-| :--- | :--- |
-| **多片段选区与单组件颜色** | 在 `TextDelegate` 上暴露 `List<TextSelection> get selections` 与 `Color? get selectionColor`。 |
-| **跳过 `WidgetSpan` 占位框** | 通过 `TextDelegate.placeholderRanges` 与 `TextDelegate.getBoxesForSelection` 的 `includePlaceholders: false` 参数实现。 |
-| **移动端拖拽手柄图层** | 允许 `TextDelegate` 注册 `(LayerLink, Offset)` 手柄链接，在 `RenderParagraph.paint` 期间压入图层并更新 `alwaysNeedsCompositing`。 |
-| **正交局部屏蔽** | 通过 `TextPluginScope.exclude(types: {...})` 实现，使局部屏蔽特定业务插件时不会误关 `SelectionHighlightPlugin`。 |
+1. 在 `TextDelegate` 上暴露单段落的 `selections`（`List<TextSelection>`）与 `selectionColor`（`Color?`），并由 `SelectionContainer` 与 `SelectableRegion` 安装 `_SelectionHighlightTextPlugin`，通过 `delegate.backgroundPainter` 绘制选区背景框。
 
-#### 5.2.5 将 `SelectionArea` 迁移至 `TextPlugin` 的后续演进路线
+2. 为选区高亮提供显式的绘制优先级或独立图层槽位，避免外层 `SelectionArea` 的选区高亮被内层业务插件的不透明背景徽章遮挡。
 
-基于 [Renzo-Olivares:text-plugins-alt (commit 55f5d0af)](https://github.com/Renzo-Olivares/flutter/commit/55f5d0af4503fe7950374addd625a5fd9ae8efb5) 的原型验证，将 Flutter 内置文本选区高亮迁移至 `TextPlugin` 可分为四个步骤推进：
+3. 在 `TextDelegate` 上扩展 `delegate.registerHandleLayers(startLink, endLink)`，使选区插件能够在 `RenderParagraph.paint` 与 `RenderEditable._paintContents` 期间为移动端拖拽手柄压入合成层 `LeaderLayer`。
 
-1. 由 `SelectionContainer` 与 `SelectableRegion` 在子树中安装私有的 `_SelectionHighlightTextPlugin`。该插件监听 `SelectionRegistrar` 的选区变化，通过 `delegate.getBoxesForSelection(selection, includePlaceholders: false)` 读取选区矩形，并使用 `delegate.backgroundPainter` 绘制选区高亮。
-
-2. 在 `TextDelegate` 上扩展 `delegate.registerHandleLayers(startLink, endLink)`，使选区插件可以在 `RenderParagraph.paint` 与 `RenderEditable._paintContents` 期间为移动端拖拽手柄压入 `LeaderLayer`。
-
-3. 在 UI 控件上使用 `TextPluginScope.exclude(types: {SearchInPagePlugin, StockTickerPlugin})` 屏蔽特定业务插件，避免影响 `_SelectionHighlightTextPlugin`。
-
-4. 待所有选区容器均接入 `_SelectionHighlightTextPlugin` 后，移除 `RenderParagraph` 与 `RenderEditable` 内部旧的选区高亮绘制代码。
+4. 在 UI 控件上使用 `TextPluginScope.exclude(types: {...})` 按类型屏蔽特定业务插件（避免误伤 `_SelectionHighlightTextPlugin`），随后彻底移除 `RenderParagraph` 与 `RenderEditable` 中旧的选区高亮绘制代码。
 
 ---
 

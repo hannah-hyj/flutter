@@ -653,11 +653,11 @@ When the user closes `Ctrl+F` (`eagerLoadOffscreenText = false`), `OffscreenCont
 
 ### 5.2 Should selection highlighting be a `TextPlugin`?
 
-A natural question is whether Flutter's built-in text selection highlight (`_SelectableFragment.paintSelection` in [packages/flutter/lib/src/rendering/paragraph.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/paragraph.dart)) should be migrated to a `TextPlugin` installed by [SelectableRegion](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/selectable_region.dart).
+When a user drags to select text inside a [SelectionArea](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/material/selection_area.dart) or [SelectableRegion](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/selectable_region.dart), Flutter draws a colored rectangle behind the selected characters. A natural architectural question is what parts of text selection can be implemented as a `TextPlugin`, and what parts cannot.
 
-#### 5.2.1 Benefits of making selection highlighting a `TextPlugin`
+#### 5.2.1 What `TextPlugin` can do: painting selection highlights
 
-Today, `_SelectableFragment.paintSelection` inside `RenderParagraph` is implemented as:
+In `RenderParagraph` today, selection highlight painting (`_SelectableFragment.paintSelection`) queries `getBoxesForSelection` and draws rectangles on the canvas before the text glyphs paint:
 
 ```dart
 for (final TextBox textBox in paragraph.getBoxesForSelection(selection)) {
@@ -665,88 +665,73 @@ for (final TextBox textBox in paragraph.getBoxesForSelection(selection)) {
 }
 ```
 
-Mechanically, this is the same as a `TextPlugin` installing a `backgroundPainter` on `TextDelegate`. Extracting selection highlighting into a `TextPlugin` has three benefits:
+Because this is the same operation performed by a plugin `backgroundPainter`, `SelectableRegion` can install a `_SelectionHighlightTextPlugin` via `TextPluginScope` that reads the paragraph's active selection from `TextDelegate` and paints the highlight boxes.
 
-1. Instead of hardcoding whether selection highlights paint above or below plugin `backgroundPainter`s in `RenderParagraph.paint`, Z-order is controlled by scope ordering.
-
-2. Applications can customize selection rendering (such as rounded `RRect` selection highlights or multi-user collaborative cursors) using standard `TextPlugin`s without modifying `RenderParagraph`.
-
-3. Over 2,100 lines of `paragraph.dart` are dedicated to `_SelectableFragment`. Moving selection highlight painting out of `RenderParagraph` simplifies the core text render object.
+Moving selection highlight painting into a `TextPlugin` simplifies `RenderParagraph.paint` and allows apps to customize how selection highlights look (such as rounded selection corners or collaborative cursors) using the standard plugin pipeline.
 
 ---
 
-#### 5.2.2 Corner cases when migrating selection highlighting
+#### 5.2.2 Trade-offs and what `TextPlugin` cannot do alone
 
-Prototyping `_SelectionHighlightTextPlugin` inside `SelectableRegion` (as explored in [Renzo-Olivares:text-plugins-alt](https://github.com/Renzo-Olivares/flutter/commit/55f5d0af4503fe7950374addd625a5fd9ae8efb5)) surfaces five corner cases that must be solved before migrating selection highlighting:
+Evaluating selection as a `TextPlugin` highlights four architectural trade-offs and boundaries:
 
-```mermaid
-graph TD
-    SR["SelectableRegion (Near App Root)"]
-    SPS["TextPluginScope (_SelectionHighlightTextPlugin)"]
-    FPS["TextPluginScope (Inner Feature: e.g. SearchInPagePlugin)"]
-    TXT["Text('Hello GOOG', selectionColor: Colors.amber)"]
+##### 1. Paint order between `SelectionArea` and inner feature plugins
 
-    SR --> SPS --> FPS --> TXT
+`SelectionArea` is typically mounted near the root of an app or page, while feature plugins (such as `StockTickerPlugin`, which paints an opaque green pill behind `"GOOG"`) are mounted deeper inside the page body:
+
+```dart
+SelectionArea( // Outer scope: selection highlight
+  child: Scaffold(
+    body: TextPluginScope(
+      plugin: stockTickerPlugin, // Inner scope: opaque green pill
+      child: const Text('Buy GOOG today'),
+    ),
+  ),
+)
 ```
 
-#### 1. Root-versus-leaf paint order inversion
+When outer scopes paint behind inner scopes, the inner opaque `"GOOG"` pill paints over the outer selection highlight, making `"GOOG"` look unselected. Flipping the pipeline so outer scopes paint on top fixes `SelectionArea`, but breaks normal plugin composition where a more specific inner `TextPluginScope` is expected to paint over an outer `TextPluginScope`.
 
-`SelectionArea` and `SelectableRegion` are usually mounted near the root of a page or `Scaffold`, while feature plugins (`SearchInPagePlugin`, `StockTickerPlugin`, `LinkifyPlugin`) are mounted inside the page body.
+##### 2. Per-widget `Text(selectionColor: ...)` and inline `WidgetSpan`s
 
-Under root-first painting (outermost scope paints first, at the back), the outer `_SelectionHighlightTextPlugin` paints behind inner feature plugins, so an opaque background badge from an inner plugin covers the user's text selection highlight. Flipping all plugins to leaf-first painting (so the outer `SelectableRegion` paints on top) would invert the normal widget scoping rule where an inner `TextPluginScope` layers over an outer `TextPluginScope`.
+A single `_SelectionHighlightTextPlugin` installed at the root `SelectableRegion` only knows the default selection color from `DefaultSelectionStyle`. If a descendant `Text('Warning', selectionColor: Colors.red)` overrides its selection color, or if a `Text.rich` contains inline `WidgetSpan`s that split the paragraph into multiple selectable ranges, the plugin cannot render accurately unless `TextDelegate` exposes per-paragraph `selectionColor` and `selections` (with `includePlaceholders: false` so inline widgets are not highlighted).
 
-#### 2. Per-widget `Text(selectionColor: ...)` overrides
+##### 3. Plugin opt-out (`TextPluginScope.none` versus `TextPluginScope.exclude`)
 
-Flutter's `Text.selectionColor` lets an individual `Text` widget override `DefaultSelectionStyle.of(context).selectionColor` on its own `RenderParagraph`.
+If a developer wraps a sidebar in `TextPluginScope.none` so `SeoExtractorPlugin` ignores the sidebar text, `TextPluginScope.none` removes all ancestor plugins, including `_SelectionHighlightTextPlugin`. Users could still copy the sidebar text, but the visual selection highlight would disappear. Using `TextPluginScope.exclude(types: {SeoExtractorPlugin})` lets developers disable specific feature plugins without stripping selection highlighting.
 
-If `SelectableRegion` installs a single `_SelectionHighlightTextPlugin(color: defaultHighlightColor)` at the root of the selection scope and the painter uses `plugin.color`, per-widget `Text(selectionColor: ...)` overrides are lost unless `TextDelegate` exposes `Color? get selectionColor` from `RenderParagraph`.
+##### 4. Mobile drag handles and cross-widget selection
 
-#### 3. Disjoint selections across embedded `WidgetSpan`s
+While `CustomPainter` can draw selection rectangles on a `Canvas`, it cannot replace the rest of `_SelectableFragment` inside `RenderParagraph`:
 
-When a `RenderParagraph` contains inline `WidgetSpan`s (such as `"First [WidgetSpan] Second"`), `RenderParagraph` splits itself into multiple `_SelectableFragment`s around each `\uFFFC` placeholder code unit.
+1. Mobile selection drag handles (the teardrop handles on Android and iOS) require pushing composited `LeaderLayer`s (`context.pushLayer(LeaderLayer(...))`) into the `PaintingContext` during `RenderParagraph.paint`. A `CustomPainter` only receives a `Canvas` and cannot push composited layers.
 
-Collapsing `_lastSelectableFragments` into a single `TextSelection?` union (`[minOffset, maxOffset]`) on `TextDelegate` causes two issues. First, calling `getBoxesForSelection` on the union includes the box of the `\uFFFC` placeholder itself unless `includePlaceholders: false` is passed to slice around `TextDelegate.placeholderRanges`. Second, if multi-fragment selection state is non-contiguous across nested selectables, a single union span cannot represent disjoint fragment ranges; exposing `List<TextSelection> get selections` on `TextDelegate` avoids lossy unioning.
-
-#### 4. Legacy fallback suppression bug (`skipLegacyHighlight`)
-
-To avoid double-painting semi-transparent selection colors when `_SelectionHighlightTextPlugin` is active, `_SelectableFragment.paintSelection` must know whether a plugin is already painting the selection highlight.
-
-Checking `final bool skipLegacyHighlight = paragraph.textPlugins.isNotEmpty;` is broken: if a developer uses a custom `SelectionRegistrar` without `SelectableRegion` and installs `LinkifyPlugin`, `textPlugins.isNotEmpty` is `true` and disables selection highlighting even though no selection highlight plugin is installed. We must either remove legacy highlight painting from `_SelectableFragment` completely or track an explicit `bool handlesSelectionHighlight` flag.
-
-#### 5. Opt-out coupling (`TextPluginScope.none` versus `SelectionContainer.disabled`)
-
-If `SelectableRegion` relies on `TextPluginScope` to paint selection highlights, wrapping a subtree in `TextPluginScope.none` (to exclude a card from `SeoExtractorPlugin`) also disables selection highlight painting in that subtree, even though `_SelectableFragment` is still registered with `SelectionContainer` and copying text still works. Providing selective opt-out (`TextPluginScope.exclude`) keeps selection highlight registration independent of `TextPluginScope.none`.
+2. `SelectionArea` coordinates selection gestures across both text (`RenderParagraph`) and non-text widgets (such as selectable images), so `RenderParagraph` must still register its selectable fragments with `SelectionRegistrar`.
 
 ---
 
-#### 5.2.3 Why full selection (`_SelectableFragment`) requires more than `CustomPainter`
+#### 5.2.3 Summary: what can and cannot move to `TextPlugin`
 
-While selection highlight painting fits into `TextDelegate.backgroundPainter`, the rest of `_SelectableFragment` cannot move out of `RenderParagraph` into a `TextPlugin` without extending `TextDelegate`:
+| Selection Responsibility | Can be a `TextPlugin`? | Architectural Reason |
+| :--- | :--- | :--- |
+| **Drawing selection highlight boxes** | **Yes** | Maps directly to `TextDelegate.backgroundPainter` + `getBoxesForSelection(..., includePlaceholders: false)`, provided `TextDelegate` exposes `selections` and `selectionColor`. |
+| **Custom selection styles (rounded rects, animations)** | **Yes** | Custom `TextPlugin` painters can draw any `Canvas` decoration behind or in front of selected glyphs. |
+| **Mobile drag handle positioning (`LeaderLayer`)** | **No (not via `CustomPainter`)** | Requires `PaintingContext.pushLayer(LeaderLayer(...))` and `alwaysNeedsCompositing` on `RenderParagraph`. |
+| **Gesture dispatch and cross-widget selection** | **No** | Handled by `SelectableRegion` and `SelectionRegistrar` across both text and non-text `Selectable` render objects. |
 
-1. `_SelectableFragment.paintHandles` pushes composited `LeaderLayer`s for mobile drag handles via `context.pushLayer(LeaderLayer(link: _startHandleLayerLink!, ...))` and requires `RenderParagraph.alwaysNeedsCompositing` to return `true`. A `CustomPainter` only receives a `Canvas` and cannot push composited layers.
+#### 5.2.4 Follow-up roadmap: what it would take to migrate `SelectionArea` to `TextPlugin`
 
-2. `SelectionArea` selects across both text (`RenderParagraph`) and non-text `Selectable`s (such as selectable images). Any selection plugin must still connect its fragments to `SelectionRegistrar`.
+Moving all of `SelectionArea`'s text responsibilities into a `TextPlugin` involves a core trade-off: it removes roughly 2,100 lines of `_SelectableFragment` code from `RenderParagraph`, but it requires expanding `TextDelegate` beyond canvas painting into composited layer management and `SelectionRegistrar` plumbing.
 
-#### 5.2.4 Requirements for extracting selection into a `TextPlugin`
+Because of that trade-off, this initial proposal keeps Flutter's built-in selection rendering unchanged while landing the core `TextPlugin` pipeline first. If we choose to migrate `SelectionArea` to `TextPlugin` in a follow-up, it would require four steps:
 
-| Capability Needed | Required API on `TextDelegate` / `TextPluginScope` |
-| :--- | :--- |
-| **Per-fragment selection & color** | Expose `List<TextSelection> get selections` and `Color? get selectionColor` on `TextDelegate`. |
-| **Skip `WidgetSpan` boxes** | Implemented via `TextDelegate.placeholderRanges` and `includePlaceholders: false` on `TextDelegate.getBoxesForSelection`. |
-| **Mobile drag handle layers** | Allow `TextDelegate` to register `LeaderLayer` handle links `(LayerLink, Offset)` painted during `RenderParagraph.paint` and reflected in `alwaysNeedsCompositing`. |
-| **Orthogonal opt-out** | Implemented via `TextPluginScope.exclude(types: {...})` so excluding feature plugins does not inadvertently suppress `SelectionHighlightPlugin`. |
+1. Expose per-paragraph `selections` (`List<TextSelection>`) and `selectionColor` (`Color?`) on `TextDelegate`, and have `SelectionContainer` and `SelectableRegion` install `_SelectionHighlightTextPlugin` to draw selection boxes via `delegate.backgroundPainter`.
 
-#### 5.2.5 Follow-up roadmap for migrating `SelectionArea` to `TextPlugin`
+2. Add an explicit paint-priority or layer slot for selection highlights so outer `SelectionArea` highlights are not hidden behind opaque background badges from inner feature plugins.
 
-Based on the prototype in [Renzo-Olivares:text-plugins-alt (commit 55f5d0af)](https://github.com/Renzo-Olivares/flutter/commit/55f5d0af4503fe7950374addd625a5fd9ae8efb5), migrating Flutter's built-in text selection highlights to a `TextPlugin` can proceed in four steps:
+3. Extend `TextDelegate` with `delegate.registerHandleLayers(startLink, endLink)` so a selection plugin can push composited `LeaderLayer`s for mobile drag handles during `RenderParagraph.paint` and `RenderEditable._paintContents`.
 
-1. `SelectionContainer` and `SelectableRegion` install a private `_SelectionHighlightTextPlugin` in their subtree. The plugin listens to `SelectionRegistrar`, reads selection bounds via `delegate.getBoxesForSelection(selection, includePlaceholders: false)`, and paints highlights using `delegate.backgroundPainter`.
-
-2. Extend `TextDelegate` with `delegate.registerHandleLayers(startLink, endLink)` so selection plugins can push composited `LeaderLayer`s for mobile drag handles during `RenderParagraph.paint` and `RenderEditable._paintContents`.
-
-3. Use `TextPluginScope.exclude(types: {SearchInPagePlugin, StockTickerPlugin})` on UI chrome so developers can disable specific feature plugins without suppressing `_SelectionHighlightTextPlugin`.
-
-4. Remove legacy selection highlight painting inside `RenderParagraph` and `RenderEditable` once all selection containers install `_SelectionHighlightTextPlugin`.
+4. Use `TextPluginScope.exclude(types: {...})` on UI chrome so disabling feature plugins never strips `_SelectionHighlightTextPlugin`, and then remove the legacy selection highlight painting code from `RenderParagraph` and `RenderEditable`.
 
 ---
 
