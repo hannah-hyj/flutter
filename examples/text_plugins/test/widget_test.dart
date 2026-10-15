@@ -314,6 +314,21 @@ void main() {
         find.byKey(const Key('search_input')),
       );
       expect(searchField.focusNode!.hasFocus, isTrue);
+
+      // Verify pressing Enter repeatedly advances through matches while keeping focus.
+      await tester.enterText(find.byKey(const Key('search_input')), 'Flutter');
+      await tester.pumpAndSettle();
+      expect(find.text('1 / 4'), findsOneWidget);
+
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 4'), findsOneWidget);
+      expect(searchField.focusNode!.hasFocus, isTrue);
+
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(find.text('3 / 4'), findsOneWidget);
+      expect(searchField.focusNode!.hasFocus, isTrue);
     },
   );
 }

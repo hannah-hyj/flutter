@@ -72,6 +72,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   bool _caseSensitive = false;
   bool _eagerLoadOffscreenText;
   int _activeMatchIndex = -1;
+  bool _hasExplicitActiveMatch = false;
   bool _pendingScrollToActiveMatch = false;
   bool _notificationScheduled = false;
   bool _disposed = false;
@@ -127,6 +128,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     }
     _query = value;
     _activeMatchIndex = -1;
+    _hasExplicitActiveMatch = false;
     _rebuildMatches();
   }
 
@@ -159,6 +161,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     if (_matches.isEmpty) {
       return;
     }
+    _hasExplicitActiveMatch = true;
     _activeMatchIndex = (_activeMatchIndex + 1) % _matches.length;
     _updatePainters();
     scrollToActiveMatch();
@@ -170,6 +173,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     if (_matches.isEmpty) {
       return;
     }
+    _hasExplicitActiveMatch = true;
     _activeMatchIndex =
         (_activeMatchIndex - 1 + _matches.length) % _matches.length;
     _updatePainters();
@@ -234,11 +238,16 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     delegate.backgroundPainter = null;
     delegate.foregroundPainter = null;
     _delegates.remove(delegate);
+    if (_delegates.isEmpty) {
+      _hasExplicitActiveMatch = false;
+    }
     _rebuildMatches();
   }
 
   void _rebuildMatches() {
-    final SearchMatch? previousActive = activeMatch;
+    final SearchMatch? previousActive = _hasExplicitActiveMatch
+        ? activeMatch
+        : null;
     _matches.clear();
     if (_query.isNotEmpty) {
       final String needle = _caseSensitive ? _query : _query.toLowerCase();
@@ -267,6 +276,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
 
     if (_matches.isEmpty) {
       _activeMatchIndex = -1;
+      _hasExplicitActiveMatch = false;
     } else if (previousActive != null) {
       final int preservedIndex = _matches.indexOf(previousActive);
       if (preservedIndex != -1) {
@@ -275,7 +285,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
           _activeMatchIndex >= _matches.length) {
         _activeMatchIndex = 0;
       }
-    } else if (_activeMatchIndex < 0 || _activeMatchIndex >= _matches.length) {
+    } else {
       _activeMatchIndex = 0;
     }
 

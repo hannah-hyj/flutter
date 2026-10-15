@@ -811,6 +811,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                   onChanged: (String value) {
                     _searchPlugin.query = value;
                   },
+                  onEditingComplete: () {},
                   onSubmitted: (_) {
                     _searchPlugin.nextMatch();
                   },
@@ -955,6 +956,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                             onChanged: (String value) {
                               _searchPlugin.query = value;
                             },
+                            onEditingComplete: () {},
                             onSubmitted: (_) {
                               _searchPlugin.nextMatch();
                             },
