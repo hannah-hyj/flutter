@@ -750,15 +750,16 @@ Below are 12 corner cases identified during design and prototyping, along with h
 
 ### 7.1 `ChangeNotifier` and `setState` re-entrancy during build, layout, and dispose
 
-`TextPlugin` callbacks run synchronously inside rendering pipeline phases:
+Suppose a search bar widget at the top of the screen listens to `SearchInPagePlugin` (`ChangeNotifier`) via `ListenableBuilder` to display a match counter such as `"1 of 5 matches"`.
 
-- `didAddText` and `didUpdateText` run during `RichText.createRenderObject` and `RichText.updateRenderObject` (the Widget Build phase, `SchedulerPhase.persistentCallbacks`).
-- `didLayoutText` runs at the end of `RenderParagraph.performLayout` (the Layout phase, `SchedulerPhase.persistentCallbacks`).
-- `didRemoveText` runs during `RenderParagraph.dispose` (the Finalize Tree phase, `SchedulerPhase.persistentCallbacks`).
+When the user scrolls a `ListView` and a new `Text` item mounts on screen, `RenderParagraph` invokes `searchPlugin.didAddText(delegate)` while Flutter is in the middle of building and laying out the frame (`SchedulerPhase.persistentCallbacks`). Inside `didAddText`, `SearchInPagePlugin` scans the new paragraph and finds a sixth match (`"1 of 6 matches"`).
 
-If a `TextPlugin` is also a `ChangeNotifier` (such as a search bar showing `"1 / 4 matches"`), calling `notifyListeners()` synchronously inside `didAddText`, `didLayoutText`, or `didRemoveText` triggers a `setState() or markNeedsBuild() called during build` assertion.
+If `SearchInPagePlugin` calls `notifyListeners()` synchronously inside `didAddText` (or inside `didUpdateText`, `didLayoutText`, or `didRemoveText`), the search bar widget will call `setState()` while Flutter is still building or laying out the widget tree. Flutter then throws a `setState() or markNeedsBuild() called during build` assertion error.
 
-Setting `delegate.backgroundPainter = ...` only calls `RenderParagraph.markNeedsPaint()`, which is valid during build and layout. For external UI notifications in stateful plugins (`SearchInPagePlugin._scheduleNotify`, `SeoExtractorPlugin._scheduleNotify`), when `SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks`, `notifyListeners()` is deferred via `SchedulerBinding.instance.addPostFrameCallback`. Interactive updates during `SchedulerPhase.idle` notify listeners immediately.
+To avoid this crash, plugins separate canvas repaints from external widget notifications:
+
+- Updating `delegate.backgroundPainter = ...` inside `didAddText` or `didUpdateText` only calls `RenderParagraph.markNeedsPaint()`, which is always safe during build and layout because painting happens later in the same frame.
+- When notifying external UI widgets (such as the `"1 of 6 matches"` counter in `SearchInPagePlugin._notifyListenersSafely`), if `SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks`, the plugin defers `notifyListeners()` to the end of the frame via `SchedulerBinding.instance.addPostFrameCallback`. When the user types in the search box between frames (`SchedulerPhase.idle`), `notifyListeners()` runs immediately.
 
 ---
 

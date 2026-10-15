@@ -750,15 +750,16 @@ class TextPluginHighlight {
 
 ### 7.1 Build、Layout 与 Dispose 期间的 `ChangeNotifier` 与 `setState` 重入
 
-`TextPlugin` 的生命周期回调在渲染流水线的各个阶段中同步执行：
+假设屏幕顶部的搜索栏组件通过 `ListenableBuilder` 监听 `SearchInPagePlugin`（继承自 `ChangeNotifier`），用于展示 `"1 / 5 个匹配项"` 计数。
 
-- `didAddText` 与 `didUpdateText` 在 `RichText.createRenderObject` 和 `RichText.updateRenderObject`（Widget Build 阶段，`SchedulerPhase.persistentCallbacks`）期间运行。
-- `didLayoutText` 在 `RenderParagraph.performLayout` 末尾（Layout 阶段，`SchedulerPhase.persistentCallbacks`）运行。
-- `didRemoveText` 在 `RenderParagraph.dispose`（Finalize Tree 阶段，`SchedulerPhase.persistentCallbacks`）期间运行。
+当用户向下滚动 `ListView`、新的 `Text` 列表项挂载上屏时，`RenderParagraph` 会在 Flutter 正在执行当前帧构建或布局的过程中（`SchedulerPhase.persistentCallbacks`）调用 `searchPlugin.didAddText(delegate)`。在 `didAddText` 内部，`SearchInPagePlugin` 扫描新挂载的段落并发现了第 6 个匹配项（变为 `"1 / 6 个匹配项"`）。
 
-如果某个 `TextPlugin` 同时继承了 `ChangeNotifier`（例如驱动顶部搜索栏显示 `"1 / 4 matches"`），在 `didAddText`、`didLayoutText` 或 `didRemoveText` 中同步调用 `notifyListeners()` 会触发祖先组件 `setState`，从而抛出 `setState() or markNeedsBuild() called during build` 框架断言错误。
+如果 `SearchInPagePlugin` 在 `didAddText`（或 `didUpdateText`、`didLayoutText`、`didRemoveText`）内部同步调用 `notifyListeners()`，顶部的搜索栏组件就会在 Flutter 尚未完成组件树构建或布局时触发 `setState()`，从而抛出经典的 `setState() or markNeedsBuild() called during build` 断言崩溃。
 
-在回调中设置 `delegate.backgroundPainter = ...` 只会调用 `RenderParagraph.markNeedsPaint()`，这在 Build 和 Layout 阶段都是合法的。对于需要通知外部 UI 的有状态插件（如 `SearchInPagePlugin._scheduleNotify` 和 `SeoExtractorPlugin._scheduleNotify`），当检测到 `SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks` 时，会将 `notifyListeners()` 通过 `SchedulerBinding.instance.addPostFrameCallback` 合并推迟到帧末执行；而在 `SchedulerPhase.idle` 期间（例如用户在搜索框打字时）则立即通知监听器。
+为避免这一问题，插件将“画布重绘”与“外部组件状态通知”拆分开来：
+
+- 在 `didAddText` 或 `didUpdateText` 中设置 `delegate.backgroundPainter = ...` 只会调用 `RenderParagraph.markNeedsPaint()`；由于绘制阶段发生在同一帧的布局阶段之后，因此在 Build 和 Layout 期间标记重绘始终是安全的。
+- 在通知外部 UI 组件（例如 `SearchInPagePlugin._notifyListenersSafely` 更新 `"1 / 6 个匹配项"` 计数）时，若检测到当前处于帧渲染阶段（`SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks`），插件会通过 `SchedulerBinding.instance.addPostFrameCallback` 将 `notifyListeners()` 推迟到当前帧结束时执行；而当用户在两帧之间于搜索框内输入文字时（`SchedulerPhase.idle`），则立即调用 `notifyListeners()`。
 
 ---
 
