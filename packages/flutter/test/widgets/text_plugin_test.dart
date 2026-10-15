@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _RecordingTextPlugin extends TextPlugin {
@@ -536,6 +537,111 @@ void main() {
     expect(plugin.activeDelegates, isEmpty);
     expect(plugin.log, contains('plugin:remove:Updated Editable'));
   });
+
+  testWidgets(
+    'SelectableRegion installs _SelectionHighlightTextPlugin and exposes selections and selectionColor on TextDelegate',
+    (WidgetTester tester) async {
+      final plugin = _RecordingTextPlugin();
+      final GlobalKey key = GlobalKey();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SelectionArea(
+              child: TextPluginScope(
+                plugin: plugin,
+                child: Column(
+                  key: key,
+                  children: const <Widget>[
+                    Text('Custom Color Paragraph', selectionColor: Color(0xFFFF5722)),
+                    Text.rich(
+                      TextSpan(
+                        children: <InlineSpan>[
+                          TextSpan(text: 'Before '),
+                          WidgetSpan(child: SizedBox(width: 10, height: 10)),
+                          TextSpan(text: ' After'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(plugin.activeDelegates, hasLength(2));
+      final TextDelegate firstDelegate = plugin.activeDelegates[0];
+      final TextDelegate secondDelegate = plugin.activeDelegates[1];
+
+      // Verify _SelectionHighlightTextPlugin is installed on the RenderParagraph alongside our plugin.
+      final firstParagraph = firstDelegate.renderObject as RenderParagraph;
+      expect(firstParagraph.textPlugins, hasLength(2));
+      expect(
+        firstParagraph.textPlugins!.any((TextPlugin p) => p.handlesSelectionHighlight),
+        isTrue,
+      );
+
+      expect(firstDelegate.selectionColor, const Color(0xFFFF5722));
+      expect(firstDelegate.selections, isEmpty);
+      expect(secondDelegate.selections, isEmpty);
+
+      // Select all text across the SelectionArea.
+      Actions.invoke(
+        key.currentContext!,
+        const SelectAllTextIntent(SelectionChangedCause.keyboard),
+      );
+      await tester.pump();
+
+      expect(firstDelegate.selections, <TextSelection>[
+        const TextSelection(baseOffset: 0, extentOffset: 22),
+      ]);
+      // The second paragraph has a WidgetSpan placeholder at index 7, so it has two selectable fragments.
+      expect(secondDelegate.selections, <TextSelection>[
+        const TextSelection(baseOffset: 0, extentOffset: 7),
+        const TextSelection(baseOffset: 8, extentOffset: 14),
+      ]);
+    },
+  );
+
+  testWidgets(
+    'TextPluginScope.exclude filters out feature plugins while preserving _SelectionHighlightTextPlugin',
+    (WidgetTester tester) async {
+      final plugin = _RecordingTextPlugin();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SelectionArea(
+              child: TextPluginScope(
+                plugin: plugin,
+                child: const Column(
+                  children: <Widget>[
+                    Text('Body Text'),
+                    TextPluginScope.exclude(
+                      types: <Type>{_RecordingTextPlugin},
+                      child: Text('Toolbar Text'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(plugin.activeDelegates, hasLength(1));
+      expect(plugin.activeDelegates.single.text, 'Body Text');
+
+      // Toolbar Text excluded _RecordingTextPlugin but still keeps _SelectionHighlightTextPlugin.
+      final RenderParagraph toolbarParagraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: find.text('Toolbar Text'), matching: find.byType(RichText)),
+      );
+      expect(toolbarParagraph.textPlugins, hasLength(1));
+      expect(toolbarParagraph.textPlugins!.single.handlesSelectionHighlight, isTrue);
+    },
+  );
 }
 
 class _EagerToggleTextPlugin extends TextPlugin with ChangeNotifier {

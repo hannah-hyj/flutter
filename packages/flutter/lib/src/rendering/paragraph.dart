@@ -457,7 +457,6 @@ class RenderParagraph extends RenderBox
   ///
   /// The selection does not include selections in [PlaceholderSpan] if there
   /// are any.
-  @visibleForTesting
   List<TextSelection> get selections {
     if (_lastSelectableFragments == null) {
       return const <TextSelection>[];
@@ -645,6 +644,19 @@ class RenderParagraph extends RenderBox
       delegate.plugin.didUpdateText(delegate);
     }
   }
+
+  void _notifyTextPluginsSelectionChanged() {
+    if (_textPluginDelegates == null || _textPluginDelegates!.isEmpty) {
+      return;
+    }
+    for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
+      delegate.notifyChanged();
+    }
+  }
+
+  bool get _hasSelectionHighlightPlugin =>
+      _textPluginDelegates != null &&
+      _textPluginDelegates!.keys.any((TextPlugin plugin) => plugin.handlesSelectionHighlight);
 
   void _removeAllTextPluginDelegates() {
     if (_textPluginDelegates == null) {
@@ -903,6 +915,7 @@ class RenderParagraph extends RenderBox
       return;
     }
     _selectionColor = value;
+    _notifyTextPluginsSelectionChanged();
     if (_lastSelectableFragments?.any(
           (_SelectableFragment fragment) => fragment.value.hasSelection,
         ) ??
@@ -1246,6 +1259,18 @@ class RenderParagraph extends RenderBox
         context.canvas.clipRect(offset & size);
       }
       for (final TextDelegate delegate in _textPluginDelegates!.values) {
+        if (delegate.plugin.handlesSelectionHighlight) {
+          continue;
+        }
+        final CustomPainter? backgroundPainter = delegate.backgroundPainter;
+        if (backgroundPainter != null) {
+          _paintWithCustomPainter(context.canvas, offset, backgroundPainter);
+        }
+      }
+      for (final TextDelegate delegate in _textPluginDelegates!.values) {
+        if (!delegate.plugin.handlesSelectionHighlight) {
+          continue;
+        }
         final CustomPainter? backgroundPainter = delegate.backgroundPainter;
         if (backgroundPainter != null) {
           _paintWithCustomPainter(context.canvas, offset, backgroundPainter);
@@ -1256,7 +1281,7 @@ class RenderParagraph extends RenderBox
       }
     }
 
-    if (_lastSelectableFragments != null) {
+    if (_lastSelectableFragments != null && !_hasSelectionHighlightPlugin) {
       if (_needsClipping) {
         context.canvas.save();
         context.canvas.clipRect(offset & size);
@@ -1923,6 +1948,7 @@ class _SelectableFragment
   }
 
   void _didChangeSelection() {
+    paragraph._notifyTextPluginsSelectionChanged();
     paragraph.markNeedsPaint();
     _updateSelectionGeometry();
   }

@@ -99,6 +99,16 @@ abstract class TextPlugin {
   /// Defaults to [ContentAccessIntent.highlight].
   ContentAccessIntent get contentAccessIntent => ContentAccessIntent.highlight;
 
+  /// Whether this plugin paints text selection highlights.
+  ///
+  /// When a plugin with [handlesSelectionHighlight] set to `true` is active
+  /// on a [RenderParagraph], its [TextDelegate.backgroundPainter] is painted
+  /// after other plugin background painters (immediately behind the text
+  /// glyphs) and replaces the built-in selection highlight painting on
+  /// [RenderParagraph].
+  @internal
+  bool get handlesSelectionHighlight => false;
+
   /// Called whenever a new text widget ([Text], [RichText], or [EditableText])
   /// appears in the subtree covered by this plugin.
   void didAddText(TextDelegate delegate) {}
@@ -202,6 +212,28 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     }
     return ranges;
   }
+
+  /// The active text selections in the text widget represented by this
+  /// delegate.
+  ///
+  /// For a [RenderParagraph] with embedded [PlaceholderSpan]s (such as
+  /// [WidgetSpan]s), each selectable text fragment may have its own
+  /// [TextSelection].
+  List<TextSelection> get selections {
+    if (_paragraph != null) {
+      return _paragraph!.selections;
+    }
+    final TextSelection? editableSelection = _editable!.selection;
+    if (editableSelection == null || !editableSelection.isValid) {
+      return const <TextSelection>[];
+    }
+    return <TextSelection>[editableSelection];
+  }
+
+  /// The color used to paint selection highlights on the text widget
+  /// represented by this delegate.
+  Color? get selectionColor =>
+      _paragraph != null ? _paragraph!.selectionColor : _editable!.selectionColor;
 
   /// The directionality of the text.
   ui.TextDirection get textDirection => _paragraph?.textDirection ?? _editable!.textDirection;

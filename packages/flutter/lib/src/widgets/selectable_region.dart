@@ -34,6 +34,7 @@ import 'platform_selectable_region_context_menu.dart';
 import 'selection_container.dart';
 import 'tap_region.dart';
 import 'text_editing_intents.dart';
+import 'text_plugin.dart';
 import 'text_selection.dart';
 import 'text_selection_toolbar_anchors.dart';
 
@@ -1958,6 +1959,9 @@ class SelectableRegionState extends State<SelectableRegion>
     super.dispose();
   }
 
+  static const _SelectionHighlightTextPlugin _selectionHighlightPlugin =
+      _SelectionHighlightTextPlugin();
+
   @protected
   @override
   Widget build(BuildContext context) {
@@ -1965,7 +1969,14 @@ class SelectableRegionState extends State<SelectableRegion>
     Widget result = SelectableRegionSelectionStatusScope._(
       key: _selectionStatusScopeKey,
       selectionStatusNotifier: _selectionStatusNotifier,
-      child: SelectionContainer(registrar: this, delegate: _selectionDelegate, child: widget.child),
+      child: TextPluginScope(
+        plugin: _selectionHighlightPlugin,
+        child: SelectionContainer(
+          registrar: this,
+          delegate: _selectionDelegate,
+          child: widget.child,
+        ),
+      ),
     );
     if (_webContextMenuEnabled) {
       result = PlatformSelectableRegionContextMenu(child: result);
@@ -3728,5 +3739,62 @@ final class SelectionListenerNotifier extends ChangeNotifier {
   @override
   void addListener(VoidCallback listener) {
     super.addListener(listener);
+  }
+}
+
+class _SelectionHighlightTextPlugin extends TextPlugin {
+  const _SelectionHighlightTextPlugin();
+
+  @override
+  bool get handlesSelectionHighlight => true;
+
+  @override
+  void didAddText(TextDelegate delegate) {
+    if (delegate.renderObject is! RenderParagraph) {
+      return;
+    }
+    delegate.backgroundPainter = _SelectionHighlightPainter(delegate: delegate);
+  }
+
+  @override
+  void didRemoveText(TextDelegate delegate) {
+    delegate.backgroundPainter = null;
+  }
+}
+
+class _SelectionHighlightPainter extends CustomPainter {
+  _SelectionHighlightPainter({required this.delegate}) : super(repaint: delegate);
+
+  final TextDelegate delegate;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (!delegate.hasLayout) {
+      return;
+    }
+    final Color? selectionColor = delegate.selectionColor;
+    if (selectionColor == null) {
+      return;
+    }
+    final List<TextSelection> selections = delegate.selections;
+    if (selections.isEmpty) {
+      return;
+    }
+    final selectionPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = selectionColor;
+    for (final selection in selections) {
+      for (final TextBox textBox in delegate.getBoxesForSelection(
+        selection,
+        includePlaceholders: false,
+      )) {
+        canvas.drawRect(textBox.toRect(), selectionPaint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SelectionHighlightPainter oldDelegate) {
+    return oldDelegate.delegate != delegate;
   }
 }

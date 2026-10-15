@@ -1,6 +1,6 @@
 ---
 type: rfc
-rfc: '170.0001'
+rfc: '170.0000'
 title: Composable Text Plugins in Flutter
 description: Introduces TextPluginScope, TextPlugin, and TextDelegate for composable cross-cutting text inspection, decoration, and interaction across RenderParagraph and RenderEditable.
 status: draft
@@ -15,7 +15,7 @@ authors:
   - https://github.com/hannah-hyj
 ---
 
-# RFC 170.0001: Composable Text Plugins in Flutter
+# RFC 170.0000: Composable Text Plugins in Flutter
 
 ## Overview
 
@@ -86,8 +86,7 @@ Second, replacing widgets requires invasive refactoring. Developers must replace
 
 Third, individual text widgets lack document-level coordination unless paired with custom ancestor state management.
 
-> [!IMPORTANT]
-> Cross-cutting text features belong in an ambient, composable plugin pipeline attached via `InheritedWidget` (`TextPluginScope`). [RenderParagraph](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/paragraph.dart) and [RenderEditable](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/editable.dart) execute this pipeline directly, leaving standard `Text`, `RichText`, and `EditableText` widgets unchanged.
+Cross-cutting text features therefore belong in an ambient, composable plugin pipeline attached via `InheritedWidget` (`TextPluginScope`). [RenderParagraph](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/paragraph.dart) and [RenderEditable](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/editable.dart) execute this pipeline directly, leaving standard `Text`, `RichText`, and `EditableText` widgets unchanged.
 
 ### 1.2 Historical context, prior art, and acknowledgments
 
@@ -225,35 +224,54 @@ TextPluginScope.multiple(
 ```mermaid
 graph TD
     subgraph Widgets["Widgets Layer (package:flutter/widgets.dart)"]
-        ScopeOuter["TextPluginScope (Outer: e.g. SearchPlugin)"]
-        ScopeInner["TextPluginScope.multiple (Inner: StockPlugin, LinkifyPlugin)"]
+        ScopeOuter["TextPluginScope (plugin: SearchInPagePlugin)"]
+        ScopeInner["TextPluginScope.multiple (plugins: [SpoilerMaskPlugin])"]
         ScopeNone["TextPluginScope.none (Opt-out Subtree)"]
-        TextWidget["Text / Text.rich"]
-        RichTextWidget["RichText"]
-        EditableWidget["EditableText / TextField"]
+        TextWidget["Text / RichText"]
+        EditableWidget["EditableText (e.g. via TextField)"]
+        ExcludedText["Text / RichText (UI Chrome)"]
     end
 
     subgraph Rendering["Rendering Layer (package:flutter/rendering.dart)"]
         RP["RenderParagraph"]
         RE["RenderEditable"]
-        TD1["TextDelegate (SearchPlugin)"]
-        TD2["TextDelegate (StockPlugin)"]
-        TD3["TextDelegate (LinkifyPlugin)"]
+        RPNone["RenderParagraph (No Delegates)"]
+
+        subgraph RPDelegates["Per-RenderParagraph TextDelegates"]
+            RPTD1["TextDelegate (RP, Search)"]
+            RPTD2["TextDelegate (RP, SpoilerMask)"]
+        end
+
+        subgraph REDelegates["Per-RenderEditable TextDelegates"]
+            RETD1["TextDelegate (RE, Search)"]
+            RETD2["TextDelegate (RE, SpoilerMask)"]
+        end
+
+        subgraph Plugins["Shared TextPlugin Instances"]
+            P1["SearchInPagePlugin"]
+            P2["SpoilerMaskPlugin"]
+        end
     end
 
     ScopeOuter --> ScopeInner
     ScopeInner --> TextWidget
     ScopeInner --> EditableWidget
     ScopeInner --> ScopeNone
-    TextWidget --> RichTextWidget
-    RichTextWidget -->|"textPlugins = [Search, Stock, Linkify]"| RP
-    EditableWidget -->|"textPlugins = [Search, Stock, Linkify]"| RE
-    RP --> TD1
-    RE --> TD1
-    RP --> TD2
-    RE --> TD2
-    RP --> TD3
-    RE --> TD3
+    ScopeNone --> ExcludedText
+
+    TextWidget -->|"textPlugins = [Search, SpoilerMask]"| RP
+    EditableWidget -->|"textPlugins = [Search, SpoilerMask]"| RE
+    ExcludedText -->|"textPlugins = []"| RPNone
+
+    RP --> RPTD1
+    RP --> RPTD2
+    RE --> RETD1
+    RE --> RETD2
+
+    RPTD1 --> P1
+    RETD1 --> P1
+    RPTD2 --> P2
+    RETD2 --> P2
 ```
 
 ### 3.1 Layering and file organization
@@ -290,36 +308,38 @@ abstract class TextPlugin {
 
 ```mermaid
 sequenceDiagram
-    participant W as RichText (Widget)
-    participant RP as RenderParagraph
+    participant W as RichText / EditableText
+    participant RO as RenderParagraph / RenderEditable
     participant TD as TextDelegate
     participant TP as TextPlugin
 
-    W->>RP: createRenderObject / updateRenderObject (textPlugins)
-    RP->>TD: new TextDelegate(this, plugin)
-    RP->>TP: didAddText(delegate)
-    Note over RP,TP: Note: Layout has NOT run yet on initial mount (hasLayout == false)
+    W->>RO: createRenderObject / updateRenderObject (textPlugins)
+    RO->>RO: attach(owner) / _syncTextPluginDelegates()
+    RO->>TD: TextDelegate(this, plugin)
+    RO->>TP: didAddText(delegate)
+    Note over RO,TP: On initial mount, layout has NOT run yet (hasLayout == false)
 
-    RP->>RP: performLayout()
-    RP->>TD: notifyChanged()
-    RP->>TP: didLayoutText(delegate)
-    Note over RP,TP: Layout queries (getBoxesForSelection, size) are now valid
+    RO->>RO: performLayout()
+    RO->>TD: notifyChanged()
+    RO->>TP: didLayoutText(delegate)
+    Note over RO,TP: Layout queries (getBoxesForSelection, size) are now valid
 
-    RP->>RP: paint(context, offset)
-    RP->>TD: backgroundPainter?.paint(canvas, size)
-    RP->>RP: _textPainter.paint(canvas, offset)
-    RP->>TD: foregroundPainter?.paint(canvas, size)
+    RO->>RO: paint(context, offset)
+    RO->>TD: backgroundPainter?.paint(canvas, size)
+    RO->>RO: _textPainter.paint(canvas, offset)
+    RO->>TD: foregroundPainter?.paint(canvas, size)
 
-    W->>RP: updateRenderObject (text changed)
-    RP->>TD: notifyChanged()
-    RP->>TP: didUpdateText(delegate)
-    RP->>RP: performLayout()
-    RP->>TP: didLayoutText(delegate)
+    W->>RO: updateRenderObject (text changed)
+    RO->>TD: notifyChanged()
+    RO->>TP: didUpdateText(delegate)
+    RO->>RO: performLayout()
+    RO->>TD: notifyChanged()
+    RO->>TP: didLayoutText(delegate)
 
-    W->>RP: dispose() or plugin removed from scope
-    RP->>TD: detachPainters()
-    RP->>TP: didRemoveText(delegate)
-    RP->>TD: dispose()
+    W->>RO: detach() / dispose() or plugin removed from scope
+    RO->>TD: detachPainters()
+    RO->>TP: didRemoveText(delegate)
+    RO->>TD: dispose()
 ```
 
 ### 3.3 `TextDelegate` proxy for text render objects
@@ -514,10 +534,10 @@ sequenceDiagram
 
     User->>Plugin: Presses Ctrl+F (eagerLoadOffscreenText = true)
     Plugin->>Scope: notifyListeners() (contentAccessIntent == scan)
-    Scope->>VP: OffscreenContentRenderingStrategy notifies Viewport
-    VP->>VP: scrollCacheExtent = ScrollCacheExtent.pixels(1e9)
-    VP->>Sliver: performLayout(remainingCacheExtent: 1e9)
-    Sliver->>Para: Builds, mounts, and lays out all offscreen items
+    Scope->>VP: OffscreenContentRenderingStrategy(policy: eager)
+    VP->>VP: Expands effective cacheExtent (OffscreenRenderingPolicy.eager)
+    VP->>Sliver: performLayout(remainingCacheExtent: _eagerCacheExtent)
+    Sliver->>Para: Builds, mounts, and lays out offscreen items
     Para->>Plugin: attach() -> didAddText(delegate)
     Para->>Plugin: performLayout() -> didLayoutText(delegate)
     Plugin->>Plugin: Sorts delegates via delegate.compareTo()
@@ -646,8 +666,7 @@ By contrast, `1e9` pixels (~1,600,000 screens of scroll) stays well within IEEE-
 
 When the user closes `Ctrl+F` (`eagerLoadOffscreenText = false`), `OffscreenContentRenderingStrategy` switches back to `OffscreenRenderingPolicy.lazy` and restores the normal `250.0` pixel `cacheExtent`. On the next layout pass, `RenderSliverList.collectGarbage` unmounts offscreen items and triggers `didRemoveText` for each one.
 
-> [!WARNING]
-> Only use `OffscreenRenderingPolicy.eager` (`ContentAccessIntent.scan`) on finite lists (`itemCount != null`). If a `SliverChildBuilderDelegate` has `childCount == null` (an infinite generator that never returns `null`), wrap that scroll view in `OffscreenContentRenderingStrategy(policy: OffscreenRenderingPolicy.lazy, child: ...)` so it does not build unbounded items.
+Note that `OffscreenRenderingPolicy.eager` (`ContentAccessIntent.scan`) should only be used on finite lists (`itemCount != null`). If a `SliverChildBuilderDelegate` has `childCount == null` (an infinite generator that never returns `null`), that scroll view should be wrapped in `OffscreenContentRenderingStrategy(policy: OffscreenRenderingPolicy.lazy, child: ...)` so it does not build unbounded items.
 
 ---
 
@@ -875,8 +894,7 @@ If `delegate.text` omitted placeholders (`includePlaceholders: false`), `' GOOG 
 
 `TextDelegate.text` calls `_paragraph.text.toPlainText(includeSemanticsLabels: false)`, which keeps `includePlaceholders: true` (emitting `\uFFFC` for each `PlaceholderSpan`) and sets `includeSemanticsLabels: false`. This preserves a 1-to-1 UTF-16 offset match between `delegate.text` indices and `TextSelection` offsets in `TextPainter`.
 
-> [!TIP]
-> Because `\uFFFC` is not a word character (`\w`) or whitespace (`\s`), regex patterns like `\bGOOG\b` treat adjacent `WidgetSpan`s as word boundaries without shifting character indices. Also pass `includePlaceholders: false` to `getBoxesForSelection` (or inspect `delegate.placeholderRanges`) so multi-word matches do not highlight across an inline widget.
+Because `\uFFFC` is not a word character (`\w`) or whitespace (`\s`), regex patterns like `\bGOOG\b` naturally treat adjacent `WidgetSpan`s as word boundaries without shifting character indices. Plugin authors can also pass `includePlaceholders: false` to `getBoxesForSelection` (or inspect `delegate.placeholderRanges`) so multi-word matches do not highlight across an inline widget.
 
 ---
 
