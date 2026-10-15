@@ -1,6 +1,6 @@
 ---
 type: rfc
-rfc: '170.0000'
+rfc: '170.0001'
 title: Composable Text Plugins in Flutter
 description: Introduces TextPluginScope, TextPlugin, and TextDelegate for composable cross-cutting text inspection, decoration, and interaction across RenderParagraph and RenderEditable.
 status: draft
@@ -15,7 +15,7 @@ authors:
   - https://github.com/hannah-hyj
 ---
 
-# RFC 170.0000: Composable Text Plugins in Flutter
+# RFC 170.0001: Composable Text Plugins in Flutter
 
 ## Overview
 
@@ -38,6 +38,7 @@ By attaching plugins through an `InheritedWidget` (`TextPluginScope`) directly t
   - [3.3 `TextDelegate` proxy for text render objects](#33-textdelegate-proxy-for-text-render-objects)
   - [3.4 `TextPluginScope` and hierarchical merging](#34-textpluginscope-and-hierarchical-merging)
   - [3.5 `RenderParagraph` and `RenderEditable` painting and Z-order pipeline](#35-renderparagraph-and-rendereditable-painting-and-z-order-pipeline)
+  - [3.6 First-party `SearchInPagePlugin` implementation](#36-first-party-searchinpageplugin-implementation)
 - [4. Community package use cases](#4-community-package-use-cases)
   - [4.1 Use cases implemented in the demo app](#41-use-cases-implemented-in-the-demo-app)
   - [4.2 Additional community package ideas](#42-additional-community-package-ideas)
@@ -355,6 +356,96 @@ Within `RenderParagraph.paint` and `RenderEditable._paintContents`, painting run
 
 In our current prototype, existing `SelectionArea` and `EditableText` selection layers remain in place around stage 2 (`_SelectableFragment.paintSelection` before `_textPainter.paint` and `_SelectableFragment.paintHandles` after `foregroundPainter`s in `RenderParagraph`; `_backgroundRenderObject` and `_foregroundRenderObject` in `RenderEditable`). If selection highlighting is migrated to `_SelectionHighlightTextPlugin` (see [Section 5.2](#52-should-selection-highlighting-be-a-textplugin)), selection highlight rectangles are no longer a separate stage in `RenderParagraph.paint`. They simply paint as a standard `backgroundPainter` in stage 1, with their Z-order relative to other plugins determined by widget-tree nesting.
 
+### 3.6 First-party `SearchInPagePlugin` implementation
+
+`SearchInPagePlugin` is the primary first-party `TextPlugin` motivating this proposal, providing drop-in `Ctrl+F` / `Cmd+F` Find-in-Page across any subtree of `Text`, `RichText`, and `EditableText` widgets.
+
+#### 3.6.1 Public API and `ChangeNotifier` integration
+
+`SearchInPagePlugin` extends `TextPlugin` and mixes in `ChangeNotifier` for two reasons. First, search bar UIs can wrap `ListenableBuilder(listenable: searchPlugin, ...)` to display `"${activeMatchIndex + 1} of ${matches.length}"` and enable or disable next/previous buttons. Second, `TextPluginScope` detects `plugin is Listenable` and subscribes to `contentAccessIntent` transitions automatically when `eagerLoadOffscreenText` is toggled.
+
+```dart
+@immutable
+class SearchMatch {
+  const SearchMatch({required this.delegate, required this.range});
+
+  final TextDelegate delegate;
+  final TextRange range;
+
+  List<ui.TextBox> getBoxes() {
+    if (!delegate.hasLayout) {
+      return const <ui.TextBox>[];
+    }
+    return delegate.getBoxesForSelection(
+      TextSelection(baseOffset: range.start, extentOffset: range.end),
+      includePlaceholders: false,
+    );
+  }
+}
+
+class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
+  SearchInPagePlugin({
+    this.matchHighlightColor = const Color(0x66FFEB3B),
+    this.activeMatchBackgroundColor = const Color(0xCCFF9800),
+    this.activeMatchBorderColor = const Color(0xFFE65100),
+    bool caseSensitive = false,
+    bool eagerLoadOffscreenText = true,
+  });
+
+  String get query => _query;
+  set query(String value);
+
+  bool get caseSensitive => _caseSensitive;
+  set caseSensitive(bool value);
+
+  bool get eagerLoadOffscreenText => _eagerLoadOffscreenText;
+  set eagerLoadOffscreenText(bool value);
+
+  @override
+  ContentAccessIntent get contentAccessIntent => _eagerLoadOffscreenText
+      ? ContentAccessIntent.scan
+      : ContentAccessIntent.highlight;
+
+  List<SearchMatch> get matches => List<SearchMatch>.unmodifiable(_matches);
+  int get activeMatchIndex => _activeMatchIndex;
+  SearchMatch? get activeMatch;
+
+  void nextMatch();
+  void previousMatch();
+  void scrollToActiveMatch();
+}
+```
+
+#### 3.6.2 Document-ordered match indexing and active match preservation
+
+`SearchInPagePlugin` maintains the set of mounted text delegates in `final Set<TextDelegate> _delegates`. Whenever a delegate mounts (`didAddText`), changes text (`didUpdateText`), unmounts (`didRemoveText`), or the user updates `query` or `caseSensitive`, `_rebuildMatches()` runs:
+
+1. Before clearing `_matches`, it records `final SearchMatch? previousActive = activeMatch`.
+
+2. It sorts the mounted delegates in top-to-bottom document reading order via `final sortedDelegates = _delegates.toList()..sort()`, which delegates to `TextDelegate.compareTo` (lowest common ancestor pre-order traversal in the render tree).
+
+3. For each `delegate` in `sortedDelegates`, it scans `delegate.text` (lowercased when `!caseSensitive`) for non-overlapping occurrences of `query` and appends `SearchMatch(delegate: delegate, range: TextRange(start: index, end: index + searchTarget.length))`.
+
+4. If `previousActive != null`, it looks up `_matches.indexOf(previousActive)` (using `SearchMatch` value equality on `(delegate, range)`). When found, `_activeMatchIndex` updates to that new index instead of resetting to `0`. This keeps the user's active match stable even when new list items mount above the current viewport during scrolling.
+
+#### 3.6.3 Two-layer custom painting (`backgroundPainter` and `foregroundPainter`)
+
+After indexing matches, `_updatePainters()` groups matches by `TextDelegate` and configures each delegate's painters:
+
+1. If a delegate has no matches, both `delegate.backgroundPainter` and `delegate.foregroundPainter` are set to `null`.
+
+2. Every delegate with one or more matches receives a `_SearchBackgroundPainter` on `delegate.backgroundPainter`. During stage 1 of `RenderParagraph.paint` (behind the text glyphs), it queries `delegate.getBoxesForSelection(..., includePlaceholders: false)` and fills rounded rectangles (`Radius.circular(3.0)`) using `matchHighlightColor` for passive matches and `activeMatchBackgroundColor` for the active match.
+
+3. Only the delegate containing `activeMatch` receives a `_SearchForegroundPainter` on `delegate.foregroundPainter`. During stage 3 of `RenderParagraph.paint` (in front of the text glyphs), it strokes a `1.75px` rounded border (`activeMatchBorderColor`, inflated by `0.5px`) around the active match boxes so the focused match stands out clearly against dense text.
+
+#### 3.6.4 Deferred scroll-on-layout and safe notification coalescing
+
+Because `didAddText` and `didUpdateText` can fire during `BuildScope.buildScope` or `PipelineOwner.flushLayout` (for example, when `SliverMultiBoxAdaptorElement` builds offscreen items during a scroll or when `eagerLoadOffscreenText` triggers `_forceBuildAll`), `SearchInPagePlugin` guards both scrolling and listener notifications:
+
+1. When `nextMatch()`, `previousMatch()`, or `query` changes call `scrollToActiveMatch()`, the target `current.delegate.hasLayout` may still be `false` if the match belongs to a newly built paragraph whose layout pass has not completed yet. In that case, `scrollToActiveMatch()` sets `_pendingScrollToActiveMatch = true`. Once `didLayoutText(delegate)` fires for `activeMatch?.delegate`, the plugin clears `_pendingScrollToActiveMatch` and schedules `delegate.ensureVisible(activeMatch!.range, alignment: 0.3, duration: Duration(milliseconds: 250))` in a post-frame callback.
+
+2. As detailed in [Section 7.1](#71-changenotifier-and-setstate-re-entrancy-during-build-layout-and-dispose), `_notifyListenersSafely()` checks `SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks`. If the framework is mid-build or mid-layout, it sets `_notificationScheduled = true` and coalesces all delegate mutations in that frame into a single `addPostFrameCallback` call to `notifyListeners()`.
+
 ---
 
 ## 4. Community package use cases
@@ -363,7 +454,7 @@ In our current prototype, existing `SelectionArea` and `EditableText` selection 
 
 ### 4.1 Use cases implemented in the demo app
 
-Alongside `SearchInPagePlugin` (covered in [Section 5.1](#51-scrolling-document-ordering-and-offscreen-content-rendering)), our demo app (`examples/text_plugins`) implements six community-style plugins to validate the API across real interactions:
+Alongside `SearchInPagePlugin` (covered in [Section 3.6](#36-first-party-searchinpageplugin-implementation) and [Section 5.1](#51-scrolling-document-ordering-and-offscreen-content-rendering)), our demo app (`examples/text_plugins`) implements six community-style plugins to validate the API across real interactions:
 
 #### 1. TTS read-aloud karaoke synchronizer (`ReadAloudPlugin`)
 

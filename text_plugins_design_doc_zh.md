@@ -1,6 +1,6 @@
 ---
 type: rfc
-rfc: '170.0000'
+rfc: '170.0001'
 title: Flutter 可组合文本插件系统 (Composable Text Plugins in Flutter)
 description: 引入 TextPluginScope、TextPlugin 与 TextDelegate，在 RenderParagraph 与 RenderEditable 上实现可组合的横向文本检查、装饰与交互能力。
 status: draft
@@ -15,7 +15,7 @@ authors:
   - https://github.com/hannah-hyj
 ---
 
-# RFC 170.0000: Flutter 可组合文本插件系统 (Composable Text Plugins in Flutter)
+# RFC 170.0001: Flutter 可组合文本插件系统 (Composable Text Plugins in Flutter)
 
 ## 概述
 
@@ -38,6 +38,7 @@ authors:
   - [3.3 `TextDelegate` 文本渲染对象代理](#33-textdelegate-文本渲染对象代理)
   - [3.4 `TextPluginScope` 与层级合并](#34-textpluginscope-与层级合并)
   - [3.5 `RenderParagraph` 与 `RenderEditable` 绘制及 Z 轴顺序流水线](#35-renderparagraph-与-rendereditable-绘制及-z-轴顺序流水线)
+  - [3.6 官方内置 `SearchInPagePlugin` 实现细节](#36-官方内置-searchinpageplugin-实现细节)
 - [4. 社区 Package 应用场景](#4-社区-package-应用场景)
   - [4.1 示例应用中已实现的插件场景](#41-示例应用中已实现的插件场景)
   - [4.2 其它社区 Package 构想](#42-其它社区-package-构想)
@@ -355,6 +356,96 @@ sequenceDiagram
 
 在当前的原型实现中，`SelectionArea` 与 `EditableText` 原有的选区绘制仍保留在第二阶段前后（在 `RenderParagraph` 中，`_SelectableFragment.paintSelection` 位于 `_textPainter.paint` 之前，`_SelectableFragment.paintHandles` 位于 `foregroundPainter` 之后；在 `RenderEditable` 中则为 `_backgroundRenderObject` 与 `_foregroundRenderObject`）。若后续将选区高亮迁移为 `_SelectionHighlightTextPlugin`（详见[第 5.2 节](#52-文本选择高亮是否应当迁移为-textplugin)），选区高亮矩形将不再是 `RenderParagraph.paint` 中的独立阶段，而是直接作为第一阶段的标准 `backgroundPainter` 绘制，其与其它插件的上下叠放顺序完全由组件树嵌套顺序决定。
 
+### 3.6 官方内置 `SearchInPagePlugin` 实现细节
+
+`SearchInPagePlugin` 是推动本提案落地的首个框架官方内置 `TextPlugin`，为任意 `Text`、`RichText` 与 `EditableText` 子树提供即插即用的 `Ctrl+F` / `Cmd+F` 页内搜索能力。
+
+#### 3.6.1 公共 API 与 `ChangeNotifier` 状态联动
+
+`SearchInPagePlugin` 继承自 `TextPlugin` 并混入 `ChangeNotifier`，这一设计服务于两个核心目的：首先，搜索栏 UI 可以直接通过 `ListenableBuilder(listenable: searchPlugin, ...)` 监听搜索状态，实时展示 `"${activeMatchIndex + 1} / ${matches.length}"` 计数并控制上/下一个按钮的可用状态；其次，`TextPluginScope` 会检测 `plugin is Listenable` 并自动订阅监听，从而在动态切换 `eagerLoadOffscreenText` 时即时响应 `contentAccessIntent` 的变更。
+
+```dart
+@immutable
+class SearchMatch {
+  const SearchMatch({required this.delegate, required this.range});
+
+  final TextDelegate delegate;
+  final TextRange range;
+
+  List<ui.TextBox> getBoxes() {
+    if (!delegate.hasLayout) {
+      return const <ui.TextBox>[];
+    }
+    return delegate.getBoxesForSelection(
+      TextSelection(baseOffset: range.start, extentOffset: range.end),
+      includePlaceholders: false,
+    );
+  }
+}
+
+class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
+  SearchInPagePlugin({
+    this.matchHighlightColor = const Color(0x66FFEB3B),
+    this.activeMatchBackgroundColor = const Color(0xCCFF9800),
+    this.activeMatchBorderColor = const Color(0xFFE65100),
+    bool caseSensitive = false,
+    bool eagerLoadOffscreenText = true,
+  });
+
+  String get query => _query;
+  set query(String value);
+
+  bool get caseSensitive => _caseSensitive;
+  set caseSensitive(bool value);
+
+  bool get eagerLoadOffscreenText => _eagerLoadOffscreenText;
+  set eagerLoadOffscreenText(bool value);
+
+  @override
+  ContentAccessIntent get contentAccessIntent => _eagerLoadOffscreenText
+      ? ContentAccessIntent.scan
+      : ContentAccessIntent.highlight;
+
+  List<SearchMatch> get matches => List<SearchMatch>.unmodifiable(_matches);
+  int get activeMatchIndex => _activeMatchIndex;
+  SearchMatch? get activeMatch;
+
+  void nextMatch();
+  void previousMatch();
+  void scrollToActiveMatch();
+}
+```
+
+#### 3.6.2 文档顺序匹配索引与当前焦点保持
+
+`SearchInPagePlugin` 在 `final Set<TextDelegate> _delegates` 中维护所有已挂载的文本代理。每当代理挂载（`didAddText`）、文本更新（`didUpdateText`）、卸载（`didRemoveText`），或用户修改 `query` 与 `caseSensitive` 时，都会触发 `_rebuildMatches()`：
+
+1. 在清空 `_matches` 之前，先记录当前聚焦项 `final SearchMatch? previousActive = activeMatch`。
+
+2. 调用 `final sortedDelegates = _delegates.toList()..sort()` 将已挂载代理按从上到下的文档阅读顺序排列，底层委托给 `TextDelegate.compareTo`（基于渲染树最近公共祖先 LCA 的前序遍历顺序）。
+
+3. 遍历 `sortedDelegates` 中的每个 `delegate`，在 `delegate.text`（当 `!caseSensitive` 时转为小写）中扫描所有不重叠的 `query` 子串，并追加 `SearchMatch(delegate: delegate, range: TextRange(start: index, end: index + searchTarget.length))`。
+
+4. 若 `previousActive != null`，则利用 `SearchMatch` 基于 `(delegate, range)` 的值相等性查找 `_matches.indexOf(previousActive)`。若该匹配项仍然存在，则将 `_activeMatchIndex` 更新为其最新下标而非重置为 `0`。这保证了在滚动列表且视口上方挂载新条目时，用户当前聚焦的匹配项不会发生跳变。
+
+#### 3.6.3 双层自定义绘制（`backgroundPainter` 与 `foregroundPainter`）
+
+完成匹配索引后，`_updatePainters()` 会按 `TextDelegate` 对匹配项分组并更新各代理的画笔：
+
+1. 若某个代理没有任何匹配项，则将其 `delegate.backgroundPainter` 与 `delegate.foregroundPainter` 均置为 `null`。
+
+2. 每个包含匹配项的代理都会在 `delegate.backgroundPainter` 上挂载 `_SearchBackgroundPainter`。在 `RenderParagraph.paint` 的第一阶段（文本字形下方），画笔调用 `delegate.getBoxesForSelection(..., includePlaceholders: false)`，为普通匹配项绘制 `matchHighlightColor` 圆角矩形（`Radius.circular(3.0)`），并为当前激活匹配项绘制 `activeMatchBackgroundColor` 背景。
+
+3. 仅包含 `activeMatch` 的那个代理会在 `delegate.foregroundPainter` 上额外挂载 `_SearchForegroundPainter`。在 `RenderParagraph.paint` 的第三阶段（文本字形上方），画笔围绕激活匹配框向外扩展 `0.5px` 并绘制 `1.75px` 宽的 `activeMatchBorderColor` 圆角描边，使当前焦点在密集排版中也清晰醒目。
+
+#### 3.6.4 延迟滚动对齐与安全的通知合并
+
+由于 `didAddText` 与 `didUpdateText` 可能在 `BuildScope.buildScope` 或 `PipelineOwner.flushLayout` 期间触发（例如 `SliverMultiBoxAdaptorElement` 在滚动时按需构建子项，或 `eagerLoadOffscreenText` 触发 `_forceBuildAll` 时），`SearchInPagePlugin` 对视口滚动与监听器通知都做了安全防护：
+
+1. 当 `nextMatch()`、`previousMatch()` 或修改 `query` 调用 `scrollToActiveMatch()` 时，若目标匹配项所在的段落刚刚构建完成但尚未完成布局（`!current.delegate.hasLayout`），`scrollToActiveMatch()` 会将 `_pendingScrollToActiveMatch` 设为 `true`。待该代理的 `didLayoutText(delegate)` 回调触发后，插件再清除 `_pendingScrollToActiveMatch`，并在帧末回调（post-frame callback）中执行 `delegate.ensureVisible(activeMatch!.range, alignment: 0.3, duration: Duration(milliseconds: 250))`。
+
+2. 如[第 7.1 节](#71-buildlayout-与-dispose-期间的-changenotifier-与-setstate-重入)所述，`_notifyListenersSafely()` 会检查 `SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks`。若框架正处于构建或布局阶段，插件会将 `_notificationScheduled` 设为 `true`，将该帧内多次代理变动合并为单次帧末 `addPostFrameCallback` 中的 `notifyListeners()` 调用。
+
 ---
 
 ## 4. 社区 Package 应用场景
@@ -363,7 +454,7 @@ sequenceDiagram
 
 ### 4.1 示例应用中已实现的插件场景
 
-除 `SearchInPagePlugin`（详见[第 5.1 节](#51-视口滚动文档顺序排序与屏幕外内容渲染)）外，我们在示例应用（`examples/text_plugins`）中实现了以下六个社区风格的插件，以验证该 API 在真实交互场景下的表现：
+除 `SearchInPagePlugin`（详见[第 3.6 节](#36-官方内置-searchinpageplugin-实现细节)与[第 5.1 节](#51-视口滚动文档顺序排序与屏幕外内容渲染)）外，我们在示例应用（`examples/text_plugins`）中实现了以下六个社区风格的插件，以验证该 API 在真实交互场景下的表现：
 
 #### 1. TTS 逐词同步高亮朗读器（`ReadAloudPlugin`）
 
