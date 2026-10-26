@@ -66,6 +66,8 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   final Color activeMatchBorderColor;
 
   final Set<TextDelegate> _delegates = <TextDelegate>{};
+  final Map<TextDelegate, List<SearchMatch>> _matchesByDelegate =
+      <TextDelegate, List<SearchMatch>>{};
   final List<SearchMatch> _matches = <SearchMatch>[];
 
   String _query = '';
@@ -73,14 +75,11 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   bool _eagerLoadOffscreenText;
   int _activeMatchIndex = -1;
   bool _hasExplicitActiveMatch = false;
-  bool _pendingScrollToActiveMatch = false;
   bool _notificationScheduled = false;
   bool _disposed = false;
 
   @override
-  ContentAccessIntent get contentAccessIntent => _eagerLoadOffscreenText
-      ? ContentAccessIntent.scan
-      : ContentAccessIntent.highlight;
+  bool get needsOffscreenContent => _eagerLoadOffscreenText;
 
   /// Whether enclosing scrollable viewports should eagerly render offscreen
   /// sliver items so all text in the scroll view can be searched and scrolled
@@ -129,7 +128,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     _query = value;
     _activeMatchIndex = -1;
     _hasExplicitActiveMatch = false;
-    _rebuildMatches();
+    _rescanAllDelegates();
   }
 
   /// Whether matching is case-sensitive.
@@ -139,7 +138,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
       return;
     }
     _caseSensitive = value;
-    _rebuildMatches();
+    _rescanAllDelegates();
   }
 
   /// All current matches across the scoped subtree, ordered in logical
@@ -187,15 +186,9 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     Curve curve = Curves.easeInOut,
   }) {
     final SearchMatch? current = activeMatch;
-    if (current == null) {
-      _pendingScrollToActiveMatch = false;
+    if (current == null || !current.delegate.hasLayout) {
       return;
     }
-    if (!current.delegate.hasLayout) {
-      _pendingScrollToActiveMatch = true;
-      return;
-    }
-    _pendingScrollToActiveMatch = false;
     current.delegate.ensureVisible(
       current.range,
       duration: duration,
@@ -206,31 +199,19 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   @override
   void didAddText(TextDelegate delegate) {
     _delegates.add(delegate);
-    _rebuildMatches();
+    _matchesByDelegate[delegate] = _computeMatchesForDelegate(delegate);
+    _syncOrderedMatches();
   }
 
   @override
   void didUpdateText(TextDelegate delegate) {
-    _rebuildMatches();
+    _matchesByDelegate[delegate] = _computeMatchesForDelegate(delegate);
+    _syncOrderedMatches();
   }
 
   @override
   void didLayoutText(TextDelegate delegate) {
     delegate.markNeedsPaint();
-    if (_pendingScrollToActiveMatch && activeMatch?.delegate == delegate) {
-      _pendingScrollToActiveMatch = false;
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        if (!_disposed &&
-            activeMatch?.delegate == delegate &&
-            delegate.hasLayout) {
-          delegate.ensureVisible(
-            activeMatch!.range,
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeInOut,
-          );
-        }
-      });
-    }
   }
 
   @override
@@ -238,38 +219,56 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     delegate.backgroundPainter = null;
     delegate.foregroundPainter = null;
     _delegates.remove(delegate);
+    _matchesByDelegate.remove(delegate);
     if (_delegates.isEmpty) {
       _hasExplicitActiveMatch = false;
     }
-    _rebuildMatches();
+    _syncOrderedMatches();
   }
 
-  void _rebuildMatches() {
+  List<SearchMatch> _computeMatchesForDelegate(TextDelegate delegate) {
+    if (_query.isEmpty) {
+      return const <SearchMatch>[];
+    }
+    final String needle = _caseSensitive ? _query : _query.toLowerCase();
+    final String rawText = delegate.text;
+    final String haystack = _caseSensitive ? rawText : rawText.toLowerCase();
+    final delegateMatches = <SearchMatch>[];
+    var start = 0;
+    while (start <= haystack.length - needle.length) {
+      final int index = haystack.indexOf(needle, start);
+      if (index == -1) {
+        break;
+      }
+      delegateMatches.add(
+        SearchMatch(
+          delegate: delegate,
+          range: TextRange(start: index, end: index + needle.length),
+        ),
+      );
+      start = index + needle.length;
+    }
+    return delegateMatches;
+  }
+
+  void _rescanAllDelegates() {
+    for (final TextDelegate delegate in _delegates) {
+      _matchesByDelegate[delegate] = _computeMatchesForDelegate(delegate);
+    }
+    _syncOrderedMatches();
+  }
+
+  void _syncOrderedMatches() {
     final SearchMatch? previousActive = _hasExplicitActiveMatch
         ? activeMatch
         : null;
     _matches.clear();
     if (_query.isNotEmpty) {
-      final String needle = _caseSensitive ? _query : _query.toLowerCase();
       final List<TextDelegate> sortedDelegates = _delegates.toList()..sort();
       for (final delegate in sortedDelegates) {
-        final String rawText = delegate.text;
-        final String haystack = _caseSensitive
-            ? rawText
-            : rawText.toLowerCase();
-        var start = 0;
-        while (start <= haystack.length - needle.length) {
-          final int index = haystack.indexOf(needle, start);
-          if (index == -1) {
-            break;
-          }
-          _matches.add(
-            SearchMatch(
-              delegate: delegate,
-              range: TextRange(start: index, end: index + needle.length),
-            ),
-          );
-          start = index + needle.length;
+        final List<SearchMatch>? delegateMatches = _matchesByDelegate[delegate];
+        if (delegateMatches != null && delegateMatches.isNotEmpty) {
+          _matches.addAll(delegateMatches);
         }
       }
     }
@@ -296,9 +295,8 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   void _updatePainters() {
     final SearchMatch? currentActive = activeMatch;
     for (final TextDelegate delegate in _delegates) {
-      final List<SearchMatch> delegateMatches = _matches
-          .where((SearchMatch m) => m.delegate == delegate)
-          .toList(growable: false);
+      final List<SearchMatch> delegateMatches =
+          _matchesByDelegate[delegate] ?? const <SearchMatch>[];
       if (delegateMatches.isEmpty) {
         delegate.backgroundPainter = null;
         delegate.foregroundPainter = null;

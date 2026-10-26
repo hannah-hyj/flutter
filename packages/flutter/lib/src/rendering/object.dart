@@ -1139,6 +1139,30 @@ base class PipelineOwner with DiagnosticableTreeMixin {
   bool _debugDoingLayout = false;
   bool _debugDoingChildLayout = false;
 
+  final List<VoidCallback> _postLayoutCallbacks = <VoidCallback>[];
+
+  /// Schedules a [callback] to run at the end of [flushLayout], after all dirty
+  /// [RenderObject]s have completed layout and cleared their `_needsLayout`
+  /// flags, and before [flushPaint] runs.
+  @internal
+  void schedulePostLayoutCallback(VoidCallback callback) {
+    _postLayoutCallbacks.add(callback);
+    requestVisualUpdate();
+  }
+
+  void _flushPostLayoutCallbacks() {
+    while (_postLayoutCallbacks.isNotEmpty) {
+      final callbacks = List<VoidCallback>.of(_postLayoutCallbacks, growable: false);
+      _postLayoutCallbacks.clear();
+      for (final callback in callbacks) {
+        callback();
+      }
+    }
+    for (final PipelineOwner child in _children) {
+      child._flushPostLayoutCallbacks();
+    }
+  }
+
   /// Update the layout information for all dirty render objects.
   ///
   /// This function is one of the core stages of the rendering pipeline. Layout
@@ -1213,6 +1237,7 @@ base class PipelineOwner with DiagnosticableTreeMixin {
         FlutterTimeline.finishSync();
       }
     }
+    _flushPostLayoutCallbacks();
   }
 
   // This flag is used to allow the kinds of mutations performed by GlobalKey
@@ -6629,7 +6654,7 @@ class _RenderObjectSemantics extends _SemanticsFragment with DiagnosticableTreeM
     for (final fragment in hasSiblingConflict) {
       fragment.markSiblingConfigurationConflict(true);
     }
-    for (final _SemanticsFragment fragment in mergeGroup) {
+    for (final fragment in mergeGroup) {
       if (fragment is _RenderObjectSemantics &&
           previousConflicts.contains(fragment) != hasSiblingConflict.contains(fragment)) {
         fragment.markNeedsBuild();

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:ui' as ui show BoxHeightStyle, BoxWidthStyle;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -55,11 +57,18 @@ class _CallbackCustomPainter extends CustomPainter {
 }
 
 class _HighlightPlugin extends TextPlugin {
-  _HighlightPlugin({required this.name, required this.paintLog, this.paintForeground = false});
+  _HighlightPlugin({
+    required this.name,
+    required this.paintLog,
+    this.paintForeground = false,
+    this.paintOrder = 0,
+  });
 
   final String name;
   final List<String> paintLog;
   final bool paintForeground;
+  @override
+  final int paintOrder;
   final List<TextDelegate> delegates = <TextDelegate>[];
 
   @override
@@ -79,6 +88,24 @@ class _HighlightPlugin extends TextPlugin {
   void didRemoveText(TextDelegate delegate) {
     delegates.remove(delegate);
   }
+}
+
+class _OuterHighlightPlugin extends _HighlightPlugin {
+  _OuterHighlightPlugin({
+    required super.name,
+    required super.paintLog,
+    super.paintForeground,
+    super.paintOrder,
+  });
+}
+
+class _InnerHighlightPlugin extends _HighlightPlugin {
+  _InnerHighlightPlugin({
+    required super.name,
+    required super.paintLog,
+    super.paintForeground,
+    super.paintOrder,
+  });
 }
 
 void main() {
@@ -114,8 +141,8 @@ void main() {
       plugin.log,
       containsAllInOrder(<String>[
         'plugin:add:Hello',
-        'plugin:add:Rich World',
         'plugin:layout:Hello',
+        'plugin:add:Rich World',
         'plugin:layout:Rich World',
       ]),
     );
@@ -186,8 +213,16 @@ void main() {
     WidgetTester tester,
   ) async {
     final paintLog = <String>[];
-    final outerPlugin = _HighlightPlugin(name: 'outer', paintLog: paintLog, paintForeground: true);
-    final innerPlugin = _HighlightPlugin(name: 'inner', paintLog: paintLog, paintForeground: true);
+    final outerPlugin = _OuterHighlightPlugin(
+      name: 'outer',
+      paintLog: paintLog,
+      paintForeground: true,
+    );
+    final innerPlugin = _InnerHighlightPlugin(
+      name: 'inner',
+      paintLog: paintLog,
+      paintForeground: true,
+    );
 
     await tester.pumpWidget(
       Directionality(
@@ -402,7 +437,7 @@ void main() {
   );
 
   testWidgets(
-    'TextPlugin.contentAccessIntent configures OffscreenContentRenderingStrategy in ListView.builder',
+    'TextPlugin.needsOffscreenContent configures OffscreenContentRenderingStrategy in ListView.builder',
     (WidgetTester tester) async {
       final plugin = _EagerToggleTextPlugin();
       addTearDown(plugin.dispose);
@@ -430,12 +465,12 @@ void main() {
         ),
       );
 
-      // With ContentAccessIntent.highlight (default), only visible + cacheExtent items are mounted (< 30).
+      // With needsOffscreenContent == false (default), only visible + cacheExtent items are mounted (< 30).
       expect(plugin.activeDelegates.length, lessThan(10));
       expect(plugin.activeDelegates.any((TextDelegate d) => d.text == 'Lazy Item 29'), isFalse);
 
-      // Simulate Ctrl+F switching contentAccessIntent to ContentAccessIntent.scan on the plugin.
-      plugin.contentAccessIntent = ContentAccessIntent.scan;
+      // Simulate Ctrl+F switching needsOffscreenContent to true on the plugin.
+      plugin.needsOffscreenContent = true;
       await tester.pump();
 
       // All 30 items in the ListView.builder are now rendered and registered!
@@ -452,40 +487,97 @@ void main() {
     },
   );
 
-  testWidgets('OffscreenContentRenderingStrategy can override policy for a subtree', (
-    WidgetTester tester,
-  ) async {
-    final plugin = _EagerToggleTextPlugin()..contentAccessIntent = ContentAccessIntent.scan;
-    addTearDown(plugin.dispose);
+  testWidgets(
+    'OffscreenContentRenderingStrategy can override policy or bound cacheExtent for a subtree',
+    (WidgetTester tester) async {
+      final plugin = _EagerToggleTextPlugin()..needsOffscreenContent = true;
+      addTearDown(plugin.dispose);
 
-    await tester.pumpWidget(
-      Directionality(
-        textDirection: TextDirection.ltr,
-        child: TextPluginScope(
-          plugin: plugin,
-          child: OffscreenContentRenderingStrategy(
-            policy: OffscreenRenderingPolicy.lazy,
-            child: Center(
-              child: SizedBox(
-                height: 200,
-                width: 400,
-                child: ListView.builder(
-                  itemExtent: 100.0,
-                  itemCount: 30,
-                  itemBuilder: (BuildContext context, int index) => Text('OptOut Item $index'),
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: TextPluginScope(
+            plugin: plugin,
+            child: OffscreenContentRenderingStrategy(
+              policy: const OffscreenRenderingPolicy.lazy(),
+              child: Center(
+                child: SizedBox(
+                  height: 200,
+                  width: 400,
+                  child: ListView.builder(
+                    itemExtent: 100.0,
+                    itemCount: 30,
+                    itemBuilder: (BuildContext context, int index) => Text('OptOut Item $index'),
+                  ),
                 ),
               ),
             ),
           ),
         ),
+      );
+
+      // Because the inner OffscreenContentRenderingStrategy explicitly sets lazy,
+      // offscreen items beyond the normal cache extent remain unmounted even though
+      // the enclosing plugin has needsOffscreenContent == true.
+      expect(plugin.activeDelegates.length, lessThan(10));
+      expect(plugin.activeDelegates.any((TextDelegate d) => d.text == 'OptOut Item 29'), isFalse);
+
+      // Now test OffscreenRenderingPolicy.eager with a custom bounded cacheExtent (600px -> ~8 items).
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: TextPluginScope(
+            plugin: plugin,
+            child: const OffscreenContentRenderingStrategy(
+              policy: OffscreenRenderingPolicy.eager(cacheExtent: ScrollCacheExtent.pixels(600.0)),
+              child: Center(
+                child: SizedBox(height: 200, width: 400, child: _BoundedListTestWidget()),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(plugin.activeDelegates.length, greaterThanOrEqualTo(8));
+      expect(plugin.activeDelegates.length, lessThan(15));
+    },
+  );
+
+  testWidgets('TextPluginScope deduplicates by Type and orders by paintOrder', (
+    WidgetTester tester,
+  ) async {
+    final paintLog = <String>[];
+    final outerSameType = _OuterHighlightPlugin(name: 'outer-v1', paintLog: paintLog);
+    final innerSameType = _OuterHighlightPlugin(
+      name: 'inner-v2',
+      paintLog: paintLog,
+      paintOrder: 10,
+    );
+    final innerLowOrder = _InnerHighlightPlugin(
+      name: 'inner-low-order',
+      paintLog: paintLog,
+      paintOrder: -5,
+    );
+
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: TextPluginScope(
+          plugin: outerSameType,
+          child: TextPluginScope.multiple(
+            plugins: <TextPlugin>[innerSameType, innerLowOrder],
+            child: const Text('Ordered Text'),
+          ),
+        ),
       ),
     );
 
-    // Because the inner OffscreenContentRenderingStrategy explicitly sets lazy,
-    // offscreen items beyond the normal cache extent remain unmounted even though
-    // the enclosing plugin has ContentAccessIntent.scan.
-    expect(plugin.activeDelegates.length, lessThan(10));
-    expect(plugin.activeDelegates.any((TextDelegate d) => d.text == 'OptOut Item 29'), isFalse);
+    // 1. innerSameType overrides outerSameType because both have runtimeType _OuterHighlightPlugin.
+    expect(outerSameType.delegates, isEmpty);
+    expect(innerSameType.delegates, hasLength(1));
+
+    // 2. innerLowOrder (paintOrder: -5) paints before innerSameType (paintOrder: 10).
+    expect(paintLog, <String>['inner-low-order:bg:Ordered Text', 'inner-v2:bg:Ordered Text']);
   });
 
   testWidgets('TextPlugin tracks lifecycle and typing updates of EditableText in subtree', (
@@ -642,19 +734,419 @@ void main() {
       expect(toolbarParagraph.textPlugins!.single.handlesSelectionHighlight, isTrue);
     },
   );
+
+  testWidgets('Lifecycle callbacks (didAddText, didUpdateText, didLayoutText) have valid layout', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _GeometryCheckingTextPlugin();
+
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: TextPluginScope(plugin: plugin, child: const Text('Hello Geometry')),
+      ),
+    );
+
+    expect(plugin.events, containsAll(<String>['add:boxes=1', 'layout:boxes=1']));
+    plugin.events.clear();
+
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: TextPluginScope(plugin: plugin, child: const Text('Updated Geometry')),
+      ),
+    );
+
+    expect(plugin.events, containsAll(<String>['update:boxes=1', 'layout:boxes=1']));
+  });
+
+  testWidgets(
+    'Custom RenderBox using TextPainter and non-text RenderBox participate via TextDelegateHostMixin',
+    (WidgetTester tester) async {
+      final plugin = _RecordingTextPlugin();
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: TextPluginScope(
+            plugin: plugin,
+            child: const Column(
+              children: <Widget>[
+                CustomBadgeText(label: 'Badge v1', style: TextStyle(fontSize: 16)),
+                LabeledColorBox(
+                  label: 'Chart Thumbnail',
+                  color: Color(0xFF2196F3),
+                  boxSize: Size(80, 40),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      expect(
+        plugin.log,
+        containsAll(<String>['plugin:add:Badge v1', 'plugin:add:Chart Thumbnail']),
+      );
+      expect(plugin.activeDelegates.length, 2);
+
+      final RenderCustomBadgeText badgeRenderObject = tester.renderObject<RenderCustomBadgeText>(
+        find.byType(CustomBadgeText),
+      );
+      expect(badgeRenderObject.label, 'Badge v1');
+      expect(badgeRenderObject.style, const TextStyle(fontSize: 16));
+
+      final RenderLabeledColorBox boxRenderObject = tester.renderObject<RenderLabeledColorBox>(
+        find.byType(LabeledColorBox),
+      );
+      expect(boxRenderObject.label, 'Chart Thumbnail');
+      expect(boxRenderObject.color, const Color(0xFF2196F3));
+      expect(boxRenderObject.boxSize, const Size(80, 40));
+
+      final List<TextBox> badgeBoxes = plugin.activeDelegates[0].getBoxesForSelection(
+        const TextSelection(baseOffset: 0, extentOffset: 5),
+      );
+      expect(badgeBoxes, isNotEmpty);
+
+      final List<TextBox> boxWidgetBoxes = plugin.activeDelegates[1].getBoxesForSelection(
+        const TextSelection(baseOffset: 0, extentOffset: 5),
+      );
+      expect(boxWidgetBoxes.length, 1);
+      expect(boxWidgetBoxes.single.toRect(), const Rect.fromLTWH(0, 0, 80, 40));
+
+      plugin.log.clear();
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: TextPluginScope(
+            plugin: plugin,
+            child: const Column(
+              children: <Widget>[
+                CustomBadgeText(label: 'Badge v2', style: TextStyle(fontSize: 16)),
+                LabeledColorBox(
+                  label: 'Updated Thumbnail',
+                  color: Color(0xFF2196F3),
+                  boxSize: Size(80, 40),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      expect(
+        plugin.log,
+        containsAll(<String>['plugin:update:Badge v2', 'plugin:update:Updated Thumbnail']),
+      );
+    },
+  );
+}
+
+class CustomBadgeText extends LeafRenderObjectWidget {
+  const CustomBadgeText({super.key, required this.label, required this.style, this.textPlugins});
+
+  final String label;
+  final TextStyle style;
+  final List<TextPlugin>? textPlugins;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return RenderCustomBadgeText(
+      label: label,
+      style: style,
+      textDirection: Directionality.of(context),
+      textPlugins: textPlugins ?? TextPluginScope.maybeOf(context),
+    );
+  }
+
+  @override
+  void updateRenderObject(BuildContext context, RenderCustomBadgeText renderObject) {
+    renderObject
+      ..label = label
+      ..style = style
+      ..textDirection = Directionality.of(context)
+      ..textPlugins = textPlugins ?? TextPluginScope.maybeOf(context);
+  }
+}
+
+class RenderCustomBadgeText extends RenderBox with TextDelegateHostMixin {
+  RenderCustomBadgeText({
+    required String label,
+    required TextStyle style,
+    required TextDirection textDirection,
+    List<TextPlugin>? textPlugins,
+  }) : _label = label,
+       _style = style,
+       _textDirection = textDirection,
+       _textPainter = TextPainter(
+         text: TextSpan(text: label, style: style),
+         textDirection: textDirection,
+       ) {
+    this.textPlugins = textPlugins;
+  }
+
+  final TextPainter _textPainter;
+
+  String get label => _label;
+  String _label;
+  set label(String value) {
+    if (_label == value) {
+      return;
+    }
+    _label = value;
+    _textPainter.text = TextSpan(text: _label, style: _style);
+    markNeedsTextDelegateUpdate();
+    markNeedsLayout();
+  }
+
+  TextStyle get style => _style;
+  TextStyle _style;
+  set style(TextStyle value) {
+    if (_style == value) {
+      return;
+    }
+    _style = value;
+    _textPainter.text = TextSpan(text: _label, style: _style);
+    markNeedsLayout();
+  }
+
+  @override
+  TextDirection get textDirection => _textDirection;
+  TextDirection _textDirection;
+  set textDirection(TextDirection value) {
+    if (_textDirection == value) {
+      return;
+    }
+    _textDirection = value;
+    _textPainter.textDirection = value;
+    markNeedsLayout();
+  }
+
+  @override
+  String get plainText => _textPainter.plainText;
+
+  @override
+  InlineSpan get textSpan => _textPainter.text!;
+
+  @override
+  List<TextBox> getBoxesForSelection(
+    TextSelection selection, {
+    ui.BoxHeightStyle boxHeightStyle = ui.BoxHeightStyle.tight,
+    ui.BoxWidthStyle boxWidthStyle = ui.BoxWidthStyle.tight,
+  }) {
+    return _textPainter.getBoxesForSelection(
+      selection,
+      boxHeightStyle: boxHeightStyle,
+      boxWidthStyle: boxWidthStyle,
+    );
+  }
+
+  @override
+  TextPosition getPositionForOffset(Offset offset) => _textPainter.getPositionForOffset(offset);
+
+  @override
+  TextRange getWordBoundary(TextPosition position) => _textPainter.getWordBoundary(position);
+
+  @override
+  bool hitTestSelf(Offset position) => true;
+
+  @override
+  void performLayout() {
+    _textPainter.layout(maxWidth: constraints.maxWidth);
+    size = constraints.constrain(_textPainter.size);
+    didLayoutTextDelegates();
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    paintTextPluginBackgrounds(context, offset);
+    _textPainter.paint(context.canvas, offset);
+    paintTextPluginForegrounds(context, offset);
+  }
+
+  @override
+  void dispose() {
+    _textPainter.dispose();
+    super.dispose();
+  }
+}
+
+class LabeledColorBox extends LeafRenderObjectWidget {
+  const LabeledColorBox({
+    super.key,
+    required this.label,
+    required this.color,
+    this.boxSize = const Size(100, 48),
+    this.textPlugins,
+  });
+
+  final String label;
+  final Color color;
+  final Size boxSize;
+  final List<TextPlugin>? textPlugins;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return RenderLabeledColorBox(
+      label: label,
+      color: color,
+      boxSize: boxSize,
+      textDirection: Directionality.of(context),
+      textPlugins: textPlugins ?? TextPluginScope.maybeOf(context),
+    );
+  }
+
+  @override
+  void updateRenderObject(BuildContext context, RenderLabeledColorBox renderObject) {
+    renderObject
+      ..label = label
+      ..color = color
+      ..boxSize = boxSize
+      ..textDirection = Directionality.of(context)
+      ..textPlugins = textPlugins ?? TextPluginScope.maybeOf(context);
+  }
+}
+
+class RenderLabeledColorBox extends RenderBox with TextDelegateHostMixin {
+  RenderLabeledColorBox({
+    required String label,
+    required Color color,
+    required Size boxSize,
+    required TextDirection textDirection,
+    List<TextPlugin>? textPlugins,
+  }) {
+    this.label = label;
+    this.color = color;
+    this.boxSize = boxSize;
+    this.textDirection = textDirection;
+    this.textPlugins = textPlugins;
+  }
+
+  String get label => _label;
+  String _label = '';
+  set label(String value) {
+    if (_label == value) {
+      return;
+    }
+    _label = value;
+    markNeedsTextDelegateUpdate();
+    markNeedsPaint();
+  }
+
+  Color get color => _color;
+  Color _color = const Color(0x00000000);
+  set color(Color value) {
+    if (_color == value) {
+      return;
+    }
+    _color = value;
+    markNeedsPaint();
+  }
+
+  Size get boxSize => _boxSize;
+  Size _boxSize = Size.zero;
+  set boxSize(Size value) {
+    if (_boxSize == value) {
+      return;
+    }
+    _boxSize = value;
+    markNeedsLayout();
+  }
+
+  @override
+  TextDirection get textDirection => _textDirection;
+  TextDirection _textDirection = TextDirection.ltr;
+  set textDirection(TextDirection value) {
+    if (_textDirection == value) {
+      return;
+    }
+    _textDirection = value;
+    markNeedsPaint();
+  }
+
+  @override
+  String get plainText => _label;
+
+  @override
+  List<TextBox> getBoxesForSelection(
+    TextSelection selection, {
+    ui.BoxHeightStyle boxHeightStyle = ui.BoxHeightStyle.tight,
+    ui.BoxWidthStyle boxWidthStyle = ui.BoxWidthStyle.tight,
+  }) {
+    if (!selection.isValid || selection.isCollapsed) {
+      return const <TextBox>[];
+    }
+    final int start = selection.start.clamp(0, _label.length);
+    final int end = selection.end.clamp(0, _label.length);
+    if (start >= end) {
+      return const <TextBox>[];
+    }
+    return <TextBox>[TextBox.fromLTRBD(0, 0, size.width, size.height, textDirection)];
+  }
+
+  @override
+  bool hitTestSelf(Offset position) => true;
+
+  @override
+  void performLayout() {
+    size = constraints.constrain(_boxSize);
+    didLayoutTextDelegates();
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    paintTextPluginBackgrounds(context, offset);
+    context.canvas.drawRect(offset & size, Paint()..color = _color);
+    paintTextPluginForegrounds(context, offset);
+  }
+}
+
+class _BoundedListTestWidget extends StatelessWidget {
+  const _BoundedListTestWidget();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      itemExtent: 100.0,
+      itemCount: 30,
+      itemBuilder: (BuildContext context, int index) => Text('Bounded Item $index'),
+    );
+  }
+}
+
+class _GeometryCheckingTextPlugin extends TextPlugin {
+  final List<String> events = <String>[];
+
+  void _checkGeometry(String hook, TextDelegate delegate) {
+    expect(delegate.hasLayout, isTrue, reason: '$hook should have valid layout');
+    expect(delegate.size.width, greaterThan(0), reason: '$hook should have non-zero width');
+    final List<TextBox> boxes = delegate.getBoxesForSelection(
+      TextSelection(baseOffset: 0, extentOffset: delegate.text.length),
+    );
+    events.add('$hook:boxes=${boxes.length}');
+  }
+
+  @override
+  void didAddText(TextDelegate delegate) => _checkGeometry('add', delegate);
+
+  @override
+  void didUpdateText(TextDelegate delegate) => _checkGeometry('update', delegate);
+
+  @override
+  void didLayoutText(TextDelegate delegate) => _checkGeometry('layout', delegate);
 }
 
 class _EagerToggleTextPlugin extends TextPlugin with ChangeNotifier {
   final List<TextDelegate> activeDelegates = <TextDelegate>[];
 
-  ContentAccessIntent _contentAccessIntent = ContentAccessIntent.highlight;
+  bool _needsOffscreenContent = false;
   @override
-  ContentAccessIntent get contentAccessIntent => _contentAccessIntent;
-  set contentAccessIntent(ContentAccessIntent value) {
-    if (_contentAccessIntent == value) {
+  bool get needsOffscreenContent => _needsOffscreenContent;
+  set needsOffscreenContent(bool value) {
+    if (_needsOffscreenContent == value) {
       return;
     }
-    _contentAccessIntent = value;
+    _needsOffscreenContent = value;
     notifyListeners();
   }
 

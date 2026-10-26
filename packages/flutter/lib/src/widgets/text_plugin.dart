@@ -25,8 +25,8 @@ import 'viewport.dart';
 /// To exclude a subtree from any ancestor [TextPluginScope]s, wrap the subtree
 /// in [TextPluginScope.none].
 ///
-/// If any installed [TextPlugin] has [TextPlugin.contentAccessIntent] set to
-/// [ContentAccessIntent.scan], [TextPluginScope] configures descendant
+/// If any installed [TextPlugin] has [TextPlugin.needsOffscreenContent] set to
+/// `true`, [TextPluginScope] configures descendant
 /// scrollable viewports (such as [ListView], [CustomScrollView], and
 /// [Viewport]) via [OffscreenContentRenderingStrategy] with
 /// [OffscreenRenderingPolicy.eager] so that offscreen sliver children are
@@ -93,8 +93,8 @@ class TextPluginScope extends StatefulWidget {
   final Widget child;
 
   /// Returns the list of active [TextPlugin]s enclosing the given [context],
-  /// ordered from outermost (closest to the root) to innermost, or `null` if
-  /// no [TextPluginScope] is present (or if disabled via
+  /// ordered by [TextPlugin.paintOrder] and installation order (outermost
+  /// first), or `null` if no [TextPluginScope] is present (or if disabled via
   /// [TextPluginScope.none]).
   static List<TextPlugin>? maybeOf(BuildContext context) {
     final _InheritedTextPluginScope? scope = context
@@ -106,8 +106,8 @@ class TextPluginScope extends StatefulWidget {
   }
 
   /// Returns the list of active [TextPlugin]s enclosing the given [context],
-  /// ordered from outermost (closest to the root) to innermost, or an empty
-  /// list if no [TextPluginScope] is present.
+  /// ordered by [TextPlugin.paintOrder] and installation order (outermost
+  /// first), or an empty list if no [TextPluginScope] is present.
   static List<TextPlugin> of(BuildContext context) {
     return maybeOf(context) ?? const <TextPlugin>[];
   }
@@ -144,7 +144,7 @@ class _TextPluginScopeState extends State<TextPluginScope> {
       return false;
     }
     for (final TextPlugin item in _ownPlugins) {
-      if (item.contentAccessIntent == ContentAccessIntent.scan) {
+      if (item.needsOffscreenContent) {
         return true;
       }
     }
@@ -201,39 +201,49 @@ class _TextPluginScopeState extends State<TextPluginScope> {
   Widget build(BuildContext context) {
     if (widget._disabled) {
       return OffscreenContentRenderingStrategy(
-        policy: OffscreenRenderingPolicy.lazy,
-        child: _InheritedTextPluginScope(plugins: const <TextPlugin>[], child: widget.child),
+        policy: const OffscreenRenderingPolicy.lazy(),
+        child: _InheritedTextPluginScope(
+          pluginMap: const <Type, TextPlugin>{},
+          plugins: const <TextPlugin>[],
+          child: widget.child,
+        ),
       );
     }
-    final List<TextPlugin> inheritedPlugins = TextPluginScope.of(context);
+    final _InheritedTextPluginScope? ancestorScope = context
+        .dependOnInheritedWidgetOfExactType<_InheritedTextPluginScope>();
     final OffscreenRenderingPolicy inheritedPolicy = OffscreenContentRenderingStrategy.of(context);
     final Set<Type>? excludedTypes = widget.types;
-    final combined = <TextPlugin>[
-      for (final TextPlugin item in inheritedPlugins)
-        if (excludedTypes == null || !excludedTypes.contains(item.runtimeType)) item,
-      ..._ownPlugins,
-    ];
-    final uniquePlugins = <TextPlugin>[];
-    final seen = <TextPlugin>{};
-    for (final item in combined) {
-      if (seen.add(item)) {
-        uniquePlugins.add(item);
+    final pluginMap = <Type, TextPlugin>{};
+    if (ancestorScope != null) {
+      for (final MapEntry<Type, TextPlugin> entry in ancestorScope.pluginMap.entries) {
+        if (excludedTypes == null || !excludedTypes.contains(entry.key)) {
+          pluginMap[entry.key] = entry.value;
+        }
       }
     }
-    final bool activePluginsRequireScan = uniquePlugins.any(
-      (TextPlugin item) => item.contentAccessIntent == ContentAccessIntent.scan,
+    for (final TextPlugin item in _ownPlugins) {
+      pluginMap[item.runtimeType] = item;
+    }
+    final List<TextPlugin> orderedPlugins = pluginMap.values.toList(growable: false);
+    mergeSort<TextPlugin>(
+      orderedPlugins,
+      compare: (TextPlugin a, TextPlugin b) => a.paintOrder.compareTo(b.paintOrder),
     );
-    final OffscreenRenderingPolicy effectivePolicy = excludedTypes != null
+    final bool activePluginsRequireScan = orderedPlugins.any(
+      (TextPlugin item) => item.needsOffscreenContent,
+    );
+    final effectivePolicy = excludedTypes != null
         ? (activePluginsRequireScan
-              ? OffscreenRenderingPolicy.eager
-              : OffscreenRenderingPolicy.lazy)
-        : ((inheritedPolicy == OffscreenRenderingPolicy.eager || _localRequiresOffscreenScan)
-              ? OffscreenRenderingPolicy.eager
-              : OffscreenRenderingPolicy.lazy);
+              ? const OffscreenRenderingPolicy.eager()
+              : const OffscreenRenderingPolicy.lazy())
+        : ((inheritedPolicy.isEager || _localRequiresOffscreenScan)
+              ? (inheritedPolicy.isEager ? inheritedPolicy : const OffscreenRenderingPolicy.eager())
+              : const OffscreenRenderingPolicy.lazy());
     return OffscreenContentRenderingStrategy(
       policy: effectivePolicy,
       child: _InheritedTextPluginScope(
-        plugins: List<TextPlugin>.unmodifiable(uniquePlugins),
+        pluginMap: Map<Type, TextPlugin>.unmodifiable(pluginMap),
+        plugins: List<TextPlugin>.unmodifiable(orderedPlugins),
         child: widget.child,
       ),
     );
@@ -241,8 +251,13 @@ class _TextPluginScopeState extends State<TextPluginScope> {
 }
 
 class _InheritedTextPluginScope extends InheritedWidget {
-  const _InheritedTextPluginScope({required this.plugins, required super.child});
+  const _InheritedTextPluginScope({
+    required this.pluginMap,
+    required this.plugins,
+    required super.child,
+  });
 
+  final Map<Type, TextPlugin> pluginMap;
   final List<TextPlugin> plugins;
 
   @override

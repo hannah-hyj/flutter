@@ -578,8 +578,61 @@ class RenderParagraph extends RenderBox
     _syncTextPluginDelegates(oldPlugins: oldPlugins);
   }
 
+  bool _textPluginFlushScheduled = false;
+
+  void _scheduleTextPluginFlush() {
+    if (_textPluginFlushScheduled || !attached || owner == null) {
+      return;
+    }
+    _textPluginFlushScheduled = true;
+    owner!.schedulePostLayoutCallback(_flushTextPluginNotifications);
+  }
+
+  void _flushTextPluginNotifications() {
+    _textPluginFlushScheduled = false;
+    if (!attached || _textPluginDelegates == null || _textPluginDelegates!.isEmpty) {
+      return;
+    }
+    if (!hasSize || debugNeedsLayout) {
+      return;
+    }
+    for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
+      if (delegate.isDisposed) {
+        continue;
+      }
+      delegate.hasValidLayout = true;
+      if (!delegate.hasDispatchedAdd) {
+        delegate.hasDispatchedAdd = true;
+        delegate.pendingUpdate = false;
+        delegate.pendingLayout = false;
+        delegate.notifyChanged();
+        delegate.plugin.didAddText(delegate);
+        if (!delegate.isDisposed) {
+          delegate.plugin.didLayoutText(delegate);
+        }
+      } else if (delegate.pendingUpdate) {
+        delegate.pendingUpdate = false;
+        delegate.pendingLayout = false;
+        delegate.notifyChanged();
+        delegate.plugin.didUpdateText(delegate);
+        if (!delegate.isDisposed) {
+          delegate.plugin.didLayoutText(delegate);
+        }
+      } else if (delegate.pendingLayout) {
+        delegate.pendingLayout = false;
+        delegate.notifyChanged();
+        delegate.plugin.didLayoutText(delegate);
+      }
+    }
+  }
+
   void _syncTextPluginDelegates({List<TextPlugin>? oldPlugins}) {
-    final List<TextPlugin> newPlugins = _textPlugins ?? const <TextPlugin>[];
+    final List<TextPlugin> rawPlugins = _textPlugins ?? const <TextPlugin>[];
+    final newPlugins = <TextPlugin>[...rawPlugins];
+    mergeSort<TextPlugin>(
+      newPlugins,
+      compare: (TextPlugin a, TextPlugin b) => a.paintOrder.compareTo(b.paintOrder),
+    );
     if (_textPluginDelegates != null) {
       final Set<TextPlugin> newPluginSet = newPlugins.toSet();
       final List<TextPlugin> removedPlugins = _textPluginDelegates!.keys
@@ -592,7 +645,9 @@ class RenderParagraph extends RenderBox
           needsRepaint = true;
         }
         delegate.detachPainters();
-        plugin.didRemoveText(delegate);
+        if (delegate.hasDispatchedAdd) {
+          plugin.didRemoveText(delegate);
+        }
         delegate.dispose();
       }
       if (needsRepaint) {
@@ -609,6 +664,7 @@ class RenderParagraph extends RenderBox
         _textPluginDelegates ?? <TextPlugin, TextDelegate>{};
     final orderedDelegates = <TextPlugin, TextDelegate>{};
     final newlyAddedDelegates = <TextDelegate>[];
+    final bool currentlyHasValidLayout = hasSize && !debugNeedsLayout;
     for (final plugin in newPlugins) {
       if (orderedDelegates.containsKey(plugin)) {
         continue;
@@ -617,18 +673,15 @@ class RenderParagraph extends RenderBox
       if (existing != null) {
         orderedDelegates[plugin] = existing;
       } else {
-        final delegate = TextDelegate(this, plugin);
+        final delegate = TextDelegate(this, plugin)..hasValidLayout = currentlyHasValidLayout;
         orderedDelegates[plugin] = delegate;
         newlyAddedDelegates.add(delegate);
       }
     }
     _textPluginDelegates = orderedDelegates;
 
-    for (final delegate in newlyAddedDelegates) {
-      delegate.plugin.didAddText(delegate);
-      if (hasSize && !debugNeedsLayout) {
-        delegate.plugin.didLayoutText(delegate);
-      }
+    if (newlyAddedDelegates.isNotEmpty) {
+      _scheduleTextPluginFlush();
     }
     if (oldPlugins != null && !listEquals(oldPlugins, newPlugins)) {
       markNeedsPaint();
@@ -639,10 +692,10 @@ class RenderParagraph extends RenderBox
     if (_textPluginDelegates == null || _textPluginDelegates!.isEmpty) {
       return;
     }
-    for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
-      delegate.notifyChanged();
-      delegate.plugin.didUpdateText(delegate);
+    for (final TextDelegate delegate in _textPluginDelegates!.values) {
+      delegate.pendingUpdate = true;
     }
+    _scheduleTextPluginFlush();
   }
 
   void _notifyTextPluginsSelectionChanged() {
@@ -666,7 +719,9 @@ class RenderParagraph extends RenderBox
     _textPluginDelegates = null;
     for (final delegate in delegates) {
       delegate.detachPainters();
-      delegate.plugin.didRemoveText(delegate);
+      if (delegate.hasDispatchedAdd) {
+        delegate.plugin.didRemoveText(delegate);
+      }
       delegate.dispose();
     }
   }
@@ -698,6 +753,11 @@ class RenderParagraph extends RenderBox
 
   @override
   void markNeedsLayout() {
+    if (_textPluginDelegates != null) {
+      for (final TextDelegate delegate in _textPluginDelegates!.values) {
+        delegate.hasValidLayout = false;
+      }
+    }
     _lastSelectableFragments?.forEach(
       (_SelectableFragment element) => element.didChangeParagraphLayout(),
     );
@@ -1176,10 +1236,11 @@ class RenderParagraph extends RenderBox
     }
 
     if (_textPluginDelegates != null && _textPluginDelegates!.isNotEmpty) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
-        delegate.notifyChanged();
-        delegate.plugin.didLayoutText(delegate);
+      for (final TextDelegate delegate in _textPluginDelegates!.values) {
+        delegate.hasValidLayout = true;
+        delegate.pendingLayout = true;
       }
+      _scheduleTextPluginFlush();
     }
   }
 

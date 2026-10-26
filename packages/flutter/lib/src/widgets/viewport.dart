@@ -165,11 +165,10 @@ class Viewport extends MultiChildRenderObjectWidget {
   /// Defaults to [Clip.hardEdge].
   final Clip clipBehavior;
 
-  static const ScrollCacheExtent _eagerScrollCacheExtent = ScrollCacheExtent.pixels(1e9);
-
   ScrollCacheExtent? _effectiveScrollCacheExtent(BuildContext context) {
-    if (OffscreenContentRenderingStrategy.of(context) == OffscreenRenderingPolicy.eager) {
-      return _eagerScrollCacheExtent;
+    final OffscreenRenderingPolicy policy = OffscreenContentRenderingStrategy.of(context);
+    if (policy.isEager && policy.cacheExtent != null) {
+      return policy.cacheExtent;
     }
     if (scrollCacheExtent != null) {
       return scrollCacheExtent;
@@ -474,8 +473,9 @@ class ShrinkWrappingViewport extends MultiChildRenderObjectWidget {
   final ScrollCacheExtent? scrollCacheExtent;
 
   ScrollCacheExtent? _effectiveScrollCacheExtent(BuildContext context) {
-    if (OffscreenContentRenderingStrategy.of(context) == OffscreenRenderingPolicy.eager) {
-      return Viewport._eagerScrollCacheExtent;
+    final OffscreenRenderingPolicy policy = OffscreenContentRenderingStrategy.of(context);
+    if (policy.isEager && policy.cacheExtent != null) {
+      return policy.cacheExtent;
     }
     if (scrollCacheExtent != null) {
       return scrollCacheExtent;
@@ -538,15 +538,44 @@ class ShrinkWrappingViewport extends MultiChildRenderObjectWidget {
 ///
 /// Used by [OffscreenContentRenderingStrategy] to configure descendant
 /// [Viewport] and [ShrinkWrappingViewport] widgets.
-enum OffscreenRenderingPolicy {
+@immutable
+class OffscreenRenderingPolicy {
   /// Offscreen sliver children beyond the viewport's normal cache extent are
   /// built and laid out lazily on demand as they scroll into view.
-  lazy,
+  const OffscreenRenderingPolicy.lazy() : isEager = false, cacheExtent = null;
 
   /// Offscreen sliver children in finite slivers are eagerly built and laid out
-  /// so that their content can be scanned, measured, or scrolled to before
-  /// entering the visible viewport.
-  eager,
+  /// within [cacheExtent] so that their content can be scanned, measured, or
+  /// scrolled to before entering the visible viewport.
+  const OffscreenRenderingPolicy.eager({
+    ScrollCacheExtent this.cacheExtent = const ScrollCacheExtent.pixels(1e6),
+  }) : isEager = true;
+
+  /// Whether offscreen sliver children should be eagerly rendered.
+  final bool isEager;
+
+  /// The cache extent applied to descendant viewports when [isEager] is `true`.
+  final ScrollCacheExtent? cacheExtent;
+
+  @override
+  String toString() {
+    return isEager
+        ? 'OffscreenRenderingPolicy.eager(cacheExtent: $cacheExtent)'
+        : 'OffscreenRenderingPolicy.lazy()';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    return other is OffscreenRenderingPolicy &&
+        other.isEager == isEager &&
+        other.cacheExtent == cacheExtent;
+  }
+
+  @override
+  int get hashCode => Object.hash(isEager, cacheExtent);
 }
 
 /// An inherited widget that controls how descendant [Viewport] and
@@ -559,10 +588,11 @@ enum OffscreenRenderingPolicy {
 /// Wrapping a scrollable subtree in [OffscreenContentRenderingStrategy] with
 /// [OffscreenRenderingPolicy.eager] instructs descendant viewports to expand
 /// their cache extent and eagerly render offscreen sliver children. This is
-/// used automatically by [TextPluginScope] when an active [TextPlugin] declares
-/// [ContentAccessIntent.scan] (for example, during "Find in Page" / `Ctrl+F`
-/// search), and can also be placed directly in the widget tree by applications
-/// to override the offscreen rendering policy for a specific subtree.
+/// used automatically by [TextPluginScope] when an active [TextPlugin] has
+/// [TextPlugin.needsOffscreenContent] set to `true` (for example, during
+/// "Find in Page" / `Ctrl+F` search), and can also be placed directly in the
+/// widget tree by applications to override or bound the offscreen rendering
+/// policy for a specific subtree.
 class OffscreenContentRenderingStrategy extends InheritedWidget {
   /// Creates an [OffscreenContentRenderingStrategy] that applies [policy] to
   /// descendant scrollable viewports.
@@ -583,7 +613,7 @@ class OffscreenContentRenderingStrategy extends InheritedWidget {
   /// [context], defaulting to [OffscreenRenderingPolicy.lazy] if none is
   /// present.
   static OffscreenRenderingPolicy of(BuildContext context) {
-    return maybeOf(context) ?? OffscreenRenderingPolicy.lazy;
+    return maybeOf(context) ?? const OffscreenRenderingPolicy.lazy();
   }
 
   @override
@@ -594,6 +624,6 @@ class OffscreenContentRenderingStrategy extends InheritedWidget {
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
-    properties.add(EnumProperty<OffscreenRenderingPolicy>('policy', policy));
+    properties.add(DiagnosticsProperty<OffscreenRenderingPolicy>('policy', policy));
   }
 }
