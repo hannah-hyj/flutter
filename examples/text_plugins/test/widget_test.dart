@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:text_plugins/main.dart';
+import 'package:text_plugins/plugins/search_in_page_plugin.dart';
 
 void main() {
   testWidgets(
@@ -329,6 +330,141 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('3 / 4'), findsOneWidget);
       expect(searchField.focusNode!.hasFocus, isTrue);
+    },
+  );
+
+  testWidgets(
+    'SearchInPagePlugin updates only the changed delegate on didUpdateText',
+    (WidgetTester tester) async {
+      final plugin = SearchInPagePlugin()..query = 'Flutter';
+      addTearDown(plugin.dispose);
+      final middleText = ValueNotifier<String>('Unrelated middle paragraph');
+      addTearDown(middleText.dispose);
+      final bottomExtra = ValueNotifier<String>('Bottom Flutter item');
+      addTearDown(bottomExtra.dispose);
+
+      var notifications = 0;
+      plugin.addListener(() {
+        notifications += 1;
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TextPluginScope(
+              plugin: plugin,
+              child: Column(
+                children: <Widget>[
+                  const Text('Top Flutter item'),
+                  ValueListenableBuilder<String>(
+                    valueListenable: middleText,
+                    builder:
+                        (BuildContext context, String value, Widget? child) {
+                          return Text(value);
+                        },
+                  ),
+                  ValueListenableBuilder<String>(
+                    valueListenable: bottomExtra,
+                    builder:
+                        (BuildContext context, String value, Widget? child) {
+                          return Text(value);
+                        },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(plugin.matches, hasLength(2));
+      // Focus the second match ("Bottom Flutter item") explicitly.
+      plugin.nextMatch();
+      await tester.pump();
+      expect(plugin.activeMatchIndex, 1);
+
+      final TextDelegate topDelegate = plugin.matches.first.delegate;
+      final TextDelegate bottomDelegate = plugin.matches.last.delegate;
+      final CustomPainter? initialTopPainter = topDelegate.backgroundPainter;
+      final CustomPainter? initialBottomBgPainter =
+          bottomDelegate.backgroundPainter;
+      final CustomPainter? initialBottomFgPainter =
+          bottomDelegate.foregroundPainter;
+      expect(initialTopPainter, isNotNull);
+      expect(initialBottomBgPainter, isNotNull);
+      expect(initialBottomFgPainter, isNotNull);
+
+      // 1. Updating a paragraph with 0 -> 0 matches does no work and does not
+      // rebuild painters or notify listeners.
+      notifications = 0;
+      middleText.value = 'Still no match here';
+      await tester.pump();
+      expect(notifications, 0);
+      expect(plugin.matches, hasLength(2));
+      expect(plugin.activeMatchIndex, 1);
+      expect(topDelegate.backgroundPainter, same(initialTopPainter));
+      expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
+      expect(bottomDelegate.foregroundPainter, same(initialBottomFgPainter));
+
+      // 2. Updating a matching paragraph where match ranges stay identical
+      // preserves painters on other delegates and skips redundant notifications.
+      bottomExtra.value = 'Bottom Flutter item with trailing text';
+      await tester.pump();
+      expect(notifications, 0);
+      expect(plugin.matches, hasLength(2));
+      expect(plugin.activeMatchIndex, 1);
+      expect(topDelegate.backgroundPainter, same(initialTopPainter));
+      expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
+
+      // 3. Middle paragraph gains 1 match: spliced in document order between
+      // top and bottom without recreating painters on top or bottom!
+      middleText.value = 'Middle Flutter match';
+      await tester.pump();
+      expect(notifications, 1);
+      expect(plugin.matches, hasLength(3));
+      expect(plugin.matches[0].delegate, same(topDelegate));
+      expect(plugin.matches[2].delegate, same(bottomDelegate));
+      expect(plugin.activeMatchIndex, 2);
+      expect(plugin.activeMatch!.delegate, same(bottomDelegate));
+      expect(topDelegate.backgroundPainter, same(initialTopPainter));
+      expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
+      expect(bottomDelegate.foregroundPainter, same(initialBottomFgPainter));
+
+      // 4. Middle paragraph expands to 2 matches in place: only middle painter
+      // updates, top and bottom painters remain untouched, activeMatch shifts to 3.
+      final TextDelegate middleDelegate = plugin.matches[1].delegate;
+      final CustomPainter? middlePainterWithOne =
+          middleDelegate.backgroundPainter;
+      expect(middlePainterWithOne, isNotNull);
+
+      middleText.value = 'Middle Flutter and second Flutter';
+      await tester.pump();
+      expect(notifications, 2);
+      expect(plugin.matches, hasLength(4));
+      expect(plugin.matches[1].delegate, same(middleDelegate));
+      expect(plugin.matches[2].delegate, same(middleDelegate));
+      expect(plugin.activeMatchIndex, 3);
+      expect(plugin.activeMatch!.delegate, same(bottomDelegate));
+      expect(
+        middleDelegate.backgroundPainter,
+        isNot(same(middlePainterWithOne)),
+      );
+      expect(topDelegate.backgroundPainter, same(initialTopPainter));
+      expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
+
+      // 5. Middle paragraph loses all matches: its painters clear, top and
+      // bottom painters remain untouched, and activeMatch shifts back to 1.
+      middleText.value = 'Cleared middle paragraph';
+      await tester.pump();
+      expect(notifications, 3);
+      expect(plugin.matches, hasLength(2));
+      expect(plugin.activeMatchIndex, 1);
+      expect(plugin.activeMatch!.delegate, same(bottomDelegate));
+      expect(middleDelegate.backgroundPainter, isNull);
+      expect(middleDelegate.foregroundPainter, isNull);
+      expect(topDelegate.backgroundPainter, same(initialTopPainter));
+      expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
     },
   );
 }

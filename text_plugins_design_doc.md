@@ -466,17 +466,43 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
 
 #### 3.6.2 Incremental per-delegate match indexing and active match preservation
 
-`SearchInPagePlugin` maintains the set of mounted text delegates in `final Set<TextDelegate> _delegates` and caches each delegate's matches in `final Map<TextDelegate, List<SearchMatch>> _matchesByDelegate`:
+`SearchInPagePlugin` caches matches per delegate (`Map<TextDelegate, List<SearchMatch>> _matchesByDelegate`) and keeps only the $K$ delegates that currently have matches in a document-ordered list (`List<TextDelegate> _orderedMatchingDelegates`), so a change to one text widget never costs work proportional to the $N$ mounted widgets on the page (abridged):
 
-1. **Incremental single-delegate updates**: When a single delegate mounts (`didAddText(delegate)`) or updates its text (`didUpdateText(delegate)` — for example, while the user types in a `TextField` on the page), `SearchInPagePlugin` only runs string search on that single `delegate` (`_matchesByDelegate[delegate] = _computeMatchesForDelegate(delegate)`), avoiding re-scanning all other unmodified paragraphs on the page. A full re-scan across all delegates (`_rescanAllDelegates()`) only runs when `query` or `caseSensitive` changes.
+```dart
+@override
+void didUpdateText(TextDelegate delegate) {
+  _updateDelegateMatches(delegate, _computeMatchesForDelegate(delegate)); // Scans only this delegate.
+}
 
-2. **Document-order assembly**: `_syncOrderedMatches()` records `final SearchMatch? previousActive = activeMatch`, sorts `_delegates` in top-to-bottom document reading order via `final sortedDelegates = _delegates.toList()..sort()` (`TextDelegate.compareTo`), and concatenates `_matchesByDelegate[delegate]` in document order.
+void _updateDelegateMatches(TextDelegate delegate, List<SearchMatch> newMatches) {
+  final List<SearchMatch> oldMatches = _matchesByDelegate[delegate] ?? const <SearchMatch>[];
+  if (listEquals(oldMatches, newMatches)) {
+    return; // Unrelated edit: no re-sort, no list rebuild, no painter churn, no notification.
+  }
+  final SearchMatch? previousActive = _hasExplicitActiveMatch ? activeMatch : null;
+  if (oldMatches.isEmpty) {
+    // Newly matching: binary-insert into _orderedMatchingDelegates (O(log K) compareTo calls)
+    // and insert its matches at the corresponding offset in _matches.
+  } else if (newMatches.isEmpty) {
+    // No longer matching (or unmounted): remove only this delegate's slice, no compareTo calls.
+  } else {
+    // Still matching: replaceRange only this delegate's slice of _matches in place.
+  }
+  _reconcileActiveMatch(previousActive); // Re-locate the active match by (delegate, range) value.
+  _updatePainterForDelegate(delegate);   // Plus the old/new activeMatch.delegate if it moved.
+  _notifyListenersSafely();
+}
+```
 
-3. **Active match preservation**: If `previousActive != null`, it looks up `_matches.indexOf(previousActive)` (using `SearchMatch` value equality on `(delegate, range)`). When found, `_activeMatchIndex` updates to that new index instead of resetting to `0`. This keeps the user's active match stable even when new list items mount above the current viewport during scrolling.
+1. **Single-delegate updates**: `didAddText`, `didUpdateText`, and `didRemoveText` scan and splice only the affected delegate. A full scan (`_rescanAllDelegates()`) runs only when `query` or `caseSensitive` changes, and even then sorts only the $K$ matching delegates.
+
+2. **No full re-sorts**: because `_orderedMatchingDelegates` stays sorted by `TextDelegate.compareTo`, an update checks at most its two neighbors (`_isDelegateOutOfOrder`, in case keyed children were reordered) and falls back to a sort only in that rare case.
+
+3. **Active match preservation**: `_reconcileActiveMatch` finds `previousActive` in the spliced `_matches` by `SearchMatch` value equality on `(delegate, range)`, so `activeMatchIndex` shifts with the content instead of resetting to `0` while items mount, unmount, or edit above the focused match.
 
 #### 3.6.3 Two-layer custom painting (`backgroundPainter` and `foregroundPainter`)
 
-After indexing matches, `_updatePainters()` configures each delegate's painters using `_matchesByDelegate[delegate]`:
+Instead of looping over all mounted `_delegates` on every update or match navigation, `_updatePainterForDelegate(delegate)` updates painters only on the changed `delegate` (plus `oldActive.delegate` and `newActive.delegate` whenever `activeMatch` moves between delegates):
 
 1. If a delegate has no matches, both `delegate.backgroundPainter` and `delegate.foregroundPainter` are set to `null`. Because each `(RenderObject, TextPlugin)` pair has its own dedicated `TextDelegate` instance (see [Section 3.3](#33-textdelegate-proxy-for-text-render-objects)), setting `delegate.backgroundPainter = null` only clears `SearchInPagePlugin`'s painter on that paragraph and never affects painters attached by other plugins in the scope.
 
@@ -572,7 +598,7 @@ sequenceDiagram
     VP->>Sliver: performLayout(remainingCacheExtent: _eagerCacheExtent)
     Sliver->>Para: Builds, mounts, and lays out offscreen items
     Para->>Plugin: flushLayout() -> didAddText(delegate) (hasLayout == true)
-    Plugin->>Plugin: Computes delegate matches & sorts via delegate.compareTo()
+    Plugin->>Plugin: Computes delegate matches & binary-inserts via delegate.compareTo()
     User->>Plugin: Next Match / Enter
     Plugin->>Para: delegate.ensureVisible(match.range)
     Para->>VP: showOnScreen(rect: targetRect) -> scrolls to match
@@ -640,7 +666,7 @@ We solve this with Lowest Common Ancestor (LCA) render-tree traversal:
 
 #### Performance characteristics of LCA sorting
 
-For $N$ mounted `TextDelegate`s in a render tree of depth $D$ (typically $D \le 30$) and branching factor $B$ at the common container, a single `compareTo` call takes $O(D + B)$ pointer hops without allocating any geometric transforms, and sorting $N$ delegates takes $O((D + B) \cdot N \log N)$ time. In addition, because `RenderSliverList` and `RenderFlex` store doubly-linked sibling pointers (`SliverMultiBoxAdaptorParentData` / `ContainerBoxParentData`), when two delegates share the same sliver or flex parent, sibling order can be resolved or cached in $O(1)$ per item during a single linear pass over the container's children. Finally, plugins like `SearchInPagePlugin` only need to sort delegates that actually contain matches (or insert a single newly mounted delegate into an already-sorted list via binary search in $O(D \log N)$ comparisons), keeping document-order sorting well under `<0.5ms` even for hundreds of mounted paragraphs.
+For $N$ mounted `TextDelegate`s in a render tree of depth $D$ (typically $D \le 30$) and branching factor $B$ at the common container, a single `compareTo` call takes $O(D + B)$ pointer hops without allocating any geometric transforms, and sorting $N$ delegates takes $O((D + B) \cdot N \log N)$ time. In addition, because `RenderSliverList` and `RenderFlex` store doubly-linked sibling pointers (`SliverMultiBoxAdaptorParentData` / `ContainerBoxParentData`), when two delegates share the same sliver or flex parent, sibling order can be resolved or cached in $O(1)$ per item during a single linear pass over the container's children. Finally, as shown in [Section 3.6.2](#362-incremental-per-delegate-match-indexing-and-active-match-preservation), `SearchInPagePlugin` only maintains sorted order for the $K$ delegates that actually contain matches (binary-inserting a newly matching delegate in $O((D + B) \log K)$ comparisons and splicing matches in place on `didUpdateText` without re-sorting), keeping document-order sorting well under `<0.5ms` even for hundreds of mounted paragraphs.
 
 ---
 

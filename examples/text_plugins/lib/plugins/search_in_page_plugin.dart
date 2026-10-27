@@ -4,6 +4,7 @@
 
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -68,6 +69,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   final Set<TextDelegate> _delegates = <TextDelegate>{};
   final Map<TextDelegate, List<SearchMatch>> _matchesByDelegate =
       <TextDelegate, List<SearchMatch>>{};
+  final List<TextDelegate> _orderedMatchingDelegates = <TextDelegate>[];
   final List<SearchMatch> _matches = <SearchMatch>[];
 
   String _query = '';
@@ -160,11 +162,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     if (_matches.isEmpty) {
       return;
     }
-    _hasExplicitActiveMatch = true;
-    _activeMatchIndex = (_activeMatchIndex + 1) % _matches.length;
-    _updatePainters();
-    scrollToActiveMatch();
-    _notifyListenersSafely();
+    _setActiveMatchIndex((_activeMatchIndex + 1) % _matches.length);
   }
 
   /// Moves focus to the previous match and scrolls it into view.
@@ -172,10 +170,27 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     if (_matches.isEmpty) {
       return;
     }
+    _setActiveMatchIndex(
+      (_activeMatchIndex - 1 + _matches.length) % _matches.length,
+    );
+  }
+
+  void _setActiveMatchIndex(int newIndex) {
+    final SearchMatch? previousActive = activeMatch;
     _hasExplicitActiveMatch = true;
-    _activeMatchIndex =
-        (_activeMatchIndex - 1 + _matches.length) % _matches.length;
-    _updatePainters();
+    _activeMatchIndex = newIndex;
+    final SearchMatch? currentActive = activeMatch;
+    if (previousActive != currentActive) {
+      if (previousActive != null &&
+          _delegates.contains(previousActive.delegate)) {
+        _updatePainterForDelegate(previousActive.delegate);
+      }
+      if (currentActive != null &&
+          currentActive.delegate != previousActive?.delegate &&
+          _delegates.contains(currentActive.delegate)) {
+        _updatePainterForDelegate(currentActive.delegate);
+      }
+    }
     scrollToActiveMatch();
     _notifyListenersSafely();
   }
@@ -199,19 +214,19 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   @override
   void didAddText(TextDelegate delegate) {
     _delegates.add(delegate);
-    _matchesByDelegate[delegate] = _computeMatchesForDelegate(delegate);
-    _syncOrderedMatches();
+    _updateDelegateMatches(delegate, _computeMatchesForDelegate(delegate));
   }
 
   @override
   void didUpdateText(TextDelegate delegate) {
-    _matchesByDelegate[delegate] = _computeMatchesForDelegate(delegate);
-    _syncOrderedMatches();
+    _updateDelegateMatches(delegate, _computeMatchesForDelegate(delegate));
   }
 
   @override
   void didLayoutText(TextDelegate delegate) {
-    delegate.markNeedsPaint();
+    if (_matchesByDelegate.containsKey(delegate)) {
+      delegate.markNeedsPaint();
+    }
   }
 
   @override
@@ -219,11 +234,10 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     delegate.backgroundPainter = null;
     delegate.foregroundPainter = null;
     _delegates.remove(delegate);
-    _matchesByDelegate.remove(delegate);
     if (_delegates.isEmpty) {
       _hasExplicitActiveMatch = false;
     }
-    _syncOrderedMatches();
+    _updateDelegateMatches(delegate, const <SearchMatch>[]);
   }
 
   List<SearchMatch> _computeMatchesForDelegate(TextDelegate delegate) {
@@ -251,33 +265,172 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     return delegateMatches;
   }
 
-  void _rescanAllDelegates() {
-    for (final TextDelegate delegate in _delegates) {
-      _matchesByDelegate[delegate] = _computeMatchesForDelegate(delegate);
+  int _findInsertionIndex(TextDelegate target) {
+    var low = 0;
+    var high = _orderedMatchingDelegates.length;
+    while (low < high) {
+      final int mid = (low + high) >>> 1;
+      if (_orderedMatchingDelegates[mid].compareTo(target) < 0) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
     }
-    _syncOrderedMatches();
+    return low;
   }
 
-  void _syncOrderedMatches() {
-    final SearchMatch? previousActive = _hasExplicitActiveMatch
-        ? activeMatch
-        : null;
-    _matches.clear();
-    if (_query.isNotEmpty) {
-      final List<TextDelegate> sortedDelegates = _delegates.toList()..sort();
-      for (final delegate in sortedDelegates) {
-        final List<SearchMatch>? delegateMatches = _matchesByDelegate[delegate];
-        if (delegateMatches != null && delegateMatches.isNotEmpty) {
-          _matches.addAll(delegateMatches);
+  int _matchOffsetForDelegateIndex(int delegateIndex) {
+    var offset = 0;
+    for (var i = 0; i < delegateIndex; i++) {
+      offset += _matchesByDelegate[_orderedMatchingDelegates[i]]!.length;
+    }
+    return offset;
+  }
+
+  bool _isDelegateOutOfOrder(int index) {
+    final TextDelegate delegate = _orderedMatchingDelegates[index];
+    if (index > 0 &&
+        _orderedMatchingDelegates[index - 1].compareTo(delegate) > 0) {
+      return true;
+    }
+    if (index + 1 < _orderedMatchingDelegates.length &&
+        delegate.compareTo(_orderedMatchingDelegates[index + 1]) > 0) {
+      return true;
+    }
+    return false;
+  }
+
+  void _updateDelegateMatches(
+    TextDelegate delegate,
+    List<SearchMatch> newMatches,
+  ) {
+    final List<SearchMatch> oldMatches =
+        _matchesByDelegate[delegate] ?? const <SearchMatch>[];
+    if (oldMatches.isEmpty && newMatches.isEmpty) {
+      return;
+    }
+    if (oldMatches.isNotEmpty && listEquals(oldMatches, newMatches)) {
+      final int existingIndex = _orderedMatchingDelegates.indexOf(delegate);
+      if (!_isDelegateOutOfOrder(existingIndex)) {
+        if (_delegates.contains(delegate)) {
+          delegate.markNeedsPaint();
         }
+        return;
       }
     }
 
+    final SearchMatch? oldActive = activeMatch;
+    final SearchMatch? explicitPreviousActive = _hasExplicitActiveMatch
+        ? oldActive
+        : null;
+
+    if (oldMatches.isEmpty) {
+      final int insertIndex = _findInsertionIndex(delegate);
+      final int matchOffset = _matchOffsetForDelegateIndex(insertIndex);
+      _orderedMatchingDelegates.insert(insertIndex, delegate);
+      _matchesByDelegate[delegate] = newMatches;
+      _matches.insertAll(matchOffset, newMatches);
+    } else if (newMatches.isEmpty) {
+      final int existingIndex = _orderedMatchingDelegates.indexOf(delegate);
+      final int matchOffset = _matchOffsetForDelegateIndex(existingIndex);
+      _orderedMatchingDelegates.removeAt(existingIndex);
+      _matchesByDelegate.remove(delegate);
+      _matches.removeRange(matchOffset, matchOffset + oldMatches.length);
+    } else {
+      final int existingIndex = _orderedMatchingDelegates.indexOf(delegate);
+      final bool movedOrder = _isDelegateOutOfOrder(existingIndex);
+      _matchesByDelegate[delegate] = newMatches;
+      if (!movedOrder) {
+        final int matchOffset = _matchOffsetForDelegateIndex(existingIndex);
+        _matches.replaceRange(
+          matchOffset,
+          matchOffset + oldMatches.length,
+          newMatches,
+        );
+      } else {
+        _orderedMatchingDelegates.sort();
+        _matches
+          ..clear()
+          ..addAll(
+            _orderedMatchingDelegates.expand(
+              (TextDelegate d) => _matchesByDelegate[d]!,
+            ),
+          );
+      }
+    }
+
+    _reconcileActiveMatch(explicitPreviousActive);
+    final SearchMatch? newActive = activeMatch;
+
+    if (_delegates.contains(delegate)) {
+      _updatePainterForDelegate(delegate);
+    }
+    if (oldActive != newActive) {
+      if (oldActive != null &&
+          oldActive.delegate != delegate &&
+          _delegates.contains(oldActive.delegate)) {
+        _updatePainterForDelegate(oldActive.delegate);
+      }
+      if (newActive != null &&
+          newActive.delegate != delegate &&
+          _delegates.contains(newActive.delegate)) {
+        _updatePainterForDelegate(newActive.delegate);
+      }
+    }
+
+    _notifyListenersSafely();
+  }
+
+  void _rescanAllDelegates() {
+    final SearchMatch? explicitPreviousActive = _hasExplicitActiveMatch
+        ? activeMatch
+        : null;
+    final previousMatchingDelegates = Set<TextDelegate>.of(
+      _orderedMatchingDelegates,
+    );
+
+    _matchesByDelegate.clear();
+    _orderedMatchingDelegates.clear();
+    _matches.clear();
+
+    if (_query.isNotEmpty) {
+      for (final TextDelegate delegate in _delegates) {
+        final List<SearchMatch> delegateMatches = _computeMatchesForDelegate(
+          delegate,
+        );
+        if (delegateMatches.isNotEmpty) {
+          _matchesByDelegate[delegate] = delegateMatches;
+          _orderedMatchingDelegates.add(delegate);
+        }
+      }
+      _orderedMatchingDelegates.sort();
+      for (final TextDelegate delegate in _orderedMatchingDelegates) {
+        _matches.addAll(_matchesByDelegate[delegate]!);
+      }
+    }
+
+    _reconcileActiveMatch(explicitPreviousActive);
+
+    for (final TextDelegate delegate in previousMatchingDelegates) {
+      if (!_matchesByDelegate.containsKey(delegate) &&
+          _delegates.contains(delegate)) {
+        delegate.backgroundPainter = null;
+        delegate.foregroundPainter = null;
+      }
+    }
+    for (final TextDelegate delegate in _orderedMatchingDelegates) {
+      _updatePainterForDelegate(delegate);
+    }
+
+    _notifyListenersSafely();
+  }
+
+  void _reconcileActiveMatch(SearchMatch? explicitPreviousActive) {
     if (_matches.isEmpty) {
       _activeMatchIndex = -1;
       _hasExplicitActiveMatch = false;
-    } else if (previousActive != null) {
-      final int preservedIndex = _matches.indexOf(previousActive);
+    } else if (explicitPreviousActive != null) {
+      final int preservedIndex = _matches.indexOf(explicitPreviousActive);
       if (preservedIndex != -1) {
         _activeMatchIndex = preservedIndex;
       } else if (_activeMatchIndex < 0 ||
@@ -287,38 +440,33 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     } else {
       _activeMatchIndex = 0;
     }
-
-    _updatePainters();
-    _notifyListenersSafely();
   }
 
-  void _updatePainters() {
-    final SearchMatch? currentActive = activeMatch;
-    for (final TextDelegate delegate in _delegates) {
-      final List<SearchMatch> delegateMatches =
-          _matchesByDelegate[delegate] ?? const <SearchMatch>[];
-      if (delegateMatches.isEmpty) {
-        delegate.backgroundPainter = null;
-        delegate.foregroundPainter = null;
-      } else {
-        final SearchMatch? activeInDelegate =
-            currentActive?.delegate == delegate ? currentActive : null;
-        delegate.backgroundPainter = _SearchBackgroundPainter(
-          delegate: delegate,
-          matches: delegateMatches,
-          activeMatch: activeInDelegate,
-          matchColor: matchHighlightColor,
-          activeMatchColor: activeMatchBackgroundColor,
-        );
-        delegate.foregroundPainter = activeInDelegate != null
-            ? _SearchForegroundPainter(
-                delegate: delegate,
-                activeMatch: activeInDelegate,
-                borderColor: activeMatchBorderColor,
-              )
-            : null;
-      }
+  void _updatePainterForDelegate(TextDelegate delegate) {
+    final List<SearchMatch>? delegateMatches = _matchesByDelegate[delegate];
+    if (delegateMatches == null || delegateMatches.isEmpty) {
+      delegate.backgroundPainter = null;
+      delegate.foregroundPainter = null;
+      return;
     }
+    final SearchMatch? currentActive = activeMatch;
+    final SearchMatch? activeInDelegate = currentActive?.delegate == delegate
+        ? currentActive
+        : null;
+    delegate.backgroundPainter = _SearchBackgroundPainter(
+      delegate: delegate,
+      matches: delegateMatches,
+      activeMatch: activeInDelegate,
+      matchColor: matchHighlightColor,
+      activeMatchColor: activeMatchBackgroundColor,
+    );
+    delegate.foregroundPainter = activeInDelegate != null
+        ? _SearchForegroundPainter(
+            delegate: delegate,
+            activeMatch: activeInDelegate,
+            borderColor: activeMatchBorderColor,
+          )
+        : null;
   }
 }
 
@@ -364,7 +512,7 @@ class _SearchBackgroundPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SearchBackgroundPainter oldDelegate) {
-    return oldDelegate.matches != matches ||
+    return !listEquals(oldDelegate.matches, matches) ||
         oldDelegate.activeMatch != activeMatch ||
         oldDelegate.matchColor != matchColor ||
         oldDelegate.activeMatchColor != activeMatchColor;
