@@ -5,13 +5,24 @@
 /// @docImport 'package:flutter/widgets.dart';
 library;
 
+import 'dart:collection' show SplayTreeSet;
+import 'dart:math' as math;
 import 'dart:ui'
     as ui
-    show BoxHeightStyle, BoxWidthStyle, TextBox, TextDirection, TextPosition, TextRange;
+    show
+        BoxHeightStyle,
+        BoxWidthStyle,
+        StringAttribute,
+        TextBox,
+        TextDirection,
+        TextPosition,
+        TextRange;
 
 import 'package:flutter/animation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 
 import 'box.dart';
 import 'custom_paint.dart';
@@ -28,8 +39,9 @@ import 'paragraph.dart';
 ///
 /// Each text widget in the scope is represented by a [TextDelegate], which
 /// allows the plugin to query the displayed string, query layout metrics (such
-/// as [TextDelegate.getBoxesForSelection]), and attach a
-/// [TextDelegate.backgroundPainter] or [TextDelegate.foregroundPainter].
+/// as [TextDelegate.getBoxesForSelection]), attach a
+/// [TextDelegate.backgroundPainter] or [TextDelegate.foregroundPainter], and
+/// make ranges interactive and accessible with [TextDelegate.annotations].
 ///
 /// Multiple [TextPlugin]s can be composed for the same subtree by nesting
 /// [TextPluginScope] widgets or using [TextPluginScope.multiple]. By default,
@@ -43,6 +55,8 @@ import 'paragraph.dart';
 ///    widget subtree.
 ///  * [TextDelegate], which represents an individual [RenderParagraph] or
 ///    [RenderEditable] managed by a [TextPlugin].
+///  * [TextAnnotation], which describes how a range of text behaves (taps,
+///    mouse cursor, hover) and what it means to assistive technology.
 abstract class TextPlugin {
   /// Abstract const constructor. This constructor enables subclasses to provide
   /// const constructors so that they can be used in const expressions.
@@ -67,11 +81,14 @@ abstract class TextPlugin {
   /// Defaults to `false`.
   bool get needsOffscreenContent => false;
 
-  /// The relative order in which this plugin paints compared to other active
-  /// [TextPlugin]s on the same text widget.
+  /// The relative order of this plugin compared to other active [TextPlugin]s
+  /// on the same text widget.
   ///
   /// Plugins with a lower [paintOrder] paint first (further in the
-  /// background). When two plugins have the same
+  /// background). When [TextAnnotation]s of different plugins overlap, the
+  /// annotation of the plugin with the higher [paintOrder] is on top: it wins
+  /// hit testing (and therefore taps), provides the mouse cursor, and is the
+  /// one described to assistive technology. When two plugins have the same
   /// [paintOrder], their relative order is determined by their
   /// [TextPluginScope] installation order (outermost scope first).
   ///
@@ -113,6 +130,500 @@ abstract class TextPlugin {
   void didRemoveText(TextDelegate delegate) {}
 }
 
+/// A span-shaped overlay that a [TextPlugin] attaches to a character [range]
+/// of a text widget.
+///
+/// A [TextAnnotation] describes how a range *behaves* and what it *means*
+/// without mutating the [InlineSpan] tree or affecting layout. It is the
+/// plugin counterpart of a [TextSpan] with a [TextSpan.recognizer]: from the
+/// same declaration the host ([RenderParagraph], [RenderEditable], or a
+/// [TextDelegateHostMixin]) derives
+///
+///  * **pointer input**: [onTap] and [onLongPress] are backed by gesture
+///    recognizers owned by the annotation, so taps compete in the gesture
+///    arena like any other gesture (a drag that starts on the range scrolls,
+///    and at most one annotation wins a tap). For other gestures, such as
+///    drags, provide a plugin-owned [recognizer] instead, exactly like
+///    [TextSpan.recognizer];
+///  * **mouse**: [cursor], [onEnter], [onHover], and [onExit], like
+///    [TextSpan.mouseCursor], [MouseRegion.onHover], [TextSpan.onEnter], and
+///    [TextSpan.onExit];
+///  * **semantics**: an annotation with an action, a [semanticsLabel], or a
+///    [linkUrl] is exposed to assistive technology. Interactive annotations get
+///    their own [SemanticsNode] (a link when [linkUrl] is set, otherwise a
+///    button), while a [semanticsLabel] alone only replaces the spoken text;
+///  * **keyboard focus**: inside a [TextPluginScope], interactive annotations
+///    on static text are reachable with Tab and activated with Enter or Space.
+///
+/// Ranges are UTF-16 offsets into [TextDelegate.text]. The annotations of a
+/// single plugin on a single text widget must not overlap. Where annotations
+/// of *different* plugins overlap, the annotation of the plugin with the
+/// highest [TextPlugin.paintOrder] (the topmost one, matching the visual
+/// stacking order) wins for hit testing, mouse cursor, and semantics.
+///
+/// Annotations are typically created in [TextPlugin.didAddText] and
+/// [TextPlugin.didUpdateText]. A [key] lets the framework recognize the same
+/// logical annotation across re-scans (for example, to preserve keyboard focus
+/// while the text around a link changes); without one, annotations are
+/// matched by [range], [linkUrl], and [semanticsLabel].
+class TextAnnotation with Diagnosticable implements HitTestTarget, MouseTrackerAnnotation {
+  /// Creates an annotation for [range].
+  ///
+  /// [range] must be valid, normalized, and non-empty.
+  TextAnnotation({
+    required this.range,
+    this.key,
+    this.onTap,
+    this.onLongPress,
+    this.recognizer,
+    this.cursor = MouseCursor.defer,
+    this.onEnter,
+    this.onHover,
+    this.onExit,
+    this.semanticsLabel,
+    this.linkUrl,
+  }) : assert(range.isValid && range.isNormalized && !range.isCollapsed);
+
+  /// The annotated character range, in UTF-16 offsets of [TextDelegate.text].
+  final ui.TextRange range;
+
+  /// Identifies this annotation across re-scans of the same text.
+  ///
+  /// Defaults to the combination of [range], [linkUrl], and [semanticsLabel].
+  final Object? key;
+
+  /// Called when the range is tapped, activated from the keyboard, or
+  /// activated by assistive technology.
+  ///
+  /// Backed by a [TapGestureRecognizer] owned by this annotation.
+  final VoidCallback? onTap;
+
+  /// Called when the range is long-pressed.
+  ///
+  /// Backed by a [LongPressGestureRecognizer] owned by this annotation.
+  final VoidCallback? onLongPress;
+
+  /// A plugin-owned gesture recognizer that receives pointers landing on the
+  /// range, in addition to (or instead of) [onTap] and [onLongPress].
+  ///
+  /// Use this for gestures the callbacks do not cover, or to decide per
+  /// pointer whether to compete at all (for example, a
+  /// [TapGestureRecognizer] whose [GestureRecognizer.isPointerAllowed] only
+  /// accepts modifier-clicks inside editable text). As with
+  /// [TextSpan.recognizer], the plugin is responsible for disposing it.
+  final GestureRecognizer? recognizer;
+
+  /// The mouse cursor shown while hovering over the range.
+  ///
+  /// Defaults to [MouseCursor.defer], which lets the cursor of a lower
+  /// annotation or of the text widget itself apply.
+  @override
+  final MouseCursor cursor;
+
+  /// Called when a mouse pointer enters the range.
+  @override
+  final PointerEnterEventListener? onEnter;
+
+  /// Called when a mouse pointer moves within the range without any buttons
+  /// pressed, for example to position a tooltip that follows the pointer.
+  ///
+  /// Unlike [onEnter] and [onExit], this is delivered through the hit-test
+  /// path, so it only fires while the pointer is over the range's glyphs.
+  final PointerHoverEventListener? onHover;
+
+  /// Called when a mouse pointer exits the range.
+  @override
+  final PointerExitEventListener? onExit;
+
+  /// Replaces the text of the range for assistive technology.
+  final String? semanticsLabel;
+
+  /// Marks the range as a link to this URL for assistive technology.
+  final Uri? linkUrl;
+
+  /// Whether this annotation responds to pointer input.
+  bool get isInteractive => onTap != null || onLongPress != null || recognizer != null;
+
+  /// The callback assistive technology and the keyboard use to activate this
+  /// annotation.
+  ///
+  /// This is [onTap], or the tap callback of [recognizer] when it is a
+  /// [TapGestureRecognizer] or [DoubleTapGestureRecognizer].
+  VoidCallback? get activationCallback {
+    return onTap ??
+        switch (recognizer) {
+          TapGestureRecognizer(:final VoidCallback? onTap) => onTap,
+          DoubleTapGestureRecognizer(:final VoidCallback? onDoubleTap) => onDoubleTap,
+          _ => null,
+        };
+  }
+
+  VoidCallback? get _longPressCallback {
+    return onLongPress ??
+        switch (recognizer) {
+          LongPressGestureRecognizer(:final GestureLongPressCallback? onLongPress) => onLongPress,
+          _ => null,
+        };
+  }
+
+  /// Whether this annotation is exposed as its own [SemanticsNode].
+  bool get requiresOwnSemanticsNode =>
+      activationCallback != null || _longPressCallback != null || linkUrl != null;
+
+  /// Whether this annotation changes the semantics tree at all.
+  bool get affectsSemantics => requiresOwnSemanticsNode || semanticsLabel != null;
+
+  /// The identity used to match this annotation with its predecessor when a
+  /// plugin re-scans the text: [key] if provided.
+  Object get identity => key ?? (range, linkUrl, semanticsLabel);
+
+  /// The [TextDelegate] this annotation is currently installed on, if any.
+  TextDelegate? get delegate => _delegate;
+  TextDelegate? _delegate;
+
+  TapGestureRecognizer? _tapRecognizer;
+  LongPressGestureRecognizer? _longPressRecognizer;
+
+  /// Whether this annotation currently has keyboard focus.
+  ///
+  /// Maintained by [TextPluginScope]; reported to assistive technology as
+  /// [SemanticsConfiguration.isFocused].
+  bool get isFocused => _isFocused;
+  bool _isFocused = false;
+  @internal
+  set isFocused(bool value) {
+    if (_isFocused == value) {
+      return;
+    }
+    _isFocused = value;
+    _delegate?.renderObject.markNeedsSemanticsUpdate();
+  }
+
+  /// Requests keyboard focus for this annotation, if it is focusable.
+  ///
+  /// Set by [TextPluginScope] when a focus node exists for this annotation.
+  @internal
+  VoidCallback? get focusRequestHandler => _focusRequestHandler;
+  VoidCallback? _focusRequestHandler;
+  @internal
+  set focusRequestHandler(VoidCallback? value) {
+    if (_focusRequestHandler == value) {
+      return;
+    }
+    _focusRequestHandler = value;
+    _delegate?.renderObject.markNeedsSemanticsUpdate();
+  }
+
+  /// Whether this annotation can receive keyboard focus.
+  bool get isFocusable => _focusRequestHandler != null;
+
+  /// Activates this annotation as if it were tapped.
+  ///
+  /// Used for keyboard activation (Enter or Space) and by assistive
+  /// technology.
+  void activate() {
+    activationCallback?.call();
+  }
+
+  @override
+  bool get validForMouseTracker => _delegate != null;
+
+  @override
+  void handleEvent(PointerEvent event, HitTestEntry<HitTestTarget> entry) {
+    if (_delegate == null) {
+      return;
+    }
+    switch (event) {
+      case PointerHoverEvent():
+        onHover?.call(event);
+      case PointerDownEvent():
+        if (onTap != null) {
+          (_tapRecognizer ??= TapGestureRecognizer(
+            debugOwner: this,
+          )..onTap = onTap).addPointer(event);
+        }
+        if (onLongPress != null) {
+          (_longPressRecognizer ??= LongPressGestureRecognizer(
+            debugOwner: this,
+          )..onLongPress = onLongPress).addPointer(event);
+        }
+        recognizer?.addPointer(event);
+      default:
+        break;
+    }
+  }
+
+  void _attach(TextDelegate delegate) {
+    assert(
+      _delegate == null || identical(_delegate, delegate),
+      'A TextAnnotation can only be installed on one TextDelegate at a time.',
+    );
+    _delegate = delegate;
+  }
+
+  void _detach() {
+    _delegate = null;
+    _tapRecognizer?.dispose();
+    _tapRecognizer = null;
+    _longPressRecognizer?.dispose();
+    _longPressRecognizer = null;
+  }
+
+  /// Describes this annotation on the [SemanticsConfiguration] of its node.
+  ///
+  /// [fallbackRecognizer] is the recognizer of an authored [TextSpan] covered
+  /// by this annotation; it is used when the annotation itself has no action.
+  @internal
+  void describeSemanticsConfiguration(
+    SemanticsConfiguration configuration, {
+    GestureRecognizer? fallbackRecognizer,
+  }) {
+    final VoidCallback? tap = activationCallback;
+    final VoidCallback? longPress = _longPressCallback;
+    if (tap == null && longPress == null) {
+      applyRecognizerSemantics(configuration, fallbackRecognizer);
+    } else {
+      if (tap != null) {
+        configuration.onTap = tap;
+      }
+      if (longPress != null) {
+        configuration.onLongPress = longPress;
+      }
+    }
+    if (linkUrl != null) {
+      configuration
+        ..isLink = true
+        ..linkUrl = linkUrl;
+    } else if (tap != null) {
+      configuration.isButton = true;
+    }
+    if (isFocusable) {
+      configuration
+        ..isFocusable = true
+        ..isFocused = isFocused;
+      // Mirrors Focus: iOS VoiceOver handles focus itself.
+      if (defaultTargetPlatform != TargetPlatform.iOS) {
+        configuration.onFocus = _focusRequestHandler;
+      }
+    }
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<ui.TextRange>('range', range));
+    properties.add(DiagnosticsProperty<Object>('key', key, defaultValue: null));
+    properties.add(FlagProperty('interactive', value: isInteractive, ifTrue: 'interactive'));
+    properties.add(DiagnosticsProperty<Uri>('linkUrl', linkUrl, defaultValue: null));
+    properties.add(StringProperty('semanticsLabel', semanticsLabel, defaultValue: null));
+    properties.add(
+      DiagnosticsProperty<MouseCursor>('cursor', cursor, defaultValue: MouseCursor.defer),
+    );
+    properties.add(FlagProperty('focused', value: isFocused, ifTrue: 'focused'));
+  }
+}
+
+/// Applies the semantics of an authored [TextSpan.recognizer] to
+/// [configuration], matching the behavior of [RenderParagraph].
+@internal
+void applyRecognizerSemantics(SemanticsConfiguration configuration, GestureRecognizer? recognizer) {
+  switch (recognizer) {
+    case TapGestureRecognizer(onTap: final VoidCallback? handler):
+    case DoubleTapGestureRecognizer(onDoubleTap: final VoidCallback? handler):
+      if (handler != null) {
+        configuration.onTap = handler;
+        configuration.isLink = true;
+      }
+    case LongPressGestureRecognizer(onLongPress: final GestureLongPressCallback? onLongPress):
+      if (onLongPress != null) {
+        configuration.onLongPress = onLongPress;
+      }
+    case null:
+      break;
+    default:
+      assert(false, '${recognizer.runtimeType} is not supported.');
+  }
+}
+
+/// The interface a render object implements to host [TextDelegate]s.
+///
+/// Implemented by [RenderParagraph], [RenderEditable], and
+/// [TextDelegateHostMixin].
+@internal
+abstract interface class TextPluginHost {
+  /// The active delegates of this host in paint order (bottom-most first).
+  Iterable<TextDelegate> get textPluginDelegates;
+
+  /// Called by [delegate] after its [TextDelegate.annotations] changed.
+  void didChangeTextAnnotations(TextDelegate delegate);
+}
+
+/// Returns the [TextAnnotation]s covering the code unit at [offset], topmost
+/// first.
+///
+/// [delegates] must be in paint order (bottom-most first), as returned by
+/// [TextPluginHost.textPluginDelegates].
+@internal
+List<TextAnnotation> textAnnotationsAt(Iterable<TextDelegate> delegates, int offset) {
+  List<TextAnnotation>? hits;
+  for (final delegate in delegates) {
+    for (final TextAnnotation annotation in delegate.annotations) {
+      if (annotation.range.start > offset) {
+        break;
+      }
+      if (offset < annotation.range.end) {
+        (hits ??= <TextAnnotation>[]).add(annotation);
+        break;
+      }
+    }
+  }
+  if (hits == null) {
+    return const <TextAnnotation>[];
+  }
+  return hits.reversed.toList(growable: false);
+}
+
+/// Semantics information for a run of text covered by a [TextAnnotation].
+///
+/// Produced by [applyTextAnnotationsToSemantics] and consumed by the
+/// `assembleSemanticsNode` implementations of the hosts.
+@internal
+class TextAnnotationSemanticsInformation extends InlineSpanSemanticsInformation {
+  /// Wraps [info] (or a slice of it) with [annotation].
+  TextAnnotationSemanticsInformation(
+    super.text, {
+    required this.annotation,
+    String? semanticsLabel,
+    super.semanticsIdentifier,
+    List<ui.StringAttribute> stringAttributes = const <ui.StringAttribute>[],
+    super.recognizer,
+  }) : super(
+         semanticsLabel: annotation.semanticsLabel ?? semanticsLabel,
+         // Attributes are expressed in offsets of the original label, which
+         // the annotation may have replaced.
+         stringAttributes: annotation.semanticsLabel == null
+             ? stringAttributes
+             : const <ui.StringAttribute>[],
+       );
+
+  /// The annotation covering this run of text.
+  final TextAnnotation annotation;
+
+  @override
+  bool get requiresOwnNode => super.requiresOwnNode || annotation.requiresOwnSemanticsNode;
+
+  @override
+  bool operator ==(Object other) {
+    return other is TextAnnotationSemanticsInformation &&
+        identical(other.annotation, annotation) &&
+        super == other;
+  }
+
+  @override
+  int get hashCode => Object.hash(super.hashCode, annotation);
+}
+
+/// Splits [infos] at the boundaries of the semantics-affecting
+/// [TextAnnotation]s installed on [delegates], so that every run covered by an
+/// annotation becomes a [TextAnnotationSemanticsInformation].
+///
+/// The concatenated `text` of [infos] must equal [TextDelegate.text] (the
+/// contract of [InlineSpan.getSemanticsInformation]), which puts annotation
+/// ranges and semantics runs in the same coordinate space. Placeholders are
+/// never annotated. A run that cannot be split (one with its own
+/// `semanticsLabel`, `semanticsIdentifier`, or `recognizer`) is annotated as a
+/// whole by the topmost annotation overlapping it.
+///
+/// [delegates] must be in paint order (bottom-most first).
+@internal
+List<InlineSpanSemanticsInformation> applyTextAnnotationsToSemantics(
+  List<InlineSpanSemanticsInformation> infos,
+  Iterable<TextDelegate> delegates,
+) {
+  // Topmost first.
+  final stack = <TextAnnotation>[
+    for (final TextDelegate delegate in delegates.toList(growable: false).reversed)
+      for (final TextAnnotation annotation in delegate.annotations)
+        if (annotation.affectsSemantics) annotation,
+  ];
+  if (stack.isEmpty) {
+    return infos;
+  }
+
+  TextAnnotation? topmostOverlapping(int start, int end) {
+    for (final annotation in stack) {
+      if (annotation.range.start < end && start < annotation.range.end) {
+        return annotation;
+      }
+    }
+    return null;
+  }
+
+  final result = <InlineSpanSemanticsInformation>[];
+  var start = 0;
+  for (final info in infos) {
+    final int end = start + info.text.length;
+    if (info.isPlaceholder || info.text.isEmpty) {
+      result.add(info);
+    } else if (info.semanticsLabel != null ||
+        info.semanticsIdentifier != null ||
+        info.recognizer != null) {
+      final TextAnnotation? annotation = topmostOverlapping(start, end);
+      result.add(
+        annotation == null
+            ? info
+            : TextAnnotationSemanticsInformation(
+                info.text,
+                annotation: annotation,
+                semanticsLabel: info.semanticsLabel,
+                semanticsIdentifier: info.semanticsIdentifier,
+                stringAttributes: info.stringAttributes,
+                recognizer: info.recognizer,
+              ),
+      );
+    } else {
+      final cuts = SplayTreeSet<int>()
+        ..add(start)
+        ..add(end);
+      for (final annotation in stack) {
+        if (annotation.range.start < end && start < annotation.range.end) {
+          cuts.add(annotation.range.start.clamp(start, end));
+          cuts.add(annotation.range.end.clamp(start, end));
+        }
+      }
+      var segmentStart = start;
+      for (final int segmentEnd in cuts.skip(1)) {
+        final int localStart = segmentStart - start;
+        final int localEnd = segmentEnd - start;
+        final String segmentText = info.text.substring(localStart, localEnd);
+        final attributes = <ui.StringAttribute>[
+          for (final ui.StringAttribute attribute in info.stringAttributes)
+            if (attribute.range.start < localEnd && localStart < attribute.range.end)
+              attribute.copy(
+                range: ui.TextRange(
+                  start: math.max(attribute.range.start, localStart) - localStart,
+                  end: math.min(attribute.range.end, localEnd) - localStart,
+                ),
+              ),
+        ];
+        final TextAnnotation? annotation = topmostOverlapping(segmentStart, segmentEnd);
+        result.add(
+          annotation == null
+              ? InlineSpanSemanticsInformation(segmentText, stringAttributes: attributes)
+              : TextAnnotationSemanticsInformation(
+                  segmentText,
+                  annotation: annotation,
+                  stringAttributes: attributes,
+                ),
+        );
+        segmentStart = segmentEnd;
+      }
+    }
+    start = end;
+  }
+  return result;
+}
+
 /// A delegate representing a text render object ([RenderParagraph] or
 /// [RenderEditable]) registered with a [TextPlugin].
 ///
@@ -128,7 +639,11 @@ abstract class TextPlugin {
 ///    ([Comparable]).
 ///  * Provide a [backgroundPainter] or [foregroundPainter] to paint behind or
 ///    in front of the text.
-///  * Listen for text or layout updates via [addListener].
+///  * Install [TextAnnotation]s via [annotations] to make ranges tappable,
+///    give them a mouse cursor, expose them to assistive technology, and make
+///    them keyboard focusable.
+///  * Listen for text, layout, selection, or annotation updates via
+///    [addListener].
 class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// Creates a [TextDelegate] for the given [RenderObject] ([RenderParagraph],
   /// [RenderEditable], or [TextDelegateHostMixin]) and [TextPlugin].
@@ -138,7 +653,8 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
         renderObject is RenderParagraph ||
             renderObject is RenderEditable ||
             renderObject is TextDelegateHostMixin,
-      ) {
+      ),
+      assert(renderObject is TextPluginHost) {
     if (kFlutterMemoryAllocationsEnabled) {
       ChangeNotifier.maybeDispatchObjectCreation(this);
     }
@@ -273,8 +789,8 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// Whether the underlying render object has a valid, up-to-date layout.
   ///
   /// Guaranteed to be `true` during [TextPlugin.didAddText],
-  /// [TextPlugin.didUpdateText], [TextPlugin.didLayoutText], and
-  /// [CustomPainter.paint].
+  /// [TextPlugin.didUpdateText], [TextPlugin.didLayoutText],
+  /// [CustomPainter.paint], and the callbacks of a [TextAnnotation].
   bool get hasLayout => hasValidLayout && renderObject.hasSize && !renderObject.debugNeedsLayout;
 
   /// The size of the underlying render object.
@@ -285,6 +801,125 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// An estimate of the bounds of the underlying render object in its
   /// local coordinate system.
   Rect get paintBounds => renderObject.paintBounds;
+
+  /// Whether this delegate represents editable text ([RenderEditable], as
+  /// used by [EditableText] and [TextField]), including read-only fields.
+  ///
+  /// Plugins use this to follow editor conventions: in editable text a plain
+  /// click places the caret and a double-click selects a word, so a link
+  /// should open on modifier-click or through a popup rather than on click.
+  bool get isEditable => _editable != null;
+
+  /// Whether this delegate represents a read-only [RenderEditable].
+  ///
+  /// Always `false` for static text.
+  bool get isReadOnly => _editable?.readOnly ?? false;
+
+  /// Whether the user can select the text represented by this delegate.
+  ///
+  /// `true` for a [RenderParagraph] registered with a [SelectionRegistrar]
+  /// (inside a [SelectableRegion] or [SelectionArea]) and for a
+  /// [RenderEditable] with interactive selection enabled.
+  bool get isSelectable {
+    if (_paragraph != null) {
+      return _paragraph!.registrar != null;
+    }
+    if (_editable != null) {
+      return _editable!.selectionEnabled;
+    }
+    return _host!.isSelectable;
+  }
+
+  /// The [TextAnnotation]s this plugin has installed on this text widget.
+  ///
+  /// Annotations make ranges tappable (through the gesture arena), give them
+  /// a mouse cursor and hover callbacks, expose them to assistive technology,
+  /// and make them keyboard focusable inside a [TextPluginScope]. See
+  /// [TextAnnotation] for details.
+  ///
+  /// The list must be sorted by [TextAnnotation.range] and its ranges must not
+  /// overlap or extend past the end of [text]. Setting a new list uninstalls
+  /// the annotations that are not part of it (disposing the gesture
+  /// recognizers they own), marks the semantics of the text widget dirty, and
+  /// notifies the listeners of every delegate on the same text widget.
+  ///
+  /// Typically set in [TextPlugin.didAddText] and [TextPlugin.didUpdateText].
+  List<TextAnnotation> get annotations => _annotations;
+  List<TextAnnotation> _annotations = const <TextAnnotation>[];
+  set annotations(List<TextAnnotation> value) {
+    assert(!isDisposed);
+    assert(_debugValidateAnnotations(value));
+    if (listEquals(_annotations, value)) {
+      return;
+    }
+    final List<TextAnnotation> oldAnnotations = _annotations;
+    _annotations = List<TextAnnotation>.unmodifiable(value);
+    for (final annotation in oldAnnotations) {
+      if (!_annotations.contains(annotation)) {
+        annotation._detach();
+      }
+    }
+    for (final TextAnnotation annotation in _annotations) {
+      annotation._attach(this);
+    }
+    (renderObject as TextPluginHost).didChangeTextAnnotations(this);
+  }
+
+  bool _debugValidateAnnotations(List<TextAnnotation> value) {
+    final int length = text.length;
+    for (var i = 0; i < value.length; i += 1) {
+      final TextAnnotation annotation = value[i];
+      assert(
+        annotation.range.end <= length,
+        'TextAnnotation ${annotation.range} extends past the end of the text ($length code units).',
+      );
+      assert(
+        i == 0 || value[i - 1].range.end <= annotation.range.start,
+        'TextAnnotations of a plugin must be sorted and must not overlap: '
+        '${value[i - 1].range} is followed by ${annotation.range}.',
+      );
+      assert(
+        annotation._delegate == null || identical(annotation._delegate, this),
+        'TextAnnotation $annotation is already installed on another text widget.',
+      );
+    }
+    return true;
+  }
+
+  /// All [TextAnnotation]s installed on this text widget by any plugin,
+  /// topmost first (highest [TextPlugin.paintOrder] first).
+  @internal
+  List<TextAnnotation> get allAnnotations {
+    final host = renderObject as TextPluginHost;
+    return <TextAnnotation>[
+      for (final TextDelegate delegate in host.textPluginDelegates.toList(growable: false).reversed)
+        ...delegate.annotations,
+    ];
+  }
+
+  /// Returns the [TextAnnotation]s installed on this text widget by any plugin
+  /// that cover the code unit at [offset], topmost first.
+  List<TextAnnotation> annotationsAt(int offset) {
+    return textAnnotationsAt((renderObject as TextPluginHost).textPluginDelegates, offset);
+  }
+
+  /// The local bounding rectangle of the glyphs covered by [annotation], or
+  /// null if the annotation is not laid out.
+  ///
+  /// Valid only after layout (see [hasLayout]).
+  Rect? getBoundsForAnnotation(TextAnnotation annotation) {
+    final List<ui.TextBox> boxes = getBoxesForSelection(
+      TextSelection(baseOffset: annotation.range.start, extentOffset: annotation.range.end),
+    );
+    if (boxes.isEmpty) {
+      return null;
+    }
+    Rect bounds = boxes.first.toRect();
+    for (var i = 1; i < boxes.length; i += 1) {
+      bounds = bounds.expandToInclude(boxes[i].toRect());
+    }
+    return bounds;
+  }
 
   /// A [CustomPainter] to be painted in front of the text widget.
   CustomPainter? get foregroundPainter => _foregroundPainter;
@@ -596,8 +1231,8 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     _foregroundPainter?.removeListener(renderObject.markNeedsPaint);
   }
 
-  /// Notifies listeners registered on this [TextDelegate] that the text or
-  /// layout has been updated.
+  /// Notifies listeners registered on this [TextDelegate] that the text,
+  /// layout, selection, or annotations have been updated.
   @internal
   void notifyChanged() {
     notifyListeners();
@@ -609,6 +1244,13 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     detachPainters();
     _backgroundPainter = null;
     _foregroundPainter = null;
+    if (_annotations.isNotEmpty) {
+      for (final TextAnnotation annotation in _annotations) {
+        annotation._detach();
+      }
+      _annotations = const <TextAnnotation>[];
+      (renderObject as TextPluginHost).didChangeTextAnnotations(this);
+    }
     super.dispose();
   }
 }
@@ -623,7 +1265,10 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
 ///  3. Call [didLayoutTextDelegates] at the end of [performLayout].
 ///  4. Call [paintTextPluginBackgrounds] and [paintTextPluginForegrounds]
 ///     inside [paint].
-mixin TextDelegateHostMixin on RenderBox {
+///  5. Optionally call [hitTestTextAnnotations] in [hitTestChildren] and
+///     [annotateSemanticsInformation] when building semantics, so that
+///     [TextAnnotation]s installed by plugins become tappable and accessible.
+mixin TextDelegateHostMixin on RenderBox implements TextPluginHost {
   /// The plain text (or searchable label) exposed to [TextPlugin]s.
   String get plainText;
 
@@ -640,6 +1285,9 @@ mixin TextDelegateHostMixin on RenderBox {
 
   /// The selection highlight color on this render object, if any.
   Color? get selectionColor => null;
+
+  /// Whether the user can select the text of this render object.
+  bool get isSelectable => false;
 
   /// Returns the [ui.TextBox]es bounding [selection] in local coordinates.
   ///
@@ -671,6 +1319,54 @@ mixin TextDelegateHostMixin on RenderBox {
   List<TextPlugin>? get textPlugins => _textPlugins;
   List<TextPlugin>? _textPlugins;
   Map<TextPlugin, TextDelegate>? _textPluginDelegates;
+
+  @override
+  @internal
+  Iterable<TextDelegate> get textPluginDelegates =>
+      _textPluginDelegates?.values ?? const Iterable<TextDelegate>.empty();
+
+  @override
+  @internal
+  void didChangeTextAnnotations(TextDelegate delegate) {
+    markNeedsSemanticsUpdate();
+    if (_textPluginDelegates == null) {
+      return;
+    }
+    for (final TextDelegate other in _textPluginDelegates!.values.toList(growable: false)) {
+      if (!identical(other, delegate) && !other.isDisposed) {
+        other.notifyChanged();
+      }
+    }
+  }
+
+  /// Adds the [TextAnnotation]s covering the code unit at [offset] to
+  /// [result], topmost first, so they participate in gesture recognition and
+  /// mouse tracking.
+  ///
+  /// Call this from [hitTestChildren] with the code unit under `position`
+  /// before adding this render object itself. Returns whether any annotation
+  /// was hit.
+  @protected
+  bool hitTestTextAnnotations(BoxHitTestResult result, {required int offset}) {
+    var hit = false;
+    for (final TextAnnotation annotation in textAnnotationsAt(textPluginDelegates, offset)) {
+      result.add(HitTestEntry<HitTestTarget>(annotation));
+      hit = true;
+    }
+    return hit;
+  }
+
+  /// Splits [infos] at the boundaries of the [TextAnnotation]s installed on
+  /// this render object, so that annotated runs can be reported as their own
+  /// semantics nodes.
+  ///
+  /// The concatenated text of [infos] must equal [plainText].
+  @protected
+  List<InlineSpanSemanticsInformation> annotateSemanticsInformation(
+    List<InlineSpanSemanticsInformation> infos,
+  ) {
+    return applyTextAnnotationsToSemantics(infos, textPluginDelegates);
+  }
 
   set textPlugins(List<TextPlugin>? value) {
     if (listEquals(_textPlugins, value)) {

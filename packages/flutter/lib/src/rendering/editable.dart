@@ -270,7 +270,7 @@ class RenderEditable extends RenderBox
         RelayoutWhenSystemFontsChangeMixin,
         ContainerRenderObjectMixin<RenderBox, TextParentData>,
         RenderInlineChildrenContainerDefaults
-    implements TextLayoutMetrics {
+    implements TextLayoutMetrics, TextPluginHost {
   /// Creates a render object that implements the visual aspects of a text field.
   ///
   /// The [textAlign] argument defaults to [TextAlign.start].
@@ -547,6 +547,27 @@ class RenderEditable extends RenderBox
       delegate.pendingUpdate = true;
     }
     _scheduleTextPluginFlush();
+  }
+
+  @override
+  @internal
+  Iterable<TextDelegate> get textPluginDelegates =>
+      _textPluginDelegates?.values ?? const Iterable<TextDelegate>.empty();
+
+  @override
+  @internal
+  void didChangeTextAnnotations(TextDelegate delegate) {
+    _cachedAttributedValue = null;
+    _cachedCombinedSemanticsInfos = null;
+    markNeedsSemanticsUpdate();
+    if (_textPluginDelegates == null) {
+      return;
+    }
+    for (final TextDelegate other in _textPluginDelegates!.values.toList(growable: false)) {
+      if (!identical(other, delegate) && !other.isDisposed) {
+        other.notifyChanged();
+      }
+    }
   }
 
   void _removeAllTextPluginDelegates() {
@@ -1495,12 +1516,23 @@ class RenderEditable extends RenderBox
   @override
   void describeSemanticsConfiguration(SemanticsConfiguration config) {
     super.describeSemanticsConfiguration(config);
-    _semanticsInfo = _textPainter.text!.getSemanticsInformation();
+    final List<InlineSpanSemanticsInformation> spanInfo = _textPainter.text!
+        .getSemanticsInformation();
+    // Per-range nodes (and label overrides) are only supported for read-only,
+    // non-obscured text; an editable field must stay a single text field node
+    // whose value is the actual text.
+    _semanticsInfo = readOnly && !obscureText && _textPluginDelegates != null
+        ? applyTextAnnotationsToSemantics(spanInfo, _textPluginDelegates!.values)
+        : spanInfo;
     // TODO(chunhtai): the macOS does not provide a public API to support text
     // selections across multiple semantics nodes. Remove this platform check
     // once we can support it.
     // https://github.com/flutter/flutter/issues/77957
-    if (_semanticsInfo!.any((InlineSpanSemanticsInformation info) => info.recognizer != null) &&
+    if (_semanticsInfo!.any(
+          (InlineSpanSemanticsInformation info) =>
+              info.recognizer != null ||
+              (info is TextAnnotationSemanticsInformation && info.requiresOwnNode),
+        ) &&
         defaultTargetPlatform != TargetPlatform.macOS) {
       assert(readOnly && !obscureText);
       // For Selectable rich text with recognizer, we need to create a semantics
@@ -1653,21 +1685,13 @@ class RenderEditable extends RenderBox
             info.semanticsLabel ?? info.text,
             attributes: info.stringAttributes,
           );
-        switch (info.recognizer) {
-          case TapGestureRecognizer(onTap: final VoidCallback? handler):
-          case DoubleTapGestureRecognizer(onDoubleTap: final VoidCallback? handler):
-            if (handler != null) {
-              configuration.onTap = handler;
-              configuration.isLink = true;
-            }
-          case LongPressGestureRecognizer(onLongPress: final GestureLongPressCallback? onLongPress):
-            if (onLongPress != null) {
-              configuration.onLongPress = onLongPress;
-            }
-          case null:
-            break;
-          default:
-            assert(false, '${info.recognizer.runtimeType} is not supported.');
+        if (info case final TextAnnotationSemanticsInformation annotated) {
+          annotated.annotation.describeSemanticsConfiguration(
+            configuration,
+            fallbackRecognizer: info.recognizer,
+          );
+        } else {
+          applyRecognizerSemantics(configuration, info.recognizer);
         }
         if (node.parentPaintClipRect != null) {
           final Rect paintRect = node.parentPaintClipRect!.intersect(currentRect);
@@ -2184,10 +2208,25 @@ class RenderEditable extends RenderBox
     // text justification, as graphemeClusterLayoutBounds.width is the advance
     // width to the next character, so there's no gap between their
     // graphemeClusterLayoutBounds rects.
-    final InlineSpan? spanHit =
+    final GlyphInfo? hitGlyph =
         glyph != null && glyph.graphemeClusterLayoutBounds.contains(effectivePosition)
+        ? glyph
+        : null;
+    var hitAnnotation = false;
+    if (hitGlyph != null && _textPluginDelegates != null) {
+      // Plugin annotations stack above authored spans, topmost first, so the
+      // gesture arena and the mouse tracker see them in visual order.
+      for (final TextAnnotation annotation in textAnnotationsAt(
+        _textPluginDelegates!.values,
+        hitGlyph.graphemeClusterCodeUnitRange.start,
+      )) {
+        result.add(HitTestEntry<HitTestTarget>(annotation));
+        hitAnnotation = true;
+      }
+    }
+    final InlineSpan? spanHit = hitGlyph != null
         ? _textPainter.text!.getSpanForPosition(
-            TextPosition(offset: glyph.graphemeClusterCodeUnitRange.start),
+            TextPosition(offset: hitGlyph.graphemeClusterCodeUnitRange.start),
           )
         : null;
     switch (spanHit) {
@@ -2195,7 +2234,7 @@ class RenderEditable extends RenderBox
         result.add(HitTestEntry(span));
         return true;
       case _:
-        return hitTestInlineChildren(result, effectivePosition);
+        return hitTestInlineChildren(result, effectivePosition) || hitAnnotation;
     }
   }
 

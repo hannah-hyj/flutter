@@ -42,57 +42,58 @@ class StockTickerInfo {
 }
 
 /// Default catalog of stock tickers recognized by [StockTickerPlugin].
-const Map<String, StockTickerInfo> kDefaultStockTickers =
-    <String, StockTickerInfo>{
-      'GOOG': StockTickerInfo(
-        symbol: 'GOOG',
-        companyName: 'Alphabet Inc.',
-        price: 194.85,
-        changePercent: 2.41,
-        marketCap: r'$2.41T',
-        summary: 'Global technology leader in search, cloud computing, AI, and Android/Flutter ecosystems.',
-      ),
-      'AAPL': StockTickerInfo(
-        symbol: 'AAPL',
-        companyName: 'Apple Inc.',
-        price: 229.40,
-        changePercent: 1.15,
-        marketCap: r'$3.48T',
-        summary: 'Designs consumer electronics, software, and services including iPhone, Mac, and iOS.',
-      ),
-      'MSFT': StockTickerInfo(
-        symbol: 'MSFT',
-        companyName: 'Microsoft Corporation',
-        price: 446.20,
-        changePercent: -0.62,
-        marketCap: r'$3.31T',
-        summary: 'Develops enterprise cloud infrastructure (Azure), productivity software, and developer tools.',
-      ),
-      'NVDA': StockTickerInfo(
-        symbol: 'NVDA',
-        companyName: 'NVIDIA Corporation',
-        price: 138.60,
-        changePercent: 4.18,
-        marketCap: r'$3.39T',
-        summary: 'Pioneers accelerated computing, GPUs, and data-center AI hardware & software.',
-      ),
-      'TSLA': StockTickerInfo(
-        symbol: 'TSLA',
-        companyName: 'Tesla, Inc.',
-        price: 254.10,
-        changePercent: -1.84,
-        marketCap: r'$802B',
-        summary: 'Designs and manufactures electric vehicles, battery energy storage, and solar products.',
-      ),
-      'AMZN': StockTickerInfo(
-        symbol: 'AMZN',
-        companyName: 'Amazon.com, Inc.',
-        price: 211.75,
-        changePercent: 1.73,
-        marketCap: r'$2.22T',
-        summary: 'Multinational e-commerce, cloud computing (AWS), digital streaming, and AI company.',
-      ),
-    };
+const Map<String, StockTickerInfo> kDefaultStockTickers = <String, StockTickerInfo>{
+  'GOOG': StockTickerInfo(
+    symbol: 'GOOG',
+    companyName: 'Alphabet Inc.',
+    price: 194.85,
+    changePercent: 2.41,
+    marketCap: r'$2.41T',
+    summary:
+        'Global technology leader in search, cloud computing, AI, and Android/Flutter ecosystems.',
+  ),
+  'AAPL': StockTickerInfo(
+    symbol: 'AAPL',
+    companyName: 'Apple Inc.',
+    price: 229.40,
+    changePercent: 1.15,
+    marketCap: r'$3.48T',
+    summary: 'Designs consumer electronics, software, and services including iPhone, Mac, and iOS.',
+  ),
+  'MSFT': StockTickerInfo(
+    symbol: 'MSFT',
+    companyName: 'Microsoft Corporation',
+    price: 446.20,
+    changePercent: -0.62,
+    marketCap: r'$3.31T',
+    summary: 'Develops enterprise cloud infrastructure (Azure), productivity software, and developer tools.',
+  ),
+  'NVDA': StockTickerInfo(
+    symbol: 'NVDA',
+    companyName: 'NVIDIA Corporation',
+    price: 138.60,
+    changePercent: 4.18,
+    marketCap: r'$3.39T',
+    summary: 'Pioneers accelerated computing, GPUs, and data-center AI hardware & software.',
+  ),
+  'TSLA': StockTickerInfo(
+    symbol: 'TSLA',
+    companyName: 'Tesla, Inc.',
+    price: 254.10,
+    changePercent: -1.84,
+    marketCap: r'$802B',
+    summary:
+        'Designs and manufactures electric vehicles, battery energy storage, and solar products.',
+  ),
+  'AMZN': StockTickerInfo(
+    symbol: 'AMZN',
+    companyName: 'Amazon.com, Inc.',
+    price: 211.75,
+    changePercent: 1.73,
+    marketCap: r'$2.22T',
+    summary: 'Multinational e-commerce, cloud computing (AWS), digital streaming, and AI company.',
+  ),
+};
 
 @immutable
 class _TickerOccurrence {
@@ -103,14 +104,22 @@ class _TickerOccurrence {
 }
 
 /// A [TextPlugin] that automatically identifies stock ticker symbols (e.g.
-/// `GOOG`, `AAPL`, `NVDA`) in any [Text] widget and highlights them with a
-/// color-coded badge and underline.
+/// `GOOG`, `AAPL`, `NVDA`) in any [Text] widget, highlights them with a
+/// color-coded badge and underline, and makes them interactive on tap.
+///
+/// Each ticker is declared as a [TextAnnotation]: the host puts it in the
+/// gesture arena (so scrolling over a badge never opens it), shows a hand
+/// cursor, exposes it to screen readers as a button whose label includes the
+/// company name and daily change, and makes it reachable with Tab and Enter.
 class StockTickerPlugin extends TextPlugin {
   /// Creates a [StockTickerPlugin].
-  StockTickerPlugin({this.tickers = kDefaultStockTickers});
+  StockTickerPlugin({this.tickers = kDefaultStockTickers, this.onTickerTapped});
 
   /// Map of recognized ticker symbols to their [StockTickerInfo].
   final Map<String, StockTickerInfo> tickers;
+
+  /// Callback invoked when the user taps a highlighted ticker symbol.
+  final ValueChanged<StockTickerInfo>? onTickerTapped;
 
   final Map<TextDelegate, List<_TickerOccurrence>> _occurrencesByDelegate =
       <TextDelegate, List<_TickerOccurrence>>{};
@@ -144,24 +153,24 @@ class StockTickerPlugin extends TextPlugin {
     _occurrencesByDelegate.remove(delegate);
   }
 
+  static String _describe(StockTickerInfo info) {
+    final String direction = info.isPositive ? 'up' : 'down';
+    return '${info.symbol}, ${info.companyName}, $direction ${info.changePercent.abs().toStringAsFixed(1)} percent';
+  }
+
   void _analyzeDelegate(TextDelegate delegate) {
-    if (tickers.isEmpty) {
-      _occurrencesByDelegate.remove(delegate);
-      delegate.backgroundPainter = null;
-      delegate.foregroundPainter = null;
-      return;
-    }
-    final String text = delegate.text;
     final found = <_TickerOccurrence>[];
-    for (final RegExpMatch match in _tickerPattern.allMatches(text)) {
-      final String? symbol = match.group(1);
-      if (symbol != null && tickers.containsKey(symbol)) {
-        found.add(
-          _TickerOccurrence(
-            range: TextRange(start: match.start, end: match.end),
-            info: tickers[symbol]!,
-          ),
-        );
+    if (tickers.isNotEmpty) {
+      for (final RegExpMatch match in _tickerPattern.allMatches(delegate.text)) {
+        final String? symbol = match.group(1);
+        if (symbol != null && tickers.containsKey(symbol)) {
+          found.add(
+            _TickerOccurrence(
+              range: TextRange(start: match.start, end: match.end),
+              info: tickers[symbol]!,
+            ),
+          );
+        }
       }
     }
 
@@ -169,25 +178,33 @@ class StockTickerPlugin extends TextPlugin {
       _occurrencesByDelegate.remove(delegate);
       delegate.backgroundPainter = null;
       delegate.foregroundPainter = null;
-    } else {
-      _occurrencesByDelegate[delegate] = found;
-      delegate.backgroundPainter = _StockTickerBackgroundPainter(
-        delegate: delegate,
-        occurrences: found,
-      );
-      delegate.foregroundPainter = _StockTickerForegroundPainter(
-        delegate: delegate,
-        occurrences: found,
-      );
+      delegate.annotations = const <TextAnnotation>[];
+      return;
     }
+
+    _occurrencesByDelegate[delegate] = found;
+    delegate.backgroundPainter = _StockTickerBackgroundPainter(
+      delegate: delegate,
+      occurrences: found,
+    );
+    delegate.foregroundPainter = _StockTickerForegroundPainter(
+      delegate: delegate,
+      occurrences: found,
+    );
+    delegate.annotations = <TextAnnotation>[
+      for (final _TickerOccurrence occurrence in found)
+        TextAnnotation(
+          range: occurrence.range,
+          cursor: SystemMouseCursors.click,
+          semanticsLabel: _describe(occurrence.info),
+          onTap: () => onTickerTapped?.call(occurrence.info),
+        ),
+    ];
   }
 }
 
 class _StockTickerBackgroundPainter extends CustomPainter {
-  _StockTickerBackgroundPainter({
-    required this.delegate,
-    required this.occurrences,
-  });
+  _StockTickerBackgroundPainter({required this.delegate, required this.occurrences});
 
   final TextDelegate delegate;
   final List<_TickerOccurrence> occurrences;
@@ -206,20 +223,11 @@ class _StockTickerBackgroundPainter extends CustomPainter {
 
     for (final _TickerOccurrence occurrence in occurrences) {
       final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
-        TextSelection(
-          baseOffset: occurrence.range.start,
-          extentOffset: occurrence.range.end,
-        ),
+        TextSelection(baseOffset: occurrence.range.start, extentOffset: occurrence.range.end),
       );
       for (final box in boxes) {
-        final pill = RRect.fromRectAndRadius(
-          box.toRect().inflate(2.0),
-          const Radius.circular(4.0),
-        );
-        canvas.drawRRect(
-          pill,
-          occurrence.info.isPositive ? upPaint : downPaint,
-        );
+        final pill = RRect.fromRectAndRadius(box.toRect().inflate(2.0), const Radius.circular(4.0));
+        canvas.drawRRect(pill, occurrence.info.isPositive ? upPaint : downPaint);
       }
     }
   }
@@ -231,10 +239,7 @@ class _StockTickerBackgroundPainter extends CustomPainter {
 }
 
 class _StockTickerForegroundPainter extends CustomPainter {
-  _StockTickerForegroundPainter({
-    required this.delegate,
-    required this.occurrences,
-  });
+  _StockTickerForegroundPainter({required this.delegate, required this.occurrences});
 
   final TextDelegate delegate;
   final List<_TickerOccurrence> occurrences;
@@ -256,10 +261,7 @@ class _StockTickerForegroundPainter extends CustomPainter {
     for (final _TickerOccurrence occurrence in occurrences) {
       final paint = occurrence.info.isPositive ? upStroke : downStroke;
       final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
-        TextSelection(
-          baseOffset: occurrence.range.start,
-          extentOffset: occurrence.range.end,
-        ),
+        TextSelection(baseOffset: occurrence.range.start, extentOffset: occurrence.range.end),
       );
       for (final box in boxes) {
         final Rect rect = box.toRect();

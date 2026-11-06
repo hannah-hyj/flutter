@@ -21,7 +21,7 @@ authors:
 
 This RFC proposes a composable text plugin system in `package:flutter/rendering.dart` and `package:flutter/widgets.dart` centered on `TextPluginScope`, `TextPlugin`, and `TextDelegate`.
 
-By attaching plugins through an `InheritedWidget` (`TextPluginScope`) directly to `RenderParagraph` and `RenderEditable`, applications and third-party packages can inspect rendered text, paint background and foreground decorations, handle pointer gestures, scroll character ranges into view, and request offscreen sliver rendering (`OffscreenContentRenderingStrategy`) across standard `Text`, `RichText`, and `EditableText` (`TextField`) subtrees without modifying existing widget code.
+By attaching plugins through an `InheritedWidget` (`TextPluginScope`) directly to `RenderParagraph` and `RenderEditable`, applications and third-party packages can inspect rendered text, paint background and foreground decorations, declare interactive ranges (`TextAnnotation`) that participate in the gesture arena and are exposed to assistive technology and keyboard focus, scroll character ranges into view, and request offscreen sliver rendering (`OffscreenContentRenderingStrategy`) across standard `Text`, `RichText`, and `EditableText` (`TextField`) subtrees without modifying existing widget code.
 
 ## Table of contents
 
@@ -39,6 +39,7 @@ By attaching plugins through an `InheritedWidget` (`TextPluginScope`) directly t
   - [3.4 `TextPluginScope` and hierarchical merging](#34-textpluginscope-and-hierarchical-merging)
   - [3.5 `RenderParagraph` and `RenderEditable` painting and Z-order pipeline](#35-renderparagraph-and-rendereditable-painting-and-z-order-pipeline)
   - [3.6 First-party `SearchInPagePlugin` implementation](#36-first-party-searchinpageplugin-implementation)
+  - [3.7 Interactive ranges: `TextAnnotation` for gestures, mouse, semantics, and focus](#37-interactive-ranges-textannotation-for-gestures-mouse-semantics-and-focus)
 - [4. Community package use cases](#4-community-package-use-cases)
   - [4.1 Use cases implemented in the demo app](#41-use-cases-implemented-in-the-demo-app)
   - [4.2 Additional community package ideas](#42-additional-community-package-ideas)
@@ -56,11 +57,13 @@ By attaching plugins through an `InheritedWidget` (`TextPluginScope`) directly t
   - [7.5 Multi-line wrapping, bidirectional text, and surrogate pairs](#75-multi-line-wrapping-bidirectional-text-and-surrogate-pairs)
   - [7.6 Plugin list reconciliation and stateful delegate preservation](#76-plugin-list-reconciliation-and-stateful-delegate-preservation)
   - [7.7 Deduplicating plugins by `Type` and instance across nested scopes](#77-deduplicating-plugins-by-type-and-instance-across-nested-scopes)
-  - [7.8 Pointer event routing and scroll gesture slop](#78-pointer-event-routing-and-scroll-gesture-slop)
+  - [7.8 Pointer event routing: the gesture arena, overlapping plugins, and selection gestures](#78-pointer-event-routing-the-gesture-arena-overlapping-plugins-and-selection-gestures)
   - [7.9 `SelectionArea` and `SelectableRegion` coexistence](#79-selectionarea-and-selectableregion-coexistence)
   - [7.10 Unintended capture of UI chrome and `TextPluginScope.none`](#710-unintended-capture-of-ui-chrome-and-textpluginscopenone)
   - [7.11 Lazy slivers and offscreen viewport recycling](#711-lazy-slivers-and-offscreen-viewport-recycling)
   - [7.12 Canvas state corruption in plugin painters](#712-canvas-state-corruption-in-plugin-painters)
+  - [7.13 Semantics tree shape for annotated text](#713-semantics-tree-shape-for-annotated-text)
+  - [7.14 Keyboard focus for annotated text](#714-keyboard-focus-for-annotated-text)
 
 ---
 
@@ -128,7 +131,9 @@ In addition, `_SelectableFragment` requires a `SelectionRegistrar`. Searching no
 
 - Static text (`RenderParagraph`) and editable text (`RenderEditable`) both support plugins and update decorations live during text editing.
 
-- Multiple plugins can inspect, paint behind or in front of, and handle pointer events on the same `RenderParagraph` or `RenderEditable`, ordered by `TextPlugin.paintOrder` (with root-to-leaf scope installation order as a stable tie-breaker).
+- Multiple plugins can inspect, paint behind or in front of, and make ranges interactive on the same `RenderParagraph` or `RenderEditable`, ordered by `TextPlugin.paintOrder` (with root-to-leaf scope installation order as a stable tie-breaker). The same order resolves which plugin wins a tap, which mouse cursor shows, and which plugin a screen reader describes when ranges overlap.
+
+- Plugin-decorated ranges are first-class citizens for accessibility: a `TextAnnotation` with an action is exposed to VoiceOver/TalkBack as a link or button node, and is reachable with Tab and activated with Enter on desktop and web, with no extra work by the plugin author.
 
 - Plugins interact with a capability-scoped `TextDelegate` wrapping `RenderParagraph` or `RenderEditable`, rather than mutating RenderObject internals directly.
 
@@ -192,7 +197,7 @@ The `TextPlugin` API follows four design rules so it can support both core selec
 
 3. `bool get needsOffscreenContent` on `TextPlugin` and the standalone `OffscreenContentRenderingStrategy` widget (`OffscreenRenderingPolicy.lazy()` versus `OffscreenRenderingPolicy.eager({ScrollCacheExtent cacheExtent})`) let document-wide plugins request eager offscreen sliver rendering in `ListView.builder` viewports while allowing subtrees to customize or bound the offscreen `ScrollCacheExtent`. This keeps `Viewport` decoupled from `TextPluginScope`.
 
-4. `TextDelegate` provides a path to register `TextPluginSemanticAnnotation`s so visually decorated text (links, tickers, spoiler masks) maps to focusable `SemanticsNode`s for screen readers.
+4. Interactivity is declared, not hand-rolled. A plugin describes *what a range is and does* with a `TextAnnotation` (`range`, `onTap`/`onLongPress` or a custom `recognizer`, `cursor`, `onEnter`/`onExit`, `semanticsLabel`, `linkUrl`) installed via `TextDelegate.annotations`. The host derives gesture-arena participation, mouse cursor and hover, `SemanticsNode`s, and keyboard focus from that one declaration (see [Section 3.7](#37-interactive-ranges-textannotation-for-gestures-mouse-semantics-and-focus)), so plugins never compete with scrolling, text selection, or each other through raw pointer events.
 
 ---
 
@@ -278,11 +283,11 @@ graph TD
 
 | Layer | File | Public Symbols | Responsibility |
 | :--- | :--- | :--- | :--- |
-| **Rendering** | `packages/flutter/lib/src/rendering/text_plugin.dart` | `TextPlugin`, `TextDelegate` | Defines the plugin lifecycle interface (`needsOffscreenContent`, `paintOrder`, post-layout callbacks) and the per-plugin `TextDelegate` proxy wrapping `RenderParagraph` or `RenderEditable`. |
+| **Rendering** | `packages/flutter/lib/src/rendering/text_plugin.dart` | `TextPlugin`, `TextDelegate`, `TextAnnotation` | Defines the plugin lifecycle interface (`needsOffscreenContent`, `paintOrder`, post-layout callbacks), the per-plugin `TextDelegate` proxy wrapping `RenderParagraph` or `RenderEditable`, and `TextAnnotation`, the span-shaped overlay (`HitTestTarget` + `MouseTrackerAnnotation`) from which hosts derive hit testing, cursor, and semantics for a range. |
 | **Rendering** | [packages/flutter/lib/src/rendering/object.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/object.dart) | `PipelineOwner.schedulePostLayoutCallback` | Flushes post-layout callbacks at the end of `PipelineOwner.flushLayout()` after all dirty `RenderObject`s have completed layout and before `flushPaint()`. |
-| **Rendering** | [packages/flutter/lib/src/rendering/paragraph.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/paragraph.dart) | `RenderParagraph.textPlugins` | Reconciles delegates, schedules post-layout lifecycle callbacks, routes pointer events, and executes painters for static text. |
-| **Rendering** | [packages/flutter/lib/src/rendering/editable.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/editable.dart) | `RenderEditable.textPlugins` | Reconciles delegates, schedules post-layout lifecycle callbacks during typing and layout, routes pointer events, and executes painters for editable text fields. |
-| **Widgets** | `packages/flutter/lib/src/widgets/text_plugin.dart` | `TextPluginScope` | Scopes, deduplicates by `Type`, and sorts `TextPlugin`s by `paintOrder` down the widget tree, and configures `OffscreenContentRenderingStrategy` when any active plugin has `needsOffscreenContent == true`. |
+| **Rendering** | [packages/flutter/lib/src/rendering/paragraph.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/paragraph.dart) | `RenderParagraph.textPlugins` | Reconciles delegates, schedules post-layout lifecycle callbacks, adds annotations to the hit-test path, splits semantics nodes at annotation boundaries, routes raw pointer events, and executes painters for static text. |
+| **Rendering** | [packages/flutter/lib/src/rendering/editable.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/editable.dart) | `RenderEditable.textPlugins` | Same as `RenderParagraph` for editable text fields; annotation semantics nodes are only produced for read-only, non-obscured fields so an editable field stays one text-field node. |
+| **Widgets** | `packages/flutter/lib/src/widgets/text_plugin.dart` | `TextPluginScope` | Scopes, deduplicates by `Type`, and sorts `TextPlugin`s by `paintOrder` down the widget tree, configures `OffscreenContentRenderingStrategy` when any active plugin has `needsOffscreenContent == true`, and installs an internal focus plugin that mirrors interactive annotations as `FocusNode`s (Tab/Enter) and paints the focus ring. |
 | **Widgets** | [packages/flutter/lib/src/widgets/viewport.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/viewport.dart) | `OffscreenRenderingPolicy`, `OffscreenContentRenderingStrategy` | Inherited strategy controlling whether descendant `Viewport` and `ShrinkWrappingViewport` widgets render offscreen sliver content lazily or eagerly with a configurable `ScrollCacheExtent`. |
 | **Widgets** | [packages/flutter/lib/src/widgets/basic.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/basic.dart) | `RichText.textPlugins` | Resolves `textPlugins ?? TextPluginScope.maybeOf(context)` and forwards to `RenderParagraph`. |
 | **Widgets** | [packages/flutter/lib/src/widgets/editable_text.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/editable_text.dart) | `EditableText.textPlugins` | Resolves `textPlugins ?? TextPluginScope.maybeOf(context)` and forwards to `_Editable` and `RenderEditable`. |
@@ -302,9 +307,11 @@ abstract class TextPlugin {
   void didUpdateText(TextDelegate delegate) {}
   void didLayoutText(TextDelegate delegate) {}
   void didRemoveText(TextDelegate delegate) {}
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {}
+  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {} // Raw observation only; see 3.7
 }
 ```
+
+`handlePointerEvent` is a raw observation hook (every `PointerEvent` that hits the text widget, regardless of which gesture wins). It is useful for features such as tracking the word under the pointer, but plugins **do not detect taps in it**: a tappable range is declared with a `TextAnnotation` ([Section 3.7](#37-interactive-ranges-textannotation-for-gestures-mouse-semantics-and-focus)) so that the gesture arena arbitrates between scrolling, text selection, authored `TextSpan.recognizer`s, and other plugins.
 
 #### Post-layout lifecycle guarantee (`didAddText`, `didUpdateText`, `didLayoutText`)
 
@@ -380,6 +387,16 @@ class TextDelegate extends ChangeNotifier {
   // Isolated per-plugin painter slots
   CustomPainter? backgroundPainter;
   CustomPainter? foregroundPainter;
+
+  // Isolated per-plugin interactive ranges (Section 3.7)
+  List<TextAnnotation> annotations;
+  List<TextAnnotation> annotationsAt(int offset); // All plugins, topmost first
+  Rect? getBoundsForAnnotation(TextAnnotation annotation);
+
+  // What kind of text this is, for click policy (Section 7.8)
+  bool get isEditable;   // RenderEditable (TextField / SelectableText)
+  bool get isReadOnly;   // RenderEditable.readOnly
+  bool get isSelectable; // Registered with a SelectionRegistrar, or editable with selection enabled
 
   // Geometry & scrolling
   List<ui.TextBox> getBoxesForSelection(TextSelection selection, { ... });
@@ -544,6 +561,94 @@ Because `didAddText`, `didUpdateText`, and `didLayoutText` run at the end of `Pi
 
 2. As detailed in [Section 7.1](#71-changenotifier-and-setstate-re-entrancy-during-build-layout-and-dispose), `_notifyListenersSafely()` checks `SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks`. Because `flushLayout()` runs inside `SchedulerPhase.persistentCallbacks`, `_notifyListenersSafely()` sets `_notificationScheduled = true` and coalesces all delegate mutations in that frame into a single `addPostFrameCallback` call to `notifyListeners()`.
 
+### 3.7 Interactive ranges: `TextAnnotation` for gestures, mouse, semantics, and focus
+
+Painters cover *how a range looks*. Everything about *how a range behaves and what it means* (tapping, mouse cursor and hover, what a screen reader announces, keyboard focus) is declared with one value type, `TextAnnotation`, installed through `TextDelegate.annotations`:
+
+```dart
+class TextAnnotation implements HitTestTarget, MouseTrackerAnnotation {
+  TextAnnotation({
+    required ui.TextRange range,     // UTF-16 offsets into TextDelegate.text
+    Object? key,                     // Identity across re-scans (defaults to range + linkUrl + semanticsLabel)
+    VoidCallback? onTap,             // Backed by an annotation-owned TapGestureRecognizer
+    VoidCallback? onLongPress,       // Backed by an annotation-owned LongPressGestureRecognizer
+    GestureRecognizer? recognizer,   // Escape hatch: plugin-owned, like TextSpan.recognizer
+    MouseCursor cursor = MouseCursor.defer,
+    PointerEnterEventListener? onEnter,
+    PointerExitEventListener? onExit,
+    String? semanticsLabel,          // Replaces the spoken text of the range
+    Uri? linkUrl,                    // Exposes the range as a link
+  });
+}
+```
+
+A `TextAnnotation` is deliberately shaped like a `TextSpan` without text and style: `TextSpan` already `implements HitTestTarget, MouseTrackerAnnotation`, carries a `recognizer`, `mouseCursor`, `onEnter`/`onExit`, and `semanticsLabel`, and `RenderParagraph` already knows how to turn it into a hit-test entry, a cursor, and a `SemanticsNode`. Plugins cannot mutate the span tree (a non-goal in [Section 2.1](#21-goals-and-non-goals)), so annotations let them hand the host the *same information for a range*, and the host reuses the same machinery:
+
+```mermaid
+graph LR
+    P["TextPlugin<br/>didAddText / didUpdateText"] -->|"delegate.annotations = [...]"| A["Annotation stack<br/>(per RenderParagraph / RenderEditable,<br/>merged across plugins by paintOrder)"]
+    A --> H["hitTestChildren<br/>HitTestEntry(annotation) → gesture arena"]
+    A --> M["MouseTracker<br/>cursor / onEnter / onExit"]
+    A --> S["assembleSemanticsNode<br/>one SemanticsNode per interactive range"]
+    A --> F["TextPluginScope<br/>internal focus plugin → FocusNode per range"]
+```
+
+#### 3.7.1 Hit testing and the gesture arena
+
+In `RenderParagraph.hitTestChildren` and `RenderEditable.hitTestChildren`, the glyph under the pointer is resolved as before; the host then adds a `HitTestEntry` for every annotation covering that code unit (topmost first), followed by the authored `TextSpan` (if it is a `HitTestTarget`) and finally the paragraph itself. `TextAnnotation.handleEvent` does exactly what `TextSpan.handleEvent` does: on `PointerDownEvent` it calls `addPointer` on its recognizers. From there the gesture arena, not plugin code, arbitrates:
+
+- A drag that starts on a link scrolls the page: the tap recognizer rejects itself once the pointer moves past the slop, and the scrollable's drag recognizer wins. No `kTouchSlop` bookkeeping in plugins.
+- Two plugins annotating the same characters both enter the arena; when the pointer is released the arena sweeps and the **first member wins**, which is the topmost annotation. Exactly one callback fires.
+- A plugin `onLongPress` and an authored span `onTap` on the same range are different gesture types, so both keep working.
+- A spoiler mask painted over an authored link is visually on top and is added first: tapping it reveals the spoiler instead of navigating.
+- In static text a single click on a link wins over the `TapAndPanGestureRecognizer` of an enclosing `SelectableRegion`, because the paragraph is deeper in the hit-test path and its entries come first.
+
+Annotation-owned recognizers are created lazily on the first pointer and disposed by the host when the annotation is uninstalled, so plugins that use `onTap`/`onLongPress` have no gesture lifecycle to manage. The `recognizer` escape hatch is for everything else, including deciding *per pointer* whether to compete at all: `LinkifyPlugin` uses a `TapGestureRecognizer` whose `isPointerAllowed` only accepts modifier-clicks inside editable or selectable text ([Section 7.8](#78-pointer-event-routing-the-gesture-arena-overlapping-plugins-and-selection-gestures)). As with `TextSpan.recognizer`, a plugin-owned recognizer is disposed by the plugin.
+
+#### 3.7.2 Mouse cursor and hover
+
+Nothing extra is needed. `MouseTracker` collects every `MouseTrackerAnnotation` on the hit-test path, calls `onEnter`/`onExit` per annotation, and `MouseCursorManager` uses the first non-deferred cursor in hit-test order. `cursor: SystemMouseCursors.click` gives a link a hand cursor; the default `MouseCursor.defer` lets a lower annotation's cursor or the `SelectionArea` text cursor show through. `validForMouseTracker` becomes `false` as soon as the host uninstalls an annotation, so stale annotations never receive `onExit`.
+
+#### 3.7.3 Semantics
+
+`RenderParagraph.describeSemanticsConfiguration` builds `List<InlineSpanSemanticsInformation>` from the span tree; the concatenation of `info.text` is exactly `delegate.text` (same `\uFFFC` placeholder convention as [Section 7.3](#73-embedded-widgetspans-and-utf-16-offset-alignment)), so annotation ranges and semantics runs share one coordinate space. A single pure function, `applyTextAnnotationsToSemantics`, splits the runs at annotation boundaries and wraps the covered segments in a `TextAnnotationSemanticsInformation` (a subclass that overrides `requiresOwnNode`). After that the **existing** `assembleSemanticsNode` loop builds the child nodes exactly as it does for `TextSpan.recognizer`: rect from `getBoxesForSelection`, `OrdinalSortKey`, `isHidden` for clipped ranges, no node for truncated ranges ([Section 7.4](#74-text-truncation-and-overflow-clipping)), stable node identity via `_cachedChildNodes`, and `showOnScreen`. The only annotation-specific code is `TextAnnotation.describeSemanticsConfiguration`, which sets `onTap`/`onLongPress`, `isLink` + `linkUrl` (or `isButton` for a tappable range without a URL), and `isFocusable`/`isFocused`/`onFocus` when a focus node exists.
+
+The rules that keep the semantics tree sane are spelled out in [Section 7.13](#713-semantics-tree-shape-for-annotated-text); the short version is that **decoration never fragments the tree**: only an annotation with an action or a `linkUrl` creates its own node, a `semanticsLabel` alone just replaces the spoken text inside the merged paragraph label, and `SearchInPagePlugin`, `SpellcheckLinterPlugin`, and `ReadAloudPlugin` set no annotations at all.
+
+#### 3.7.4 Keyboard focus
+
+`FocusNode`s need a `BuildContext` (`attach`, scope reparenting, traversal geometry), so focus cannot live in the rendering layer, and it should not require new plumbing through `RichText` and `EditableText`. `TextPluginScope` therefore installs an internal `_TextAnnotationFocusPlugin` in its own plugin list, the same trick `SelectableRegion` uses for `_SelectionHighlightTextPlugin`. Being a plugin, it discovers every text widget through `didAddText`/`didRemoveText`, listens to each delegate (which is notified whenever *any* plugin changes annotations on that text), and mirrors the focusable annotations as `_TextAnnotationFocusNode`s attached to the scope's context. Details are in [Section 7.14](#714-keyboard-focus-for-annotated-text).
+
+#### 3.7.5 One ordering rule
+
+Where annotations of different plugins overlap, the annotation of the plugin with the highest `paintOrder` (then innermost scope) is the topmost one. The same order is used for the hit-test path (so it wins the arena), for the cursor candidates (so its cursor shows), and for semantics (so a screen reader describes it). This mirrors Flutter's universal "hit test in reverse paint order" rule, and it means "what you see on top is what you interact with". Within one plugin, annotations must be sorted and non-overlapping (asserted in debug mode).
+
+#### 3.7.6 What `LinkifyPlugin` looks like with annotations
+
+```dart
+void _scanLinks(TextDelegate delegate) {
+  final matches = <_LinkMatch>[for (final m in _urlRegExp.allMatches(delegate.text)) _LinkMatch.from(m)];
+  delegate.foregroundPainter = matches.isEmpty ? null : _LinkPainter(delegate, matches, underlineColor);
+
+  // Editor convention: in editable or selectable text a plain click places the
+  // caret / selects a word, so there a link only opens on modifier-click.
+  final bool requiresModifier = delegate.isEditable || delegate.isSelectable;
+  delegate.annotations = <TextAnnotation>[
+    for (final link in matches)
+      TextAnnotation(
+        range: link.range,
+        key: link.url,
+        cursor: SystemMouseCursors.click,
+        linkUrl: Uri.tryParse(link.url),
+        onTap: requiresModifier ? null : () => onLinkTapped?.call(link.url),
+        recognizer: requiresModifier ? _ModifierClickRecognizer(onActivate: () => onLinkTapped?.call(link.url)) : null,
+      ),
+  ];
+}
+```
+
+Compared with the earlier prototype, the `PointerDownEvent`/`PointerUpEvent` bookkeeping is gone, and the plugin gains a hand cursor, hover callbacks, link nodes for VoiceOver/TalkBack, and Tab/Enter support it never had. `StockTickerPlugin` (`isButton` nodes labelled "GOOG, Alphabet Inc., up 2.4 percent") and `SpoilerMaskPlugin` (whose `semanticsLabel` is "Spoiler, hidden" while masked and `null` once revealed, so screen-reader users get the same reveal experience as sighted users) convert the same way.
+
 ---
 
 ## 4. Community package use cases
@@ -574,11 +679,9 @@ Because `TextPlugin` is non-destructive and does not mutate the input `InlineSpa
 
 #### 5. Automatic URL linkification (`LinkifyPlugin`)
 
-`LinkifyPlugin` detects URLs (`https://...`, `www....`) inside plain `Text` and `EditableText` widgets. In our current prototype, it draws link underlines in `foregroundPainter` and handles tap events (`PointerDownEvent` / `PointerUpEvent`) in `handlePointerEvent` to trigger a URL launch callback, without requiring callers to manually split strings into `TextSpan`s with `TapGestureRecognizer`s.
+`LinkifyPlugin` detects URLs (`https://...`, `www....`) inside plain `Text` and `EditableText` widgets. It draws link tints and underlines with `backgroundPainter` and `foregroundPainter`, and declares one `TextAnnotation` per URL ([Section 3.7.6](#376-what-linkifyplugin-looks-like-with-annotations)) with `onTap`, `cursor: SystemMouseCursors.click`, and `linkUrl`, without requiring callers to split strings into `TextSpan`s with `TapGestureRecognizer`s.
 
-To support **mouse-over tooltips or preview popups**:
-- **Detecting hover over a link (`PointerHoverEvent`)**: `RenderParagraph.handleEvent` and `RenderEditable.handleEvent` already forward `PointerHoverEvent`s to `plugin.handlePointerEvent(delegate, event)`. When `event is PointerHoverEvent` lands inside a matched link's `ui.TextBox`, the plugin can convert the box to global coordinates via `delegate.localToGlobal(box.toRect().topLeft)` and `delegate.localToGlobal(box.toRect().bottomRight)` to anchor an `OverlayPortal` tooltip or preview popup.
-- **Detecting exit from the paragraph (`PointerExitEvent`) and changing `MouseCursor`**: In Flutter's rendering layer, `RenderObject.handleEvent` does not receive `PointerExitEvent` when the cursor leaves the `RenderParagraph` bounds (since `PointerEnterEvent`, `PointerExitEvent`, and `MouseCursor` are driven by `MouseTrackerAnnotation`). A plugin can either dismiss its hover popup using a global pointer route (`GestureBinding.instance.pointerRouter`) when the pointer moves outside the link rect, or `RenderParagraph` can expose a `MouseTrackerAnnotation` when active plugins implement hover/cursor callbacks.
+Because annotations are `MouseTrackerAnnotation`s, **mouse-over tooltips or preview popups** need no workaround: `onEnter` fires with the hover position when the pointer enters the link's glyphs and `onExit` fires when it leaves them (also when the paragraph scrolls away under a stationary pointer), so the plugin can anchor an `OverlayPortal` at `delegate.localToGlobal(delegate.getBoundsForAnnotation(annotation)!.topLeft)` and dismiss it on exit. In editable or selectable text the plugin follows the editor convention described in [Section 7.8](#78-pointer-event-routing-the-gesture-arena-overlapping-plugins-and-selection-gestures): a plain click keeps placing the caret or selecting, and the link opens on Cmd/Ctrl+click (or a touch tap).
 
 
 #### 6. Live content and SEO metadata extraction (`SeoExtractorPlugin`)
@@ -814,6 +917,8 @@ Because of that trade-off, this initial proposal keeps Flutter's built-in select
 
 4. Use `TextPluginScope.exclude(types: {...})` on UI chrome so disabling feature plugins never strips `_SelectionHighlightTextPlugin`, and then remove the legacy selection highlight painting code from `RenderParagraph` and `RenderEditable`.
 
+The scope's internal focus plugin ([Section 7.14](#714-keyboard-focus-for-annotated-text)) is a second instance of the same pattern (a framework concern implemented as an ordinary `TextPlugin` installed by a widget), which is encouraging for this migration.
+
 ---
 
 ## 6. Future directions and forward compatibility
@@ -936,6 +1041,8 @@ class TextPluginHighlight {
 }
 ```
 
+`TextPluginHighlight` is the painting-side sibling of `TextAnnotation` ([Section 3.7](#37-interactive-ranges-textannotation-for-gestures-mouse-semantics-and-focus)): both are declarative, per-range data handed to the host. A natural evolution is to fold it into `TextAnnotation` as an optional `highlight` field, so a plugin describes a range once and hosts that cannot be painted on (charts, platform views) still receive it.
+
 First, a `BarChart` exposes its data labels to `TextDelegate` (for example, `"Q1: $10M\nQ2: $15M\nQ3: $22M\nQ4: $18M"`).
 
 Second, when `SearchInPagePlugin` queries `delegate.getBoxesForSelection(rangeForQ3)` for `ensureVisible`, the `BarChart` returns the bounding `Rect` of the Q3 bar so `Ctrl+F` scrolls directly to that bar.
@@ -972,7 +1079,7 @@ To support platform views without breaking existing plugins:
 
 1. `TextDelegate` can delegate text, geometry, and painting hooks to a `TextDelegateHost` interface that Platform View render objects can also implement.
 
-2. A Flutter `CustomPainter` cannot paint between a native platform view's background and its text glyphs, and a canvas overlay cannot stay frame-synchronized with internal DOM compositor scrolling. Adding a declarative highlight method on `TextDelegate` (`setHighlights(Object pluginKey, List<TextHighlight> highlights)`) alongside `CustomPainter` lets `RenderParagraph` and `RenderEditable` paint ranges with an internal `CustomPainter`, while Web Platform Views translate those ranges into W3C `Range` instances registered in `CSS.highlights` (`::highlight()`).
+2. A Flutter `CustomPainter` cannot paint between a native platform view's background and its text glyphs, and a canvas overlay cannot stay frame-synchronized with internal DOM compositor scrolling. The declarative `TextDelegate.annotations` slot ([Section 3.7](#37-interactive-ranges-textannotation-for-gestures-mouse-semantics-and-focus)) is the natural vehicle: extending `TextAnnotation` with an optional highlight style lets `RenderParagraph` and `RenderEditable` paint ranges with an internal `CustomPainter`, while Web Platform Views translate the same ranges into W3C `Range` instances registered in `CSS.highlights` (`::highlight()`), and the DOM `<a>`/`role="button"` elements they already own carry the annotation's `linkUrl` and `semanticsLabel`.
 
 3. In browsers, W3C `Range` and `CSS.highlights` operate on DOM `Text` nodes. Because HTML `<input>` and `<textarea>` store their text inside a closed User-Agent shadow root (`.value`), native web text fields using `CSS.highlights` should use `<div contenteditable="plaintext-only">` (or a synchronized mirror DOM node) so character offsets map to DOM `Text` nodes.
 
@@ -1091,13 +1198,25 @@ We deduplicate at both layers:
 
 ---
 
-### 7.8 Pointer event routing and scroll gesture slop
+### 7.8 Pointer event routing: the gesture arena, overlapping plugins, and selection gestures
 
-`RenderParagraph.handleEvent` forwards `PointerEvent`s to all active plugins in `paintOrder` (and installation order for ties). Inside a `SingleChildScrollView` or `ListView`, a user might press down on a highlighted link (`https://flutter.dev`) or stock ticker (`GOOG`) and drag to scroll. If a plugin triggered on `PointerDownEvent` or unconditionally on `PointerUpEvent`, scrolling the page would open links or modals.
+Flutter has two layers of input: raw pointer events, delivered to every render object on the hit-test path, and the gesture arena, where recognizers compete so that exactly one tap, double-tap, or drag wins. An early prototype only used the first layer: `handlePointerEvent` fanned raw events to every plugin and each plugin hand-rolled "down, then up within `kTouchSlop`". That worked for scroll drags but nothing arbitrated between plugins, authored `TextSpan.recognizer`s, `SelectableRegion`, and `TextField`: two plugins on one range both fired, and a double-click to select a link's word inside a `SelectionArea` also opened the link twice.
 
-Interactive plugins (`StockTickerPlugin.handlePointerEvent`, `LinkifyPlugin.handlePointerEvent`) record `event.localPosition` on `PointerDownEvent`, clear it on `PointerCancelEvent`, and on `PointerUpEvent` check `(event.localPosition - downPos).distance <= kTouchSlop` before firing their tap callback.
+The design now routes all interaction through the arena ([Section 3.7.1](#371-hit-testing-and-the-gesture-arena)):
 
-To coexist with built-in `TextSpan.recognizer` targets, in `RenderParagraph.hitTestChildren`, if a `TextSpan` implements `HitTestTarget` (has a `GestureRecognizer`), it is added to the `HitTestResult` before `RenderParagraph` itself, and `RenderParagraph.hitTestSelf` returns `true` so both the span's recognizer and `RenderParagraph.handleEvent` receive the pointer event.
+1. **Raw events** still reach `TextPlugin.handlePointerEvent` for observation (word under the pointer, analytics). Plugins do not detect taps there.
+2. **Taps and long-presses** are declared with `TextAnnotation.onTap`/`onLongPress` (or a plugin-owned `recognizer`). `hitTestChildren` adds every annotation covering the glyph to the `HitTestResult` topmost first, then the authored span target, then the paragraph itself (whose `hitTestSelf` returns `true`). The arena then handles scroll-versus-tap, same-type conflicts between plugins (first member, i.e. topmost, wins on sweep), and different-type coexistence for free.
+
+| Scenario | Outcome |
+| :--- | :--- |
+| Drag starting on a link inside a `ListView` | Tap rejects on slop; scroll wins; nothing opens. |
+| Two plugins annotate the same characters | Both recognizers join the arena; the topmost (highest `paintOrder`) wins; exactly one callback. |
+| Plugin `onLongPress` + authored span `onTap` on one range | Different gesture types; both work. |
+| Spoiler mask covering an authored link | The mask is added first; tapping reveals instead of navigating. |
+| Single click on a link in static text inside `SelectionArea` | The plugin tap wins over the region's `TapAndPanGestureRecognizer`; the link opens. |
+| Click, double-click, or drag on a link inside `TextField` or `SelectionArea` | Policy, not arena, see below. |
+
+3. **Static versus editable text is a policy decision** the arena cannot make: a `TapGestureRecognizer` fires on the first up before it knows a second click is coming, and a `DoubleTapGestureRecognizer` would delay every link by `kDoubleTapTimeout`. Editors (Google Docs, VS Code, Slack compose) solve this at the product level: in editable or selectable text *click selects, Cmd/Ctrl+click opens*; in static text *click opens*. `TextDelegate` exposes `isEditable`, `isReadOnly`, and `isSelectable` so a plugin can apply that convention. `LinkifyPlugin` uses `onTap` on static text and, on editable or selectable text, a `TapGestureRecognizer` whose `isPointerAllowed` only accepts a mouse click with a modifier held (touch taps are always accepted). A declined pointer never enters the arena, so a plain click still places the caret and a double-click still selects the word, with zero launches.
 
 ---
 
@@ -1136,4 +1255,32 @@ Document-wide plugins (`SearchInPagePlugin`, `SeoExtractorPlugin`) handle upward
 All plugin `backgroundPainter`s and `foregroundPainter`s share `PaintingContext.canvas` with `RenderParagraph`. A buggy plugin painter that calls `canvas.save()` without `canvas.restore()`, or mutates the canvas transform without restoring, could corrupt the rendering of subsequent plugins, the paragraph text itself, or sibling widgets in the same repaint boundary.
 
 `RenderParagraph._paintWithCustomPainter` wraps each individual plugin painter call in its own `canvas.save()`, `canvas.translate(offset.dx, offset.dy)`, and `canvas.restore()` pair. In debug mode, it records `canvas.getSaveCount()` before and after `painter.paint(canvas, size)` and throws a `FlutterError` naming the offending `CustomPainter` if its `save()` and `restore()` calls are unbalanced.
+
+---
+
+### 7.13 Semantics tree shape for annotated text
+
+Screen-reader users should hear plugin links and buttons, but a page full of highlighted search matches must not turn into hundreds of tiny nodes. The rules in `applyTextAnnotationsToSemantics` ([Section 3.7.3](#373-semantics)) are:
+
+1. **Decoration never fragments the tree.** A plugin that only paints sets no annotations, so `SearchInPagePlugin` leaves `Text('Visit https://flutter.dev today')` as one node with one label. Only an annotation with an action (`onTap`, `onLongPress`, or an activatable `recognizer`) or a `linkUrl` produces its own child node. A `semanticsLabel` alone replaces the spoken text of the range inside the merged paragraph label (`'The killer is ||the butler||.'` reads as `'The killer is spoiler.'`).
+2. **Interactive ranges look like authored links.** `Text('Visit https://flutter.dev today')` under `LinkifyPlugin` becomes three nodes, `"Visit "`, a link node (`isLink`, `linkUrl`, `onTap`, `isFocusable`) labelled `"https://flutter.dev"`, and `" today"`, which is the exact shape `TextSpan(recognizer:)` produces today, so assistive-technology behavior is already understood and tested. A tappable range without a URL is a button.
+3. **Placeholders are never annotated.** A `WidgetSpan` keeps its own child nodes; `getBoxesForSelection` already excludes placeholders by default.
+4. **Indivisible runs snap.** A span with its own `semanticsLabel`, `semanticsIdentifier`, or `recognizer` cannot be split (a label has no character mapping), so it is annotated as a whole by the topmost annotation overlapping it. The annotation's actions take precedence; if it has none, the authored recognizer still provides `onTap`.
+5. **Overlaps resolve to the topmost annotation per segment**, the same rule as hit testing and cursor ([Section 3.7.5](#375-one-ordering-rule)).
+6. **Editable text stays a text field.** `RenderEditable` only produces per-range nodes when `readOnly && !obscureText` (and not on macOS, which cannot select across nodes), the same condition it already applies to authored recognizers. A `TextField` with a linkified URL remains a single `isTextField` node whose `value` is the real text; a read-only `SelectableText` exposes the link node.
+7. **Same-frame updates.** Setting `delegate.annotations` calls `markNeedsSemanticsUpdate()` and clears the host's semantics caches. Because `didAddText`/`didUpdateText` run at the end of `flushLayout()`, the semantics update lands in the same frame's `flushSemantics()`. Removing a plugin (or a text widget) that had annotations invalidates semantics the same way.
+
+---
+
+### 7.14 Keyboard focus for annotated text
+
+`TextSpan.recognizer` links have never been reachable with Tab: there is no `FocusNode` behind them. For plugin annotations the scope fixes this at the widgets layer ([Section 3.7.4](#374-keyboard-focus)):
+
+1. **Discovery through the plugin pipeline.** `TextPluginScope` appends an internal `_TextAnnotationFocusPlugin` to its own plugin list (`paintOrder` above everything else). Nested scopes dedupe it by type, so the innermost scope owns the focus nodes of its subtree and attaches them under whatever `FocusScope` or `FocusTraversalGroup` encloses that scope; `TextPluginScope.none` removes it together with every other plugin; `TextPluginScope.exclude` keeps it. The plugin listens to each delegate, which is notified whenever any plugin changes annotations on that text widget.
+2. **One node per focusable annotation.** An annotation is focusable when it has an activation callback and is the topmost annotation where it starts. Nodes are reconciled by `TextAnnotation.key` (defaulting to `range + linkUrl + semanticsLabel`), so focus survives a re-scan when the text around a link changes, and a node is disposed when its annotation disappears.
+3. **Traversal order follows the glyphs.** `FocusNode.rect` normally reports the bounds of the widget the node is attached to, which would make every link in a paragraph (and every paragraph in the scope) share one rectangle. `_TextAnnotationFocusNode` overrides `rect` with the on-screen bounds of the annotated range, so `ReadingOrderTraversalPolicy` visits links in reading order among their neighboring widgets.
+4. **Activation goes through `Actions`.** The scope wraps its subtree in `Actions` mapping `ActivateIntent` and `ButtonActivateIntent` to the focused annotation's `activate()`, and attaches the nodes to a context *below* that `Actions`, so `Shortcuts` at the `WidgetsApp` level (Enter, Space, gamepad select) keep working and apps can remap them. The action is only enabled while an annotation node has primary focus.
+5. **Semantics stay in sync.** The node pushes `isFocused` and a focus-request handler onto the annotation, which `assembleSemanticsNode` reports as `isFocusable`, `isFocused`, and `onFocus` (skipped on iOS, like `Focus`), so VoiceOver on macOS and web tab stops follow Flutter focus.
+6. **A visible focus indicator.** In `FocusHighlightMode.traditional` the focus plugin paints a 2 px rounded ring around the focused range in its own `foregroundPainter`, using the paragraph's resolved `selectionColor` at full opacity (which `Text` derives from `DefaultSelectionStyle`, i.e. the theme accent) so no widgets-layer theme dependency is needed. Touch users never see it.
+7. **Not inside editable text.** Tab must leave a `TextField`, so annotations on `RenderEditable` get no focus nodes; they remain reachable through the field's own navigation and assistive technology.
 

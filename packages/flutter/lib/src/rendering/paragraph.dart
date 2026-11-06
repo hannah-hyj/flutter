@@ -331,7 +331,8 @@ class RenderParagraph extends RenderBox
     with
         ContainerRenderObjectMixin<RenderBox, TextParentData>,
         RenderInlineChildrenContainerDefaults,
-        RelayoutWhenSystemFontsChangeMixin {
+        RelayoutWhenSystemFontsChangeMixin
+    implements TextPluginHost {
   /// Creates a paragraph render object.
   ///
   /// The [maxLines] property may be null (and indeed defaults to null), but if
@@ -707,6 +708,27 @@ class RenderParagraph extends RenderBox
     }
   }
 
+  @override
+  @internal
+  Iterable<TextDelegate> get textPluginDelegates =>
+      _textPluginDelegates?.values ?? const Iterable<TextDelegate>.empty();
+
+  @override
+  @internal
+  void didChangeTextAnnotations(TextDelegate delegate) {
+    _cachedCombinedSemanticsInfos = null;
+    _cachedAttributedLabels = null;
+    markNeedsSemanticsUpdate();
+    if (_textPluginDelegates == null) {
+      return;
+    }
+    for (final TextDelegate other in _textPluginDelegates!.values.toList(growable: false)) {
+      if (!identical(other, delegate) && !other.isDisposed) {
+        other.notifyChanged();
+      }
+    }
+  }
+
   bool get _hasSelectionHighlightPlugin =>
       _textPluginDelegates != null &&
       _textPluginDelegates!.keys.any((TextPlugin plugin) => plugin.handlesSelectionHighlight);
@@ -1059,10 +1081,23 @@ class RenderParagraph extends RenderBox
     // text justification, as graphemeClusterLayoutBounds.width is the advance
     // width to the next character, so there's no gap between their
     // graphemeClusterLayoutBounds rects.
-    final InlineSpan? spanHit =
-        glyph != null && glyph.graphemeClusterLayoutBounds.contains(position)
+    final GlyphInfo? hitGlyph =
+        glyph != null && glyph.graphemeClusterLayoutBounds.contains(position) ? glyph : null;
+    var hitAnnotation = false;
+    if (hitGlyph != null && _textPluginDelegates != null) {
+      // Plugin annotations stack above authored spans, topmost first, so the
+      // gesture arena and the mouse tracker see them in visual order.
+      for (final TextAnnotation annotation in textAnnotationsAt(
+        _textPluginDelegates!.values,
+        hitGlyph.graphemeClusterCodeUnitRange.start,
+      )) {
+        result.add(HitTestEntry<HitTestTarget>(annotation));
+        hitAnnotation = true;
+      }
+    }
+    final InlineSpan? spanHit = hitGlyph != null
         ? _textPainter.text!.getSpanForPosition(
-            TextPosition(offset: glyph.graphemeClusterCodeUnitRange.start),
+            TextPosition(offset: hitGlyph.graphemeClusterCodeUnitRange.start),
           )
         : null;
     switch (spanHit) {
@@ -1070,7 +1105,7 @@ class RenderParagraph extends RenderBox
         result.add(HitTestEntry(span));
         return true;
       case _:
-        return hitTestInlineChildren(result, position);
+        return hitTestInlineChildren(result, position) || hitAnnotation;
     }
   }
 
@@ -1527,11 +1562,14 @@ class RenderParagraph extends RenderBox
   @override
   void describeSemanticsConfiguration(SemanticsConfiguration config) {
     super.describeSemanticsConfiguration(config);
-    _semanticsInfo = text.getSemanticsInformation();
+    final List<InlineSpanSemanticsInformation> spanInfo = text.getSemanticsInformation();
+    _semanticsInfo = _textPluginDelegates == null
+        ? spanInfo
+        : applyTextAnnotationsToSemantics(spanInfo, _textPluginDelegates!.values);
     var needsAssembleSemanticsNode = false;
     var needsChildConfigurationsDelegate = false;
     for (final InlineSpanSemanticsInformation info in _semanticsInfo!) {
-      if (info.recognizer != null || info.semanticsIdentifier != null) {
+      if (info.requiresOwnNode && !info.isPlaceholder) {
         needsAssembleSemanticsNode = true;
         break;
       }
@@ -1726,21 +1764,13 @@ class RenderParagraph extends RenderBox
             info.semanticsLabel ?? info.text,
             attributes: info.stringAttributes,
           );
-        switch (info.recognizer) {
-          case TapGestureRecognizer(onTap: final VoidCallback? handler):
-          case DoubleTapGestureRecognizer(onDoubleTap: final VoidCallback? handler):
-            if (handler != null) {
-              configuration.onTap = handler;
-              configuration.isLink = true;
-            }
-          case LongPressGestureRecognizer(onLongPress: final GestureLongPressCallback? onLongPress):
-            if (onLongPress != null) {
-              configuration.onLongPress = onLongPress;
-            }
-          case null:
-            break;
-          default:
-            assert(false, '${info.recognizer.runtimeType} is not supported.');
+        if (info case final TextAnnotationSemanticsInformation annotated) {
+          annotated.annotation.describeSemanticsConfiguration(
+            configuration,
+            fallbackRecognizer: info.recognizer,
+          );
+        } else {
+          applyRecognizerSemantics(configuration, info.recognizer);
         }
         if (node.parentPaintClipRect != null) {
           final Rect paintRect = node.parentPaintClipRect!.intersect(currentRect);
