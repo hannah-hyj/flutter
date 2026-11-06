@@ -294,11 +294,8 @@ void main() {
     expect(plugin.activeDelegates.single.text, 'Included');
   });
 
-  testWidgets('TextPlugin and TextDelegate receive pointer events on Text', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('TextPlugin receives raw pointer events on Text', (WidgetTester tester) async {
     final plugin = _RecordingTextPlugin();
-    final delegateEvents = <PointerEvent>[];
 
     await tester.pumpWidget(
       Directionality(
@@ -310,16 +307,12 @@ void main() {
       ),
     );
 
-    final TextDelegate delegate = plugin.activeDelegates.single;
-    delegate.onPointerEvent = delegateEvents.add;
-
     await tester.tap(find.text('Tap Me'));
     await tester.pump();
 
     expect(plugin.pointerEvents, isNotEmpty);
     expect(plugin.pointerEvents.whereType<PointerDownEvent>(), hasLength(1));
     expect(plugin.pointerEvents.whereType<PointerUpEvent>(), hasLength(1));
-    expect(delegateEvents.whereType<PointerDownEvent>(), hasLength(1));
   });
 
   testWidgets('TextPluginScope works alongside SelectionArea', (WidgetTester tester) async {
@@ -667,9 +660,10 @@ void main() {
       final TextDelegate firstDelegate = plugin.activeDelegates[0];
       final TextDelegate secondDelegate = plugin.activeDelegates[1];
 
-      // Verify _SelectionHighlightTextPlugin is installed on the RenderParagraph alongside our plugin.
+      // Verify _SelectionHighlightTextPlugin is installed on the RenderParagraph
+      // alongside our plugin (and the scope's internal focus plugin).
       final firstParagraph = firstDelegate.renderObject as RenderParagraph;
-      expect(firstParagraph.textPlugins, hasLength(2));
+      expect(firstParagraph.textPlugins, hasLength(3));
       expect(
         firstParagraph.textPlugins!.any((TextPlugin p) => p.handlesSelectionHighlight),
         isTrue,
@@ -726,12 +720,17 @@ void main() {
       expect(plugin.activeDelegates, hasLength(1));
       expect(plugin.activeDelegates.single.text, 'Body Text');
 
-      // Toolbar Text excluded _RecordingTextPlugin but still keeps _SelectionHighlightTextPlugin.
+      // Toolbar Text excluded _RecordingTextPlugin but still keeps
+      // _SelectionHighlightTextPlugin (and the scope's internal focus plugin).
       final RenderParagraph toolbarParagraph = tester.renderObject<RenderParagraph>(
         find.descendant(of: find.text('Toolbar Text'), matching: find.byType(RichText)),
       );
-      expect(toolbarParagraph.textPlugins, hasLength(1));
-      expect(toolbarParagraph.textPlugins!.single.handlesSelectionHighlight, isTrue);
+      expect(toolbarParagraph.textPlugins, hasLength(2));
+      expect(
+        toolbarParagraph.textPlugins!.any((TextPlugin p) => p.handlesSelectionHighlight),
+        isTrue,
+      );
+      expect(toolbarParagraph.textPlugins, isNot(contains(plugin)));
     },
   );
 

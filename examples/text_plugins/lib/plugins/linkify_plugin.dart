@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 @immutable
 class _LinkMatch {
@@ -17,6 +18,17 @@ class _LinkMatch {
 
 /// A [TextPlugin] that automatically detects URLs in any [Text] or [RichText]
 /// widget, highlights them as links, and makes them clickable.
+///
+/// Each detected URL is declared as a [TextAnnotation], which gives it
+/// gesture-arena participation (a drag that starts on a link scrolls, a tap
+/// opens it exactly once), a hand cursor, a focusable link node for screen
+/// readers, and Tab/Enter keyboard access, without any pointer bookkeeping in
+/// the plugin.
+///
+/// In editable or selectable text (see [TextDelegate.isEditable] and
+/// [TextDelegate.isSelectable]) a plain click must keep placing the caret or
+/// selecting words, so there a link only opens on modifier-click (or on a
+/// touch tap), following the convention of editors such as Google Docs.
 class LinkifyPlugin extends TextPlugin {
   /// Creates a [LinkifyPlugin].
   LinkifyPlugin({
@@ -40,7 +52,8 @@ class LinkifyPlugin extends TextPlugin {
   );
 
   final Map<TextDelegate, List<_LinkMatch>> _linksByDelegate = <TextDelegate, List<_LinkMatch>>{};
-  final Map<TextDelegate, Offset> _pointerDownPositions = <TextDelegate, Offset>{};
+  final Map<TextDelegate, List<_ModifierClickRecognizer>> _recognizersByDelegate =
+      <TextDelegate, List<_ModifierClickRecognizer>>{};
 
   @override
   void didAddText(TextDelegate delegate) {
@@ -64,38 +77,11 @@ class LinkifyPlugin extends TextPlugin {
     delegate.backgroundPainter = null;
     delegate.foregroundPainter = null;
     _linksByDelegate.remove(delegate);
-    _pointerDownPositions.remove(delegate);
+    _disposeRecognizers(delegate);
   }
 
-  @override
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {
-    final List<_LinkMatch>? links = _linksByDelegate[delegate];
-    if (links == null || links.isEmpty || !delegate.hasLayout) {
-      return;
-    }
-
-    if (event is PointerDownEvent) {
-      _pointerDownPositions[delegate] = event.localPosition;
-    } else if (event is PointerUpEvent) {
-      final Offset? downPos = _pointerDownPositions.remove(delegate);
-      if (downPos == null || (event.localPosition - downPos).distance > kTouchSlop) {
-        return;
-      }
-      for (final _LinkMatch link in links) {
-        final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
-          TextSelection(baseOffset: link.range.start, extentOffset: link.range.end),
-        );
-        final bool hit = boxes.any(
-          (ui.TextBox box) => box.toRect().inflate(2.0).contains(event.localPosition),
-        );
-        if (hit) {
-          onLinkTapped?.call(link.url);
-          break;
-        }
-      }
-    } else if (event is PointerCancelEvent) {
-      _pointerDownPositions.remove(delegate);
-    }
+  void _disposeRecognizers(TextDelegate delegate) {
+    _recognizersByDelegate.remove(delegate)?.forEach((_ModifierClickRecognizer r) => r.dispose());
   }
 
   void _scanLinks(TextDelegate delegate) {
@@ -112,23 +98,74 @@ class LinkifyPlugin extends TextPlugin {
       );
     }
 
+    _disposeRecognizers(delegate);
     if (matches.isEmpty) {
       _linksByDelegate.remove(delegate);
       delegate.backgroundPainter = null;
       delegate.foregroundPainter = null;
-    } else {
-      _linksByDelegate[delegate] = matches;
-      delegate.backgroundPainter = _LinkBackgroundPainter(
-        delegate: delegate,
-        links: matches,
-        tintColor: linkTint,
-      );
-      delegate.foregroundPainter = _LinkForegroundPainter(
-        delegate: delegate,
-        links: matches,
-        underlineColor: underlineColor,
+      delegate.annotations = const <TextAnnotation>[];
+      return;
+    }
+
+    _linksByDelegate[delegate] = matches;
+    delegate.backgroundPainter = _LinkBackgroundPainter(
+      delegate: delegate,
+      links: matches,
+      tintColor: linkTint,
+    );
+    delegate.foregroundPainter = _LinkForegroundPainter(
+      delegate: delegate,
+      links: matches,
+      underlineColor: underlineColor,
+    );
+
+    // Editor convention: in editable or selectable text a plain click places
+    // the caret / selects, so only modifier-clicks (and touch taps) open links.
+    final bool requiresModifier = delegate.isEditable || delegate.isSelectable;
+    final recognizers = <_ModifierClickRecognizer>[];
+    final annotations = <TextAnnotation>[];
+    for (final _LinkMatch link in matches) {
+      void open() => onLinkTapped?.call(link.url);
+      _ModifierClickRecognizer? recognizer;
+      if (requiresModifier) {
+        recognizer = _ModifierClickRecognizer(onActivate: open);
+        recognizers.add(recognizer);
+      }
+      annotations.add(
+        TextAnnotation(
+          range: link.range,
+          key: link.url,
+          cursor: SystemMouseCursors.click,
+          linkUrl: Uri.tryParse(link.url),
+          onTap: requiresModifier ? null : open,
+          recognizer: recognizer,
+        ),
       );
     }
+    delegate.annotations = annotations;
+    if (recognizers.isNotEmpty) {
+      _recognizersByDelegate[delegate] = recognizers;
+    }
+  }
+}
+
+/// A tap recognizer that only competes for mouse clicks with a modifier key
+/// held (Cmd/Ctrl+click), while accepting any touch tap.
+class _ModifierClickRecognizer extends TapGestureRecognizer {
+  _ModifierClickRecognizer({required VoidCallback onActivate}) {
+    onTap = onActivate;
+  }
+
+  @override
+  bool isPointerAllowed(PointerDownEvent event) {
+    if (!super.isPointerAllowed(event)) {
+      return false;
+    }
+    if (event.kind != PointerDeviceKind.mouse) {
+      return true;
+    }
+    final HardwareKeyboard keyboard = HardwareKeyboard.instance;
+    return keyboard.isMetaPressed || keyboard.isControlPressed;
   }
 }
 

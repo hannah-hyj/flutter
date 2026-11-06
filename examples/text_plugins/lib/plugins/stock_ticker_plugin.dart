@@ -4,7 +4,6 @@
 
 import 'dart:ui' as ui;
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 /// Market quote metadata for a recognized stock ticker symbol.
@@ -107,6 +106,11 @@ class _TickerOccurrence {
 /// A [TextPlugin] that automatically identifies stock ticker symbols (e.g.
 /// `GOOG`, `AAPL`, `NVDA`) in any [Text] widget, highlights them with a
 /// color-coded badge and underline, and makes them interactive on tap.
+///
+/// Each ticker is declared as a [TextAnnotation]: the host puts it in the
+/// gesture arena (so scrolling over a badge never opens it), shows a hand
+/// cursor, exposes it to screen readers as a button whose label includes the
+/// company name and daily change, and makes it reachable with Tab and Enter.
 class StockTickerPlugin extends TextPlugin {
   /// Creates a [StockTickerPlugin].
   StockTickerPlugin({this.tickers = kDefaultStockTickers, this.onTickerTapped});
@@ -119,7 +123,6 @@ class StockTickerPlugin extends TextPlugin {
 
   final Map<TextDelegate, List<_TickerOccurrence>> _occurrencesByDelegate =
       <TextDelegate, List<_TickerOccurrence>>{};
-  final Map<TextDelegate, Offset> _pointerDownPositions = <TextDelegate, Offset>{};
 
   RegExp get _tickerPattern {
     final String joined = tickers.keys.map(RegExp.escape).join('|');
@@ -148,58 +151,26 @@ class StockTickerPlugin extends TextPlugin {
     delegate.backgroundPainter = null;
     delegate.foregroundPainter = null;
     _occurrencesByDelegate.remove(delegate);
-    _pointerDownPositions.remove(delegate);
   }
 
-  @override
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {
-    final List<_TickerOccurrence>? occurrences = _occurrencesByDelegate[delegate];
-    if (occurrences == null || occurrences.isEmpty || !delegate.hasLayout) {
-      return;
-    }
-
-    if (event is PointerDownEvent) {
-      _pointerDownPositions[delegate] = event.localPosition;
-    } else if (event is PointerUpEvent) {
-      final Offset? downPos = _pointerDownPositions.remove(delegate);
-      if (downPos == null || (event.localPosition - downPos).distance > kTouchSlop) {
-        return;
-      }
-      for (final _TickerOccurrence occurrence in occurrences) {
-        final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
-          TextSelection(baseOffset: occurrence.range.start, extentOffset: occurrence.range.end),
-        );
-        final bool hit = boxes.any(
-          (ui.TextBox box) => box.toRect().inflate(3.0).contains(event.localPosition),
-        );
-        if (hit) {
-          onTickerTapped?.call(occurrence.info);
-          break;
-        }
-      }
-    } else if (event is PointerCancelEvent) {
-      _pointerDownPositions.remove(delegate);
-    }
+  static String _describe(StockTickerInfo info) {
+    final String direction = info.isPositive ? 'up' : 'down';
+    return '${info.symbol}, ${info.companyName}, $direction ${info.changePercent.abs().toStringAsFixed(1)} percent';
   }
 
   void _analyzeDelegate(TextDelegate delegate) {
-    if (tickers.isEmpty) {
-      _occurrencesByDelegate.remove(delegate);
-      delegate.backgroundPainter = null;
-      delegate.foregroundPainter = null;
-      return;
-    }
-    final String text = delegate.text;
     final found = <_TickerOccurrence>[];
-    for (final RegExpMatch match in _tickerPattern.allMatches(text)) {
-      final String? symbol = match.group(1);
-      if (symbol != null && tickers.containsKey(symbol)) {
-        found.add(
-          _TickerOccurrence(
-            range: TextRange(start: match.start, end: match.end),
-            info: tickers[symbol]!,
-          ),
-        );
+    if (tickers.isNotEmpty) {
+      for (final RegExpMatch match in _tickerPattern.allMatches(delegate.text)) {
+        final String? symbol = match.group(1);
+        if (symbol != null && tickers.containsKey(symbol)) {
+          found.add(
+            _TickerOccurrence(
+              range: TextRange(start: match.start, end: match.end),
+              info: tickers[symbol]!,
+            ),
+          );
+        }
       }
     }
 
@@ -207,17 +178,28 @@ class StockTickerPlugin extends TextPlugin {
       _occurrencesByDelegate.remove(delegate);
       delegate.backgroundPainter = null;
       delegate.foregroundPainter = null;
-    } else {
-      _occurrencesByDelegate[delegate] = found;
-      delegate.backgroundPainter = _StockTickerBackgroundPainter(
-        delegate: delegate,
-        occurrences: found,
-      );
-      delegate.foregroundPainter = _StockTickerForegroundPainter(
-        delegate: delegate,
-        occurrences: found,
-      );
+      delegate.annotations = const <TextAnnotation>[];
+      return;
     }
+
+    _occurrencesByDelegate[delegate] = found;
+    delegate.backgroundPainter = _StockTickerBackgroundPainter(
+      delegate: delegate,
+      occurrences: found,
+    );
+    delegate.foregroundPainter = _StockTickerForegroundPainter(
+      delegate: delegate,
+      occurrences: found,
+    );
+    delegate.annotations = <TextAnnotation>[
+      for (final _TickerOccurrence occurrence in found)
+        TextAnnotation(
+          range: occurrence.range,
+          cursor: SystemMouseCursors.click,
+          semanticsLabel: _describe(occurrence.info),
+          onTap: () => onTickerTapped?.call(occurrence.info),
+        ),
+    ];
   }
 }
 

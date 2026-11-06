@@ -59,10 +59,7 @@ class SpoilerMaskMatch {
 }
 
 /// Callback signature invoked when a masked span is tapped to toggle reveal.
-typedef SpoilerMaskTapCallback = void Function(
-  SpoilerMaskMatch match, {
-  required bool isRevealed,
-});
+typedef SpoilerMaskTapCallback = void Function(SpoilerMaskMatch match, {required bool isRevealed});
 
 /// A [TextPlugin] that detects spoiler tags (`||...||`) and flashcard
 /// cloze-deletion study markers (`{{...}}`) across all [Text], [RichText], and
@@ -77,11 +74,10 @@ class SpoilerMaskPlugin extends TextPlugin with ChangeNotifier {
   /// Optional callback invoked when the user taps a masked or revealed span.
   final SpoilerMaskTapCallback? onMatchTapped;
 
-  static final List<(SpoilerMaskKind, RegExp)> _patterns =
-      <(SpoilerMaskKind, RegExp)>[
-        (SpoilerMaskKind.spoiler, RegExp(r'\|\|[^|\n]+\|\|')),
-        (SpoilerMaskKind.cloze, RegExp(r'\{\{[^}\n]+\}\}')),
-      ];
+  static final List<(SpoilerMaskKind, RegExp)> _patterns = <(SpoilerMaskKind, RegExp)>[
+    (SpoilerMaskKind.spoiler, RegExp(r'\|\|[^|\n]+\|\|')),
+    (SpoilerMaskKind.cloze, RegExp(r'\{\{[^}\n]+\}\}')),
+  ];
 
   final Map<TextDelegate, List<SpoilerMaskMatch>> _matchesByDelegate =
       <TextDelegate, List<SpoilerMaskMatch>>{};
@@ -102,7 +98,7 @@ class SpoilerMaskPlugin extends TextPlugin with ChangeNotifier {
   /// Reveals all detected spoiler and cloze spans.
   void revealAll() {
     _matchesByDelegate.values.forEach(_revealedMatches.addAll);
-    _markAllNeedsPaint();
+    _didChangeRevealState();
     notifyListeners();
   }
 
@@ -112,14 +108,28 @@ class SpoilerMaskPlugin extends TextPlugin with ChangeNotifier {
       return;
     }
     _revealedMatches.clear();
-    _markAllNeedsPaint();
+    _didChangeRevealState();
     notifyListeners();
   }
 
-  void _markAllNeedsPaint() {
-    for (final TextDelegate delegate in _matchesByDelegate.keys) {
+  void _didChangeRevealState() {
+    for (final TextDelegate delegate in _matchesByDelegate.keys.toList(growable: false)) {
+      _installAnnotations(delegate);
       delegate.markNeedsPaint();
     }
+  }
+
+  void _toggle(SpoilerMaskMatch match) {
+    final bool nowRevealed = !_revealedMatches.remove(match);
+    if (nowRevealed) {
+      _revealedMatches.add(match);
+    }
+    if (_matchesByDelegate.containsKey(match.delegate)) {
+      _installAnnotations(match.delegate);
+      match.delegate.markNeedsPaint();
+    }
+    notifyListeners();
+    onMatchTapped?.call(match, isRevealed: nowRevealed);
   }
 
   @override
@@ -143,42 +153,30 @@ class SpoilerMaskPlugin extends TextPlugin with ChangeNotifier {
   void didRemoveText(TextDelegate delegate) {
     delegate.foregroundPainter = null;
     _matchesByDelegate.remove(delegate);
-    _revealedMatches.removeWhere(
-      (SpoilerMaskMatch m) => m.delegate == delegate,
-    );
+    _revealedMatches.removeWhere((SpoilerMaskMatch m) => m.delegate == delegate);
   }
 
-  @override
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {
-    if (event is! PointerDownEvent || !delegate.hasLayout) {
-      return;
-    }
+  /// Declares one tap-to-toggle [TextAnnotation] per mask.
+  ///
+  /// While a span is masked its spoken label hides the answer as well, so a
+  /// screen reader user gets the same experience as a sighted user: "Spoiler,
+  /// hidden, button" until activated, then the real text.
+  void _installAnnotations(TextDelegate delegate) {
     final List<SpoilerMaskMatch>? matches = _matchesByDelegate[delegate];
-    if (matches == null || matches.isEmpty) {
+    if (matches == null) {
+      delegate.annotations = const <TextAnnotation>[];
       return;
     }
-    final Offset localPosition = event.localPosition;
-    for (final SpoilerMaskMatch match in matches) {
-      final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
-        TextSelection(
-          baseOffset: match.range.start,
-          extentOffset: match.range.end,
+    delegate.annotations = <TextAnnotation>[
+      for (final SpoilerMaskMatch match in matches)
+        TextAnnotation(
+          range: match.range,
+          key: match,
+          cursor: SystemMouseCursors.click,
+          semanticsLabel: _revealedMatches.contains(match) ? null : '${match.kind.label}, hidden',
+          onTap: () => _toggle(match),
         ),
-        includePlaceholders: false,
-      );
-      for (final box in boxes) {
-        if (box.toRect().inflate(2.0).contains(localPosition)) {
-          final bool nowRevealed = !_revealedMatches.remove(match);
-          if (nowRevealed) {
-            _revealedMatches.add(match);
-          }
-          delegate.markNeedsPaint();
-          notifyListeners();
-          onMatchTapped?.call(match, isRevealed: nowRevealed);
-          return;
-        }
-      }
-    }
+    ];
   }
 
   void _scanDelegate(TextDelegate delegate) {
@@ -196,6 +194,7 @@ class SpoilerMaskPlugin extends TextPlugin with ChangeNotifier {
         );
       }
     }
+    found.sort((SpoilerMaskMatch a, SpoilerMaskMatch b) => a.range.start.compareTo(b.range.start));
     if (found.isEmpty) {
       _matchesByDelegate.remove(delegate);
       delegate.foregroundPainter = null;
@@ -207,6 +206,7 @@ class SpoilerMaskPlugin extends TextPlugin with ChangeNotifier {
         revealedMatches: _revealedMatches,
       );
     }
+    _installAnnotations(delegate);
   }
 }
 
@@ -244,10 +244,7 @@ class _SpoilerMaskForegroundPainter extends CustomPainter {
     for (final SpoilerMaskMatch match in matches) {
       final bool isRevealed = revealedMatches.contains(match);
       final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
-        TextSelection(
-          baseOffset: match.range.start,
-          extentOffset: match.range.end,
-        ),
+        TextSelection(baseOffset: match.range.start, extentOffset: match.range.end),
         includePlaceholders: false,
       );
       for (final box in boxes) {
