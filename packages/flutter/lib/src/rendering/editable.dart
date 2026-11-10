@@ -2244,11 +2244,6 @@ class RenderEditable extends RenderBox
   @override
   void handleEvent(PointerEvent event, BoxHitTestEntry entry) {
     assert(debugHandleEvent(event, entry));
-    if (_textPluginDelegates != null && _textPluginDelegates!.isNotEmpty) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
-        delegate.plugin.handlePointerEvent(delegate, event);
-      }
-    }
     if (event is PointerDownEvent) {
       assert(!debugNeedsLayout);
 

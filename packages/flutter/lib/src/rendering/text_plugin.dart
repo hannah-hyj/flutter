@@ -35,13 +35,13 @@ import 'paragraph.dart';
 /// [RichText], and [EditableText] widgets) within a [TextPluginScope].
 ///
 /// A [TextPlugin] is notified after layout as text widgets are added, updated,
-/// laid out, and removed within its scope, and can also receive pointer events
-/// originating from those text widgets.
+/// laid out, and removed within its scope.
 ///
 /// Each text widget in the scope is represented by a [TextDelegate], which
 /// allows the plugin to query the displayed string, query layout metrics (such
-/// as [TextDelegate.getBoxesForSelection]), and attach a
-/// [TextDelegate.backgroundPainter] or [TextDelegate.foregroundPainter].
+/// as [TextDelegate.getBoxesForSelection]), attach a
+/// [TextDelegate.backgroundPainter] or [TextDelegate.foregroundPainter], and
+/// make ranges interactive and accessible with [TextDelegate.annotations].
 ///
 /// Multiple [TextPlugin]s can be composed for the same subtree by nesting
 /// [TextPluginScope] widgets or using [TextPluginScope.multiple]. By default,
@@ -55,6 +55,8 @@ import 'paragraph.dart';
 ///    widget subtree.
 ///  * [TextDelegate], which represents an individual [RenderParagraph] or
 ///    [RenderEditable] managed by a [TextPlugin].
+///  * [TextAnnotation], which describes how a range of text behaves (taps,
+///    mouse cursor, hover) and what it means to assistive technology.
 abstract class TextPlugin {
   /// Abstract const constructor. This constructor enables subclasses to provide
   /// const constructors so that they can be used in const expressions.
@@ -79,11 +81,14 @@ abstract class TextPlugin {
   /// Defaults to `false`.
   bool get needsOffscreenContent => false;
 
-  /// The relative order in which this plugin paints and receives pointer
-  /// events compared to other active [TextPlugin]s on the same text widget.
+  /// The relative order of this plugin compared to other active [TextPlugin]s
+  /// on the same text widget.
   ///
-  /// Plugins with a lower [paintOrder] paint first (further in the background)
-  /// and receive pointer events first. When two plugins have the same
+  /// Plugins with a lower [paintOrder] paint first (further in the
+  /// background). When [TextAnnotation]s of different plugins overlap, the
+  /// annotation of the plugin with the higher [paintOrder] is on top: it wins
+  /// hit testing (and therefore taps), provides the mouse cursor, and is the
+  /// one described to assistive technology. When two plugins have the same
   /// [paintOrder], their relative order is determined by their
   /// [TextPluginScope] installation order (outermost scope first).
   ///
@@ -123,18 +128,6 @@ abstract class TextPlugin {
   /// Called whenever a text widget is removed from the subtree covered by this
   /// plugin.
   void didRemoveText(TextDelegate delegate) {}
-
-  /// Called whenever a pointer event occurs on a text widget covered by this
-  /// plugin.
-  ///
-  /// This is a raw observation hook: every [PointerEvent] that hits the text
-  /// widget is forwarded, regardless of which gesture eventually wins. It is
-  /// useful for features such as tracking the word under the pointer. To make
-  /// a range of text *tappable* (participating in the gesture arena so that
-  /// scrolling, text selection, and other plugins are arbitrated correctly),
-  /// install a [TextAnnotation] via [TextDelegate.annotations] instead of
-  /// detecting taps here.
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {}
 }
 
 /// A span-shaped overlay that a [TextPlugin] attaches to a character [range]
@@ -149,10 +142,12 @@ abstract class TextPlugin {
 ///  * **pointer input**: [onTap] and [onLongPress] are backed by gesture
 ///    recognizers owned by the annotation, so taps compete in the gesture
 ///    arena like any other gesture (a drag that starts on the range scrolls,
-///    and at most one annotation wins a tap). For other gestures, provide a
-///    plugin-owned [recognizer] instead, exactly like [TextSpan.recognizer];
-///  * **mouse**: [cursor], [onEnter], and [onExit], like [TextSpan.mouseCursor],
-///    [TextSpan.onEnter], and [TextSpan.onExit];
+///    and at most one annotation wins a tap). For other gestures, such as
+///    drags, provide a plugin-owned [recognizer] instead, exactly like
+///    [TextSpan.recognizer];
+///  * **mouse**: [cursor], [onEnter], [onHover], and [onExit], like
+///    [TextSpan.mouseCursor], [MouseRegion.onHover], [TextSpan.onEnter], and
+///    [TextSpan.onExit];
 ///  * **semantics**: an annotation with an action, a [semanticsLabel], or a
 ///    [linkUrl] is exposed to assistive technology. Interactive annotations get
 ///    their own [SemanticsNode] (a link when [linkUrl] is set, otherwise a
@@ -183,6 +178,7 @@ class TextAnnotation with Diagnosticable implements HitTestTarget, MouseTrackerA
     this.recognizer,
     this.cursor = MouseCursor.defer,
     this.onEnter,
+    this.onHover,
     this.onExit,
     this.semanticsLabel,
     this.linkUrl,
@@ -227,6 +223,13 @@ class TextAnnotation with Diagnosticable implements HitTestTarget, MouseTrackerA
   /// Called when a mouse pointer enters the range.
   @override
   final PointerEnterEventListener? onEnter;
+
+  /// Called when a mouse pointer moves within the range without any buttons
+  /// pressed, for example to position a tooltip that follows the pointer.
+  ///
+  /// Unlike [onEnter] and [onExit], this is delivered through the hit-test
+  /// path, so it only fires while the pointer is over the range's glyphs.
+  final PointerHoverEventListener? onHover;
 
   /// Called when a mouse pointer exits the range.
   @override
@@ -327,18 +330,27 @@ class TextAnnotation with Diagnosticable implements HitTestTarget, MouseTrackerA
 
   @override
   void handleEvent(PointerEvent event, HitTestEntry<HitTestTarget> entry) {
-    if (event is! PointerDownEvent || _delegate == null) {
+    if (_delegate == null) {
       return;
     }
-    if (onTap != null) {
-      (_tapRecognizer ??= TapGestureRecognizer(debugOwner: this)..onTap = onTap).addPointer(event);
+    switch (event) {
+      case PointerHoverEvent():
+        onHover?.call(event);
+      case PointerDownEvent():
+        if (onTap != null) {
+          (_tapRecognizer ??= TapGestureRecognizer(
+            debugOwner: this,
+          )..onTap = onTap).addPointer(event);
+        }
+        if (onLongPress != null) {
+          (_longPressRecognizer ??= LongPressGestureRecognizer(
+            debugOwner: this,
+          )..onLongPress = onLongPress).addPointer(event);
+        }
+        recognizer?.addPointer(event);
+      default:
+        break;
     }
-    if (onLongPress != null) {
-      (_longPressRecognizer ??= LongPressGestureRecognizer(
-        debugOwner: this,
-      )..onLongPress = onLongPress).addPointer(event);
-    }
-    recognizer?.addPointer(event);
   }
 
   void _attach(TextDelegate delegate) {
@@ -778,7 +790,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   ///
   /// Guaranteed to be `true` during [TextPlugin.didAddText],
   /// [TextPlugin.didUpdateText], [TextPlugin.didLayoutText],
-  /// [CustomPainter.paint], and [TextPlugin.handlePointerEvent].
+  /// [CustomPainter.paint], and the callbacks of a [TextAnnotation].
   bool get hasLayout => hasValidLayout && renderObject.hasSize && !renderObject.debugNeedsLayout;
 
   /// The size of the underlying render object.
@@ -1586,16 +1598,6 @@ mixin TextDelegateHostMixin on RenderBox implements TextPluginHost {
       }
     }
     super.markNeedsLayout();
-  }
-
-  @override
-  void handleEvent(PointerEvent event, BoxHitTestEntry entry) {
-    super.handleEvent(event, entry);
-    if (_textPluginDelegates != null && _textPluginDelegates!.isNotEmpty) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
-        delegate.plugin.handlePointerEvent(delegate, event);
-      }
-    }
   }
 
   @override

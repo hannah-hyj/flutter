@@ -294,7 +294,7 @@ graph TD
 
 ### 3.2 `TextPlugin` lifecycle contract
 
-Defined in `packages/flutter/lib/src/rendering/text_plugin.dart`, `TextPlugin` exposes declarative `needsOffscreenContent` and `paintOrder` getters and five lifecycle hooks:
+Defined in `packages/flutter/lib/src/rendering/text_plugin.dart`, `TextPlugin` exposes declarative `needsOffscreenContent` and `paintOrder` getters and four lifecycle hooks:
 
 ```dart
 abstract class TextPlugin {
@@ -307,11 +307,10 @@ abstract class TextPlugin {
   void didUpdateText(TextDelegate delegate) {}
   void didLayoutText(TextDelegate delegate) {}
   void didRemoveText(TextDelegate delegate) {}
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {} // Raw observation only; see 3.7
 }
 ```
 
-`handlePointerEvent` is a raw observation hook (every `PointerEvent` that hits the text widget, regardless of which gesture wins). It is useful for features such as tracking the word under the pointer, but plugins **do not detect taps in it**: a tappable range is declared with a `TextAnnotation` ([Section 3.7](#37-interactive-ranges-textannotation-for-gestures-mouse-semantics-and-focus)) so that the gesture arena arbitrates between scrolling, text selection, authored `TextSpan.recognizer`s, and other plugins.
+There is deliberately **no raw pointer hook** on `TextPlugin`. All input, including taps, long-presses, drags, mouse cursor, and hover, is declared per range with a `TextAnnotation` ([Section 3.7](#37-interactive-ranges-textannotation-for-gestures-mouse-semantics-and-focus)), which is itself a `HitTestTarget`: it receives the pointer events for its glyphs and routes them through the gesture arena, so scrolling, text selection, authored `TextSpan.recognizer`s, and other plugins are arbitrated by the framework rather than by each plugin. An earlier prototype had a `handlePointerEvent(delegate, event)` hook; it was removed because it was the one path that bypassed the arena ([Section 7.8](#78-pointer-event-routing-the-gesture-arena-overlapping-plugins-and-selection-gestures)) and because `TextSpan`, the model for `TextAnnotation`, has never needed one.
 
 #### Post-layout lifecycle guarantee (`didAddText`, `didUpdateText`, `didLayoutText`)
 
@@ -575,6 +574,7 @@ class TextAnnotation implements HitTestTarget, MouseTrackerAnnotation {
     GestureRecognizer? recognizer,   // Escape hatch: plugin-owned, like TextSpan.recognizer
     MouseCursor cursor = MouseCursor.defer,
     PointerEnterEventListener? onEnter,
+    PointerHoverEventListener? onHover, // Pointer moves within the range (tooltips that follow the pointer)
     PointerExitEventListener? onExit,
     String? semanticsLabel,          // Replaces the spoken text of the range
     Uri? linkUrl,                    // Exposes the range as a link
@@ -607,7 +607,7 @@ Annotation-owned recognizers are created lazily on the first pointer and dispose
 
 #### 3.7.2 Mouse cursor and hover
 
-Nothing extra is needed. `MouseTracker` collects every `MouseTrackerAnnotation` on the hit-test path, calls `onEnter`/`onExit` per annotation, and `MouseCursorManager` uses the first non-deferred cursor in hit-test order. `cursor: SystemMouseCursors.click` gives a link a hand cursor; the default `MouseCursor.defer` lets a lower annotation's cursor or the `SelectionArea` text cursor show through. `validForMouseTracker` becomes `false` as soon as the host uninstalls an annotation, so stale annotations never receive `onExit`.
+Nothing extra is needed. `MouseTracker` collects every `MouseTrackerAnnotation` on the hit-test path, calls `onEnter`/`onExit` per annotation, and `MouseCursorManager` uses the first non-deferred cursor in hit-test order. Because the annotation is also a `HitTestTarget`, `PointerHoverEvent`s for its glyphs reach `TextAnnotation.handleEvent` and are forwarded to `onHover`, the equivalent of `MouseRegion.onHover`, for tooltips that follow the pointer. `cursor: SystemMouseCursors.click` gives a link a hand cursor; the default `MouseCursor.defer` lets a lower annotation's cursor or the `SelectionArea` text cursor show through. `validForMouseTracker` becomes `false` as soon as the host uninstalls an annotation, so stale annotations never receive `onExit`.
 
 #### 3.7.3 Semantics
 
@@ -653,7 +653,7 @@ Compared with the earlier prototype, the `PointerDownEvent`/`PointerUpEvent` boo
 
 ## 4. Community package use cases
 
-`TextPlugin` combines text inspection (`text`, `placeholderRanges`), sub-span geometry (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`), custom painting (`backgroundPainter`, `foregroundPainter`), pointer routing (`handlePointerEvent`), and viewport control (`ensureVisible`, `compareTo`, `needsOffscreenContent`, `paintOrder`). Together, these primitives support drop-in packages across any `Text`, `RichText`, or `EditableText` subtree.
+`TextPlugin` combines text inspection (`text`, `placeholderRanges`), sub-span geometry (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`), custom painting (`backgroundPainter`, `foregroundPainter`), interactive ranges (`annotations`), and viewport control (`ensureVisible`, `compareTo`, `needsOffscreenContent`, `paintOrder`). Together, these primitives support drop-in packages across any `Text`, `RichText`, or `EditableText` subtree.
 
 ### 4.1 Use cases implemented in the demo app
 
@@ -665,7 +665,7 @@ Alongside `SearchInPagePlugin` (covered in [Section 3.6](#36-first-party-searchi
 
 #### 2. Interactive spoiler and study-cloze masking (`SpoilerMaskPlugin`)
 
-`SpoilerMaskPlugin` scans `delegate.text` for spoiler tags (`||...||`, `[spoiler]...[/spoiler]`) or flashcard cloze-deletion markers (`{{...}}`). In `foregroundPainter` (which runs after `_textPainter.paint()`), it draws an opaque rounded cover over the hidden glyphs. In `handlePointerEvent`, tapping a masked box toggles revealing or re-masking that span and calls `markNeedsPaint()`.
+`SpoilerMaskPlugin` scans `delegate.text` for spoiler tags (`||...||`, `[spoiler]...[/spoiler]`) or flashcard cloze-deletion markers (`{{...}}`). In `foregroundPainter` (which runs after `_textPainter.paint()`), it draws an opaque rounded cover over the hidden glyphs. Each mask is a `TextAnnotation` whose `onTap` toggles revealing or re-masking that span and calls `markNeedsPaint()`; while masked, its `semanticsLabel` is `"Spoiler, hidden"` so screen-reader users get the same reveal experience as sighted users.
 
 Because `TextPlugin` is non-destructive and does not mutate the input `InlineSpan` string or alter glyph layout metrics, the delimiter characters (`||` or `{{`) remain part of the laid-out paragraph run when revealed. Depending on the desired UX, the plugin can either leave the syntax delimiters visible around the revealed text or paint an opaque background-colored mask over the delimiter `ui.TextBox`es (`range.start..range.start + 2` and `range.end - 2..range.end`) in `foregroundPainter` so the `||` markers remain visually hidden after reveal without triggering text relayout.
 
@@ -675,7 +675,7 @@ Because `TextPlugin` is non-destructive and does not mutate the input `InlineSpa
 
 #### 4. Interactive financial ticker badges (`StockTickerPlugin`)
 
-`StockTickerPlugin` matches financial ticker symbols (`GOOG`, `AAPL`, `MSFT`, `NVDA`) in `delegate.text`, paints green or red pill backgrounds in `backgroundPainter`, and draws underline accents in `foregroundPainter`. In `handlePointerEvent`, it tracks pointer-down and pointer-up movement against `kTouchSlop` so tapping a ticker opens a live quote card without interfering with scroll drags.
+`StockTickerPlugin` matches financial ticker symbols (`GOOG`, `AAPL`, `MSFT`, `NVDA`) in `delegate.text`, paints green or red pill backgrounds in `backgroundPainter`, and draws underline accents in `foregroundPainter`. Each ticker is a `TextAnnotation` with `onTap` (so the gesture arena keeps scroll drags from opening it), a hand cursor, and a `semanticsLabel` such as `"GOOG, Alphabet Inc., up 2.4 percent"` that assistive technology reads as a button.
 
 #### 5. Automatic URL linkification (`LinkifyPlugin`)
 
@@ -1200,11 +1200,11 @@ We deduplicate at both layers:
 
 ### 7.8 Pointer event routing: the gesture arena, overlapping plugins, and selection gestures
 
-Flutter has two layers of input: raw pointer events, delivered to every render object on the hit-test path, and the gesture arena, where recognizers compete so that exactly one tap, double-tap, or drag wins. An early prototype only used the first layer: `handlePointerEvent` fanned raw events to every plugin and each plugin hand-rolled "down, then up within `kTouchSlop`". That worked for scroll drags but nothing arbitrated between plugins, authored `TextSpan.recognizer`s, `SelectableRegion`, and `TextField`: two plugins on one range both fired, and a double-click to select a link's word inside a `SelectionArea` also opened the link twice.
+Flutter has two layers of input: raw pointer events, delivered to every render object on the hit-test path, and the gesture arena, where recognizers compete so that exactly one tap, double-tap, or drag wins. An early prototype only used the first layer: a `TextPlugin.handlePointerEvent` hook fanned raw events to every plugin and each plugin hand-rolled "down, then up within `kTouchSlop`". That worked for scroll drags but nothing arbitrated between plugins, authored `TextSpan.recognizer`s, `SelectableRegion`, and `TextField`: two plugins on one range both fired, and a double-click to select a link's word inside a `SelectionArea` also opened the link twice.
 
 The design now routes all interaction through the arena ([Section 3.7.1](#371-hit-testing-and-the-gesture-arena)):
 
-1. **Raw events** still reach `TextPlugin.handlePointerEvent` for observation (word under the pointer, analytics). Plugins do not detect taps there.
+1. **There is no raw pointer hook.** `TextPlugin.handlePointerEvent` was removed: a plugin cannot receive a pointer without going through an annotation, so it cannot bypass the arena. Hover-driven features use `TextAnnotation.onHover`/`onEnter`/`onExit` (annotations without an action or label have no semantics impact, so annotating every word for a dictionary popover is fine), and drag interactions use `recognizer: PanGestureRecognizer()`, which, unlike raw events, competes correctly with scrolling.
 2. **Taps and long-presses** are declared with `TextAnnotation.onTap`/`onLongPress` (or a plugin-owned `recognizer`). `hitTestChildren` adds every annotation covering the glyph to the `HitTestResult` topmost first, then the authored span target, then the paragraph itself (whose `hitTestSelf` returns `true`). The arena then handles scroll-versus-tap, same-type conflicts between plugins (first member, i.e. topmost, wins on sweep), and different-type coexistence for free.
 
 | Scenario | Outcome |

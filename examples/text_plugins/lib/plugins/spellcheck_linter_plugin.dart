@@ -138,30 +138,6 @@ class SpellcheckLinterPlugin extends TextPlugin {
     _issuesByDelegate.remove(delegate);
   }
 
-  @override
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {
-    if (event is! PointerDownEvent || onIssueTapped == null || !delegate.hasLayout) {
-      return;
-    }
-    final List<SpellcheckIssue>? issues = _issuesByDelegate[delegate];
-    if (issues == null || issues.isEmpty) {
-      return;
-    }
-    final Offset localPosition = event.localPosition;
-    for (final SpellcheckIssue issue in issues) {
-      final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
-        TextSelection(baseOffset: issue.range.start, extentOffset: issue.range.end),
-        includePlaceholders: false,
-      );
-      for (final box in boxes) {
-        if (box.toRect().inflate(3.0).contains(localPosition)) {
-          onIssueTapped!(issue);
-          return;
-        }
-      }
-    }
-  }
-
   void _lintDelegate(TextDelegate delegate) {
     final String plainText = delegate.text;
     final issues = <SpellcheckIssue>[];
@@ -182,10 +158,26 @@ class SpellcheckLinterPlugin extends TextPlugin {
     if (issues.isEmpty) {
       _issuesByDelegate.remove(delegate);
       delegate.foregroundPainter = null;
-    } else {
-      _issuesByDelegate[delegate] = issues;
-      delegate.foregroundPainter = _SpellcheckSquigglePainter(delegate: delegate, issues: issues);
+      delegate.annotations = const <TextAnnotation>[];
+      return;
     }
+    _issuesByDelegate[delegate] = issues;
+    delegate.foregroundPainter = _SpellcheckSquigglePainter(delegate: delegate, issues: issues);
+    // Each flagged word is a tappable annotation: the tap goes through the
+    // gesture arena (so scrolling over a squiggle never opens the popup), and
+    // screen readers hear the diagnostic instead of just the misspelled word.
+    delegate.annotations = <TextAnnotation>[
+      if (onIssueTapped != null)
+        for (final SpellcheckIssue issue in issues)
+          TextAnnotation(
+            range: issue.range,
+            cursor: SystemMouseCursors.click,
+            semanticsLabel:
+                '${issue.matchedText}, ${issue.rule.severity == LintSeverity.spellingError ? 'misspelled' : 'style suggestion'}, '
+                'suggested ${issue.rule.suggestion}',
+            onTap: () => onIssueTapped!(issue),
+          ),
+    ];
   }
 }
 
