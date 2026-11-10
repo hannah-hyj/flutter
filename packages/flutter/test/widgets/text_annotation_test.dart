@@ -3,11 +3,12 @@
 // found in the LICENSE file.
 
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'editable_text_tester.dart';
 import 'semantics_tester.dart';
 
 /// Annotates every match of [pattern] in the text widgets of its scope.
@@ -171,13 +172,16 @@ void main() {
     final plugin = _AnnotatingPlugin(pattern: _urlPattern);
 
     await tester.pumpWidget(
-      MaterialApp(
+      TestWidgetsApp(
         home: TextPluginScope(
           plugin: plugin,
-          child: const Column(
+          child: Column(
             children: <Widget>[
-              Text('plain'),
-              SelectionArea(child: Text('selectable')),
+              const Text('plain'),
+              SelectableRegion(
+                selectionControls: testTextSelectionHandleControls,
+                child: const Text('selectable'),
+              ),
             ],
           ),
         ),
@@ -202,7 +206,7 @@ void main() {
     final plugin = _TogglePlugin();
 
     await tester.pumpWidget(
-      MaterialApp(
+      TestWidgetsApp(
         home: TextPluginScope(
           plugin: plugin,
           child: const Center(child: Text('The killer is ||the butler||.')),
@@ -253,7 +257,7 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
-      MaterialApp(
+      TestWidgetsApp(
         home: TextPluginScope(
           plugin: plugin,
           child: SingleChildScrollView(
@@ -293,7 +297,7 @@ void main() {
     final top = _OtherAnnotatingPlugin(pattern: RegExp('flutter'), onTap: (_) {}, paintOrder: 1);
 
     await tester.pumpWidget(
-      MaterialApp(
+      TestWidgetsApp(
         home: TextPluginScope.multiple(
           plugins: <TextPlugin>[top, bottom],
           child: const Center(child: Text('Visit https://flutter.dev today')),
@@ -343,7 +347,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        TestWidgetsApp(
           home: GestureDetector(
             onTap: () => ancestorTaps += 1,
             child: TextPluginScope.multiple(
@@ -394,7 +398,7 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MaterialApp(
+      TestWidgetsApp(
         home: TextPluginScope(
           plugin: plugin,
           child: const Center(child: Text('Visit https://flutter.dev today')),
@@ -447,7 +451,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        TestWidgetsApp(
           home: TextPluginScope.multiple(
             plugins: <TextPlugin>[_DecorationOnlyPlugin(), plugin],
             child: const Center(child: Text('Visit https://flutter.dev today')),
@@ -482,7 +486,7 @@ void main() {
 
       // Removing the interactive plugin collapses the paragraph into one node.
       await tester.pumpWidget(
-        MaterialApp(
+        TestWidgetsApp(
           home: TextPluginScope(
             plugin: _DecorationOnlyPlugin(),
             child: const Center(child: Text('Visit https://flutter.dev today')),
@@ -504,7 +508,7 @@ void main() {
     final plugin = _AnnotatingPlugin(pattern: RegExp(r'\|\|.*\|\|'), semanticsLabel: 'spoiler');
 
     await tester.pumpWidget(
-      MaterialApp(
+      TestWidgetsApp(
         home: TextPluginScope(
           plugin: plugin,
           child: const Center(child: Text('The killer is ||the butler||.')),
@@ -528,7 +532,7 @@ void main() {
       addTearDown(recognizer.dispose);
 
       await tester.pumpWidget(
-        MaterialApp(
+        TestWidgetsApp(
           home: TextPluginScope(
             plugin: plugin,
             child: Center(
@@ -569,20 +573,21 @@ void main() {
       onTap: (_) {},
       linkUrl: (String match) => Uri.parse(match),
     );
+    final readOnlyController = TextEditingController(text: 'Visit https://flutter.dev today');
+    addTearDown(readOnlyController.dispose);
     final controller = TextEditingController(text: 'Visit https://flutter.dev today');
     addTearDown(controller.dispose);
+    const fieldKey = Key('field');
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: TextPluginScope(
-            plugin: plugin,
-            child: Column(
-              children: <Widget>[
-                const SelectableText('Visit https://flutter.dev today'),
-                TextField(controller: controller),
-              ],
-            ),
+      TestWidgetsApp(
+        home: TextPluginScope(
+          plugin: plugin,
+          child: Column(
+            children: <Widget>[
+              TestTextField(controller: readOnlyController, readOnly: true),
+              TestTextField(key: fieldKey, controller: controller),
+            ],
           ),
         ),
       ),
@@ -593,7 +598,7 @@ void main() {
     expect(plugin.delegates.where((TextDelegate delegate) => delegate.isReadOnly), hasLength(1));
     expect(plugin.delegates.every((TextDelegate delegate) => delegate.isSelectable), isTrue);
 
-    // The read-only SelectableText exposes the link as its own node.
+    // The read-only text exposes the link as its own node.
     expect(
       semantics,
       includesNodeWith(
@@ -605,7 +610,7 @@ void main() {
 
     // The editable field stays a single text field whose value is the text.
     final SemanticsNode fieldNode = tester.getSemantics(
-      find.descendant(of: find.byType(TextField), matching: find.byType(EditableText)),
+      find.descendant(of: find.byKey(fieldKey), matching: find.byType(EditableText)),
     );
     expect(fieldNode.hasFlag(SemanticsFlag.isTextField), isTrue);
     expect(fieldNode.value, 'Visit https://flutter.dev today');
@@ -627,18 +632,16 @@ void main() {
       addTearDown(after.dispose);
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: TextPluginScope(
-              plugin: plugin,
-              child: Column(
-                children: <Widget>[
-                  Focus(focusNode: before, child: const SizedBox(width: 10, height: 10)),
-                  const Text('Visit https://flutter.dev or https://dart.dev'),
-                  const Text('Then https://pub.dev'),
-                  Focus(focusNode: after, child: const SizedBox(width: 10, height: 10)),
-                ],
-              ),
+        TestWidgetsApp(
+          home: TextPluginScope(
+            plugin: plugin,
+            child: Column(
+              children: <Widget>[
+                Focus(focusNode: before, child: const SizedBox(width: 10, height: 10)),
+                const Text('Visit https://flutter.dev or https://dart.dev'),
+                const Text('Then https://pub.dev'),
+                Focus(focusNode: after, child: const SizedBox(width: 10, height: 10)),
+              ],
             ),
           ),
         ),
@@ -687,16 +690,14 @@ void main() {
       var text = 'Visit https://flutter.dev today';
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: TextPluginScope(
-              plugin: plugin,
-              child: StatefulBuilder(
-                builder: (BuildContext context, StateSetter setState) {
-                  setText = setState;
-                  return Text(text);
-                },
-              ),
+        TestWidgetsApp(
+          home: TextPluginScope(
+            plugin: plugin,
+            child: StatefulBuilder(
+              builder: (BuildContext context, StateSetter setState) {
+                setText = setState;
+                return Text(text);
+              },
             ),
           ),
         ),
@@ -731,16 +732,14 @@ void main() {
     addTearDown(after.dispose);
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: TextPluginScope(
-            plugin: plugin,
-            child: Column(
-              children: <Widget>[
-                TextField(controller: controller, autofocus: true),
-                Focus(focusNode: after, child: const SizedBox(width: 10, height: 10)),
-              ],
-            ),
+      TestWidgetsApp(
+        home: TextPluginScope(
+          plugin: plugin,
+          child: Column(
+            children: <Widget>[
+              TestTextField(controller: controller, autofocus: true),
+              Focus(focusNode: after, child: const SizedBox(width: 10, height: 10)),
+            ],
           ),
         ),
       ),
