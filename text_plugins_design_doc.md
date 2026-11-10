@@ -21,7 +21,7 @@ authors:
 
 This RFC proposes a composable text plugin system in `package:flutter/rendering.dart` and `package:flutter/widgets.dart` centered on `TextPluginScope`, `TextPlugin`, and `TextDelegate`.
 
-By attaching plugins through an `InheritedWidget` (`TextPluginScope`) directly to `RenderParagraph` and `RenderEditable`, applications and third-party packages can inspect rendered text, paint background and foreground decorations, declare interactive ranges (`TextAnnotation`) that participate in the gesture arena and are exposed to assistive technology and keyboard focus, scroll character ranges into view, and request offscreen sliver rendering (`OffscreenContentRenderingStrategy`) across standard `Text`, `RichText`, and `EditableText` (`TextField`) subtrees without modifying existing widget code.
+By attaching plugins through an `InheritedWidget` (`TextPluginScope`) directly to `RenderParagraph` and `RenderEditable`, applications and third-party packages can inspect rendered text, paint background and foreground decorations, declare interactive ranges (`TextAnnotation`) that participate in the gesture arena and are exposed to assistive technology and keyboard focus, anchor overlay widgets to the text (`TextAnchor`), scroll character ranges into view, and request offscreen sliver rendering (`OffscreenContentRenderingStrategy`) across standard `Text`, `RichText`, and `EditableText` (`TextField`) subtrees without modifying existing widget code. Text selection inside `SelectionArea` is built on the same API (`TextSelectionPlugin`, [Section 5.2](#52-should-selection-highlighting-be-a-textplugin)).
 
 ## Table of contents
 
@@ -40,6 +40,7 @@ By attaching plugins through an `InheritedWidget` (`TextPluginScope`) directly t
   - [3.5 `RenderParagraph` and `RenderEditable` painting and Z-order pipeline](#35-renderparagraph-and-rendereditable-painting-and-z-order-pipeline)
   - [3.6 First-party `SearchInPagePlugin` implementation](#36-first-party-searchinpageplugin-implementation)
   - [3.7 Interactive ranges: `TextAnnotation` for gestures, mouse, semantics, and focus](#37-interactive-ranges-textannotation-for-gestures-mouse-semantics-and-focus)
+  - [3.8 Anchoring overlay widgets to text: `TextAnchor`](#38-anchoring-overlay-widgets-to-text-textanchor)
 - [4. Community package use cases](#4-community-package-use-cases)
   - [4.1 Use cases implemented in the demo app](#41-use-cases-implemented-in-the-demo-app)
   - [4.2 Additional community package ideas](#42-additional-community-package-ideas)
@@ -145,7 +146,7 @@ In addition, `_SelectableFragment` requires a `SelectionRegistrar`. Searching no
 
 #### Non-goals (current scope)
 
-- We do not aim to build every plugin in the framework. We define the extensible architecture and provide core plugins (`SearchInPagePlugin` and `_SelectionHighlightTextPlugin`), while community packages provide domain-specific plugins.
+- We do not aim to build every plugin in the framework. We define the extensible architecture and provide core plugins (`SearchInPagePlugin` and `TextSelectionPlugin`), while community packages provide domain-specific plugins.
 
 - Non-text widgets (`Image`, `Icon`, custom `RenderBox` subclasses) are out of the initial scope. Section [6.1](#61-custom-textpainter-render-objects-and-non-text-widgets-with-searchable-labels) shows with concrete code how custom `TextPainter` render objects and non-text widgets can participate via `TextDelegateHost`.
 
@@ -167,7 +168,7 @@ Only plugins that implement platform-standard features with zero external depend
 
 1. `SearchInPagePlugin` provides desktop and web `Ctrl+F` search highlighting, sequential match navigation, and viewport offscreen rendering management.
 
-2. `_SelectionHighlightTextPlugin` is a candidate internal plugin for migrating `SelectionArea` and `SelectableRegion` selection highlighting onto the `TextPlugin` pipeline (evaluated in [Section 5.2](#52-should-selection-highlighting-be-a-textplugin)).
+2. `TextSelectionPlugin` makes static text selectable inside `SelectionArea` and `SelectableRegion`. It owns the `Selectable`s of a paragraph, paints the selection highlight, and anchors the selection handles, all through the public `TextDelegate` API. Selectable text installs it by default, and a `TextPluginScope` can provide a subclass to restyle the highlight (see [Section 5.2](#52-should-selection-highlighting-be-a-textplugin)).
 
 #### 2.2.2 Community package plugins (`pub.dev`)
 
@@ -189,15 +190,17 @@ Domain-specific or third-party-dependent features belong in standalone community
 
 #### 2.2.3 Principles for a general-purpose API
 
-The `TextPlugin` API follows four design rules so it can support both core selection and community packages:
+The `TextPlugin` API follows five design rules so it can support both core selection and community packages:
 
 1. `TextDelegate` exposes an opinionated plain-text getter (`text`) and low-level geometry and painting primitives (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`, `getLineBoundary`, `getOffsetForCaret`, `backgroundPainter`, and `foregroundPainter`) rather than feature-specific methods.
 
-2. `TextPluginScope` stacks plugins across the widget tree, deduplicating by plugin `Type` (so inner scopes can override outer scopes of the same `Type`, matching `Actions` and `Shortcuts`) and sorting by `TextPlugin.paintOrder`. `TextPluginScope.exclude(types: {...})` lets app developers filter out specific plugin types on UI chrome without disabling core plugins like `_SelectionHighlightTextPlugin`.
+2. `TextPluginScope` stacks plugins across the widget tree, deduplicating by plugin `Type` (so inner scopes can override outer scopes of the same `Type`, matching `Actions` and `Shortcuts`) and sorting by `TextPlugin.paintOrder`. `TextPluginScope.exclude(types: {...})` lets app developers filter out specific plugin types on UI chrome, and `TextPluginScope.none` opts a subtree out of every plugin. Neither one can make text unselectable, because selection does not come from a scope (see [Section 5.2](#52-should-selection-highlighting-be-a-textplugin)).
 
 3. `bool get needsOffscreenContent` on `TextPlugin` and the standalone `OffscreenContentRenderingStrategy` widget (`OffscreenRenderingPolicy.lazy()` versus `OffscreenRenderingPolicy.eager({ScrollCacheExtent cacheExtent})`) let document-wide plugins request eager offscreen sliver rendering in `ListView.builder` viewports while allowing subtrees to customize or bound the offscreen `ScrollCacheExtent`. This keeps `Viewport` decoupled from `TextPluginScope`.
 
-4. Interactivity is declared, not hand-rolled. A plugin describes *what a range is and does* with a `TextAnnotation` (`range`, `onTap`/`onLongPress` or a custom `recognizer`, `cursor`, `onEnter`/`onExit`, `semanticsLabel`, `linkUrl`) installed via `TextDelegate.annotations`. The host derives gesture-arena participation, mouse cursor and hover, `SemanticsNode`s, and keyboard focus from that one declaration (see [Section 3.7](#37-interactive-ranges-textannotation-for-gestures-mouse-semantics-and-focus)), so plugins never compete with scrolling, text selection, or each other through raw pointer events.
+4. Interactivity is declared, not hand-rolled. A plugin describes *what a range is and does* with a `TextAnnotation` (`range`, `onTap`/`onLongPress` or a custom `recognizer`, `cursor`, `onEnter`/`onHover`/`onExit`, `semanticsLabel`, `linkUrl`) installed via `TextDelegate.annotations`. The host derives gesture-arena participation, mouse cursor and hover, `SemanticsNode`s, and keyboard focus from that one declaration (see [Section 3.7](#37-interactive-ranges-textannotation-for-gestures-mouse-semantics-and-focus)), so plugins never compete with scrolling, text selection, or each other through raw pointer events.
+
+5. Overlays are anchored, not tracked. A plugin that needs a widget in the `Overlay` to stay attached to the text (a selection handle, a link preview, a comment bubble) installs a `TextAnchor` via `TextDelegate.anchors`. The host pushes the `LeaderLayer`, so the widget follows the text through scrolling and transforms without the plugin observing either (see [Section 3.8](#38-anchoring-overlay-widgets-to-text-textanchor)).
 
 ---
 
@@ -283,10 +286,11 @@ graph TD
 
 | Layer | File | Public Symbols | Responsibility |
 | :--- | :--- | :--- | :--- |
-| **Rendering** | `packages/flutter/lib/src/rendering/text_plugin.dart` | `TextPlugin`, `TextDelegate`, `TextAnnotation` | Defines the plugin lifecycle interface (`needsOffscreenContent`, `paintOrder`, post-layout callbacks), the per-plugin `TextDelegate` proxy wrapping `RenderParagraph` or `RenderEditable`, and `TextAnnotation`, the span-shaped overlay (`HitTestTarget` + `MouseTrackerAnnotation`) from which hosts derive hit testing, cursor, and semantics for a range. |
+| **Rendering** | `packages/flutter/lib/src/rendering/text_plugin.dart` | `TextPlugin`, `TextDelegate`, `TextAnnotation`, `TextAnchor` | Defines the plugin lifecycle interface (`needsOffscreenContent`, `paintOrder`, post-layout callbacks), the per-plugin `TextDelegate` proxy wrapping `RenderParagraph` or `RenderEditable`, `TextAnnotation`, the span-shaped overlay (`HitTestTarget` + `MouseTrackerAnnotation`) from which hosts derive hit testing, cursor, and semantics for a range, and `TextAnchor`, a `LayerLink` pinned to a rectangle of the text for overlay widgets to follow. |
+| **Rendering** | `packages/flutter/lib/src/rendering/text_selection_plugin.dart` | `TextSelectionPlugin` | The plugin that makes static text selectable: creates one `Selectable` per run of text between placeholders, registers them with the `SelectionRegistrar`, answers `SelectionEvent`s, paints the selection highlight (`paintOrder` 100), and anchors the selection handles. This is the code that used to be `_SelectableFragment` inside `paragraph.dart`. |
 | **Rendering** | [packages/flutter/lib/src/rendering/object.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/object.dart) | `PipelineOwner.schedulePostLayoutCallback` | Flushes post-layout callbacks at the end of `PipelineOwner.flushLayout()` after all dirty `RenderObject`s have completed layout and before `flushPaint()`. |
-| **Rendering** | [packages/flutter/lib/src/rendering/paragraph.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/paragraph.dart) | `RenderParagraph.textPlugins` | Reconciles delegates, schedules post-layout lifecycle callbacks, adds annotations to the hit-test path, splits semantics nodes at annotation boundaries, routes raw pointer events, and executes painters for static text. |
-| **Rendering** | [packages/flutter/lib/src/rendering/editable.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/editable.dart) | `RenderEditable.textPlugins` | Same as `RenderParagraph` for editable text fields; annotation semantics nodes are only produced for read-only, non-obscured fields so an editable field stays one text-field node. |
+| **Rendering** | [packages/flutter/lib/src/rendering/paragraph.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/paragraph.dart) | `RenderParagraph.textPlugins` | Reconciles delegates, schedules post-layout lifecycle callbacks, adds annotations to the hit-test path, splits semantics nodes at annotation boundaries, executes painters, and pushes anchor layers for static text. Installs the default `TextSelectionPlugin` when the paragraph has a `SelectionRegistrar`, and contains no selection code of its own. |
+| **Rendering** | [packages/flutter/lib/src/rendering/editable.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/editable.dart) | `RenderEditable.textPlugins` | Same as `RenderParagraph` for editable text fields; annotation semantics nodes are only produced for read-only, non-obscured fields so an editable field stays one text-field node. An editable keeps its own selection, caret, and handle layers. |
 | **Widgets** | `packages/flutter/lib/src/widgets/text_plugin.dart` | `TextPluginScope` | Scopes, deduplicates by `Type`, and sorts `TextPlugin`s by `paintOrder` down the widget tree, configures `OffscreenContentRenderingStrategy` when any active plugin has `needsOffscreenContent == true`, and installs an internal focus plugin that mirrors interactive annotations as `FocusNode`s (Tab/Enter) and paints the focus ring. |
 | **Widgets** | [packages/flutter/lib/src/widgets/viewport.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/viewport.dart) | `OffscreenRenderingPolicy`, `OffscreenContentRenderingStrategy` | Inherited strategy controlling whether descendant `Viewport` and `ShrinkWrappingViewport` widgets render offscreen sliver content lazily or eagerly with a configurable `ScrollCacheExtent`. |
 | **Widgets** | [packages/flutter/lib/src/widgets/basic.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/basic.dart) | `RichText.textPlugins` | Resolves `textPlugins ?? TextPluginScope.maybeOf(context)` and forwards to `RenderParagraph`. |
@@ -392,6 +396,15 @@ class TextDelegate extends ChangeNotifier {
   List<TextAnnotation> annotationsAt(int offset); // All plugins, topmost first
   Rect? getBoundsForAnnotation(TextAnnotation annotation);
 
+  // Isolated per-plugin anchors that overlay widgets follow (Section 3.8)
+  List<TextAnchor> anchors;
+
+  // Selection (Section 5.2)
+  List<TextSelection> get selections;               // Readable by every plugin
+  Color? get selectionColor;
+  SelectionRegistrar? get selectionRegistrar;       // For the plugin that implements selection
+  void reportSelections(List<TextSelection> value); // Ditto; notifies every plugin on the text
+
   // What kind of text this is, for click policy (Section 7.8)
   bool get isEditable;   // RenderEditable (TextField / SelectableText)
   bool get isReadOnly;   // RenderEditable.readOnly
@@ -400,6 +413,8 @@ class TextDelegate extends ChangeNotifier {
   // Geometry & scrolling
   List<ui.TextBox> getBoxesForSelection(TextSelection selection, { ... });
   ui.TextPosition getPositionForOffset(Offset offset);
+  // Also getWordBoundary, getLineBoundary, moveByWordBoundary, getOffsetForCaret,
+  // getFullHeightForCaret, computeLineMetrics, and preferredLineHeight.
   void ensureVisible(ui.TextRange range, { ... });
 }
 ```
@@ -432,13 +447,13 @@ class TextPluginScope extends StatefulWidget {
 
 1. **`Type`-based deduplication and inner-scope override**: Like Flutter's `Actions` and `Shortcuts` widgets, `TextPluginScope` deduplicates plugins by their concrete `runtimeType` (`Map<Type, TextPlugin>`). When an inner `TextPluginScope` provides a plugin of type `T`, it overrides any ancestor plugin of the same type `T` for its descendant subtree. This matches `TextPluginScope.exclude(types: {T})` and guarantees that at most one instance of any given `TextPlugin` subclass is active on a `RenderParagraph` or `RenderEditable`.
 
-2. **Ordering via `TextPlugin.paintOrder`**: After merging ancestor and local plugins into the `Map<Type, TextPlugin>`, `TextPluginScope` stably sorts the active plugins in ascending order of `plugin.paintOrder` (default `0`), using root-to-leaf scope installation order as a tie-breaker when two plugins have the same `paintOrder`. This decouples visual Z-order and pointer routing priority from widget-tree nesting depth when needed (for example, allowing an outer `SelectionArea` highlight plugin with `paintOrder: 100` to paint above an inner background badge plugin with `paintOrder: 0`).
+2. **Ordering via `TextPlugin.paintOrder`**: After merging ancestor and local plugins into the `Map<Type, TextPlugin>`, `TextPluginScope` stably sorts the active plugins in ascending order of `plugin.paintOrder` (default `0`), using root-to-leaf scope installation order as a tie-breaker when two plugins have the same `paintOrder`. This decouples visual Z-order and pointer routing priority from widget-tree nesting depth when needed (for example, the selection highlight of `TextSelectionPlugin`, with `paintOrder` 100, is painted above the background badge of a plugin that keeps the default `0`, wherever their scopes are).
 
-3. **Filtering and opt-out (`exclude` and `none`)**: `TextPluginScope.exclude(types: {...})` filters out ancestor plugins whose `runtimeType` is in `types`, while `TextPluginScope.none` installs an empty scope (`plugins: const <TextPlugin>[]`), disabling all ancestor plugins for its `child` subtree.
+3. **Filtering and opt-out (`exclude` and `none`)**: `TextPluginScope.exclude(types: {...})` filters out ancestor plugins whose `runtimeType` is in `types`, while `TextPluginScope.none` installs an empty scope (`plugins: const <TextPlugin>[]`), disabling all ancestor plugins for its `child` subtree. Neither one affects text selection: the selection plugin of selectable text is not inherited from a scope (see [Section 5.2](#52-should-selection-highlighting-be-a-textplugin)).
 
 ### 3.5 `RenderParagraph` and `RenderEditable` painting and Z-order pipeline
 
-`RichText` and `EditableText` forward `textPlugins ?? TextPluginScope.maybeOf(context)` to `RenderParagraph` and `RenderEditable`, which reconcile `TextDelegate`s, schedule post-layout callbacks, and paint in three core stages from back to front:
+`RichText` and `EditableText` forward `textPlugins ?? TextPluginScope.maybeOf(context)` to `RenderParagraph` and `RenderEditable`, which reconcile `TextDelegate`s, schedule post-layout callbacks, and paint in four stages from back to front:
 
 ```dart
 class RenderParagraph extends RenderBox { // Same host contract on RenderEditable
@@ -455,6 +470,8 @@ class RenderParagraph extends RenderBox { // Same host contract on RenderEditabl
     for (final d in _delegates) d.backgroundPainter?.paint(...); // 1. Backgrounds
     _textPainter.paint(context.canvas, offset);                  // 2. Glyphs & spans
     for (final d in _delegates) d.foregroundPainter?.paint(...); // 3. Foregrounds
+    for (final d in _delegates)                                  // 4. Anchors
+      for (final a in d.anchors) context.pushLayer(LeaderLayer(link: a.link, ...), ...);
   }
 }
 ```
@@ -465,7 +482,9 @@ class RenderParagraph extends RenderBox { // Same host contract on RenderEditabl
 
 3. Plugin `foregroundPainter`s run in ascending `paintOrder` (with root-to-leaf `TextPluginScope` installation order breaking ties), clipped when `_needsClipping` is true.
 
-In our current prototype, existing `SelectionArea` and `EditableText` selection layers remain in place around stage 2 (`_SelectableFragment.paintSelection` before `_textPainter.paint` and `_SelectableFragment.paintHandles` after `foregroundPainter`s in `RenderParagraph`; `_backgroundRenderObject` and `_foregroundRenderObject` in `RenderEditable`). When selection highlighting is migrated to `_SelectionHighlightTextPlugin` (see [Section 5.2](#52-should-selection-highlighting-be-a-textplugin)), selection highlight rectangles paint as a `backgroundPainter` in stage 1 with a higher `paintOrder` than default feature plugins.
+4. One `LeaderLayer` per `TextAnchor` ([Section 3.8](#38-anchoring-overlay-widgets-to-text-textanchor)), outside of the overflow clip. These layers draw nothing: they give widgets in the `Overlay` a position to follow. A `RenderParagraph` is composited only while an anchor is installed.
+
+The selection of static text is not a special case in this pipeline. Its highlight is the `backgroundPainter` of `TextSelectionPlugin`, whose `paintOrder` of 100 puts it at the end of stage 1 (above the background decorations of ordinary plugins, behind the glyphs), and its handles are anchors in stage 4 (see [Section 5.2](#52-should-selection-highlighting-be-a-textplugin)). `RenderEditable` keeps its own selection and caret painting (`_backgroundRenderObject` and `_foregroundRenderObject`, between the plugin backgrounds and the plugin foregrounds) and its own handle layers.
 
 ### 3.6 First-party `SearchInPagePlugin` implementation
 
@@ -613,11 +632,11 @@ Nothing extra is needed. `MouseTracker` collects every `MouseTrackerAnnotation` 
 
 `RenderParagraph.describeSemanticsConfiguration` builds `List<InlineSpanSemanticsInformation>` from the span tree; the concatenation of `info.text` is exactly `delegate.text` (same `\uFFFC` placeholder convention as [Section 7.3](#73-embedded-widgetspans-and-utf-16-offset-alignment)), so annotation ranges and semantics runs share one coordinate space. A single pure function, `applyTextAnnotationsToSemantics`, splits the runs at annotation boundaries and wraps the covered segments in a `TextAnnotationSemanticsInformation` (a subclass that overrides `requiresOwnNode`). After that the **existing** `assembleSemanticsNode` loop builds the child nodes exactly as it does for `TextSpan.recognizer`: rect from `getBoxesForSelection`, `OrdinalSortKey`, `isHidden` for clipped ranges, no node for truncated ranges ([Section 7.4](#74-text-truncation-and-overflow-clipping)), stable node identity via `_cachedChildNodes`, and `showOnScreen`. The only annotation-specific code is `TextAnnotation.describeSemanticsConfiguration`, which sets `onTap`/`onLongPress`, `isLink` + `linkUrl` (or `isButton` for a tappable range without a URL), and `isFocusable`/`isFocused`/`onFocus` when a focus node exists.
 
-The rules that keep the semantics tree sane are spelled out in [Section 7.13](#713-semantics-tree-shape-for-annotated-text); the short version is that **decoration never fragments the tree**: only an annotation with an action or a `linkUrl` creates its own node, a `semanticsLabel` alone just replaces the spoken text inside the merged paragraph label, and `SearchInPagePlugin`, `SpellcheckLinterPlugin`, and `ReadAloudPlugin` set no annotations at all.
+The rules that keep the semantics tree sane are spelled out in [Section 7.13](#713-semantics-tree-shape-for-annotated-text); the short version is that **decoration never fragments the tree**: only an annotation with an action or a `linkUrl` creates its own node, a `semanticsLabel` alone just replaces the spoken text inside the merged paragraph label, and `SearchInPagePlugin` and `ReadAloudPlugin` set no annotations at all (`SpellcheckLinterPlugin` sets them only when it is given an `onIssueTapped` callback).
 
 #### 3.7.4 Keyboard focus
 
-`FocusNode`s need a `BuildContext` (`attach`, scope reparenting, traversal geometry), so focus cannot live in the rendering layer, and it should not require new plumbing through `RichText` and `EditableText`. `TextPluginScope` therefore installs an internal `_TextAnnotationFocusPlugin` in its own plugin list, the same trick `SelectableRegion` uses for `_SelectionHighlightTextPlugin`. Being a plugin, it discovers every text widget through `didAddText`/`didRemoveText`, listens to each delegate (which is notified whenever *any* plugin changes annotations on that text), and mirrors the focusable annotations as `_TextAnnotationFocusNode`s attached to the scope's context. Details are in [Section 7.14](#714-keyboard-focus-for-annotated-text).
+`FocusNode`s need a `BuildContext` (`attach`, scope reparenting, traversal geometry), so focus cannot live in the rendering layer, and it should not require new plumbing through `RichText` and `EditableText`. `TextPluginScope` therefore installs an internal `_TextAnnotationFocusPlugin` in its own plugin list. Being a plugin, it discovers every text widget through `didAddText`/`didRemoveText`, listens to each delegate (which is notified whenever *any* plugin changes annotations on that text), and mirrors the focusable annotations as `_TextAnnotationFocusNode`s attached to the scope's context. Details are in [Section 7.14](#714-keyboard-focus-for-annotated-text).
 
 #### 3.7.5 One ordering rule
 
@@ -649,11 +668,53 @@ void _scanLinks(TextDelegate delegate) {
 
 Compared with the earlier prototype, the `PointerDownEvent`/`PointerUpEvent` bookkeeping is gone, and the plugin gains a hand cursor, hover callbacks, link nodes for VoiceOver/TalkBack, and Tab/Enter support it never had. `StockTickerPlugin` (`isButton` nodes labelled "GOOG, Alphabet Inc., up 2.4 percent") and `SpoilerMaskPlugin` (whose `semanticsLabel` is "Spoiler, hidden" while masked and `null` once revealed, so screen-reader users get the same reveal experience as sighted users) convert the same way.
 
+### 3.8 Anchoring overlay widgets to text: `TextAnchor`
+
+Painters and annotations cover what a plugin does *inside* the text. Some features also need a widget *outside* of it that stays attached to a place in the text: the selection handles of a `SelectableRegion`, the preview card of a link, the name tag of a collaborator's cursor, a comment bubble in the margin. Such widgets live in the `Overlay`, and the way to keep an overlay widget attached to something that scrolls and transforms is a `LayerLink`: the target pushes a `LeaderLayer`, and a `CompositedTransformFollower` follows it when the frame is composited.
+
+A `CustomPainter` cannot do that, because it is given a `Canvas` and layers are pushed on a `PaintingContext`. This is what kept selection handles out of the first version of this proposal ([Section 5.2](#52-should-selection-highlighting-be-a-textplugin)). `TextAnchor` removes the obstacle without handing plugins a `PaintingContext`:
+
+```dart
+class TextAnchor {
+  const TextAnchor({required LayerLink link, required Rect rect}); // rect in the text widget's coordinates
+  factory TextAnchor.point({required LayerLink link, required Offset offset});
+}
+
+class TextDelegate {
+  List<TextAnchor> anchors; // Isolated per plugin, like the painter slots
+}
+```
+
+The plugin states *where*, and the host does the compositing:
+
+1. `RenderParagraph.paint` and `RenderEditable.paint` push one `LeaderLayer(link: anchor.link, offset: paintOffset + anchor.rect.topLeft)` per installed anchor, after the foreground painters (stage 4 in [Section 3.5](#35-renderparagraph-and-rendereditable-painting-and-z-order-pipeline)).
+
+2. Setting `anchors` sets `link.leaderSize` to the size of `rect`, so that a follower can align with any edge of the anchored glyphs through `CompositedTransformFollower.targetAnchor`. It also marks the text for repaint and updates its compositing bits: a `RenderParagraph` is composited only while it has an anchor (a `RenderEditable` always is).
+
+3. `rect` is expressed in the coordinate space of the text widget, and the host does not recompute it. A plugin that anchors to glyphs computes it from `getBoxesForSelection` or `getBoundsForAnnotation` in `didLayoutText`, which runs after every layout.
+
+Because the follower is positioned when the frame is composited, scrolling or an ancestor transform moves it with the text, and the plugin is not involved. Anchoring a link preview to the link under the pointer is a few lines:
+
+```dart
+class LinkPreviewPlugin extends TextPlugin {
+  /// Followed by a CompositedTransformFollower in an OverlayEntry.
+  final LayerLink link = LayerLink();
+
+  // Called from TextAnnotation.onEnter, and from didLayoutText while the preview is open.
+  void _anchorPreview(TextDelegate delegate, TextAnnotation annotation) {
+    final Rect? bounds = delegate.getBoundsForAnnotation(annotation);
+    delegate.anchors = <TextAnchor>[if (bounds != null) TextAnchor(link: link, rect: bounds)];
+  }
+}
+```
+
+`TextSelectionPlugin` uses the same API for the two selection handles ([Section 5.2](#52-should-selection-highlighting-be-a-textplugin)): `Selectable.pushHandleLayers(startHandle, endHandle)` gives it the `LayerLink`s of the region, and it installs a `TextAnchor.point` at the start and at the end of the selection.
+
 ---
 
 ## 4. Community package use cases
 
-`TextPlugin` combines text inspection (`text`, `placeholderRanges`), sub-span geometry (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`), custom painting (`backgroundPainter`, `foregroundPainter`), interactive ranges (`annotations`), and viewport control (`ensureVisible`, `compareTo`, `needsOffscreenContent`, `paintOrder`). Together, these primitives support drop-in packages across any `Text`, `RichText`, or `EditableText` subtree.
+`TextPlugin` combines text inspection (`text`, `placeholderRanges`), sub-span geometry (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`), custom painting (`backgroundPainter`, `foregroundPainter`), interactive ranges (`annotations`), overlay anchors (`anchors`), and viewport control (`ensureVisible`, `compareTo`, `needsOffscreenContent`, `paintOrder`). Together, these primitives support drop-in packages across any `Text`, `RichText`, or `EditableText` subtree.
 
 ### 4.1 Use cases implemented in the demo app
 
@@ -837,87 +898,112 @@ Because `OffscreenRenderingPolicy` carries a configurable `ScrollCacheExtent?`, 
 
 ### 5.2 Should selection highlighting be a `TextPlugin`?
 
-When a user drags to select text inside a [SelectionArea](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/material/selection_area.dart) or [SelectableRegion](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/selectable_region.dart), Flutter draws a colored rectangle behind the selected characters. A natural architectural question is what parts of text selection can be implemented as a `TextPlugin`, and what parts cannot.
+When a user drags to select text inside a [SelectionArea](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/material/selection_area.dart) or [SelectableRegion](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/selectable_region.dart), three pieces of `RenderParagraph` make that work: a private `_SelectableFragment` class of about 2,200 lines that implements `Selectable` for each run of text, a paint step that draws the highlight behind the selected characters, and a paint step that pushes the layers the selection handles follow. A natural architectural question is how much of that can be a `TextPlugin`.
 
-#### 5.2.1 What `TextPlugin` can do: painting selection highlights
+The first version of this proposal answered "only the highlight", because a `CustomPainter` cannot push the `LeaderLayer`s of the handles. With `TextAnchor` ([Section 3.8](#38-anchoring-overlay-widgets-to-text-textanchor)) that obstacle is gone, and the prototype answers "all of it": `RenderParagraph` no longer contains selection code, and `SelectableRegion` contains no plugin code.
 
-In `RenderParagraph` today, selection highlight painting (`_SelectableFragment.paintSelection`) queries `getBoxesForSelection` and draws rectangles on the canvas before the text glyphs paint:
+#### 5.2.1 `TextSelectionPlugin`: what moved
+
+`TextSelectionPlugin` (`rendering/text_selection_plugin.dart`) is a public, `const`, subclassable plugin. Everything it does goes through `TextDelegate`:
+
+| Selection responsibility | In `RenderParagraph` before | In `TextSelectionPlugin` now |
+| :--- | :--- | :--- |
+| Create one `Selectable` per run of text between placeholders, and register it | `_getSelectableFragments`, `registrar.add` | `didAddText`, `delegate.selectionRegistrar.add` |
+| Answer `SelectionEvent`s (edge updates, word, paragraph, select all, keyboard extension) | `_SelectableFragment` reading private members of the paragraph | The same code reading `TextDelegate` geometry (`getPositionForOffset`, `getWordBoundary`, `getLineBoundary`, `moveByWordBoundary`, `computeLineMetrics`, ...) |
+| Tell other plugins what is selected | `RenderParagraph.selections` reading the fragments | `delegate.reportSelections(...)`: every plugin reads `delegate.selections` and is notified |
+| Paint the highlight | A dedicated step in `paint` | `delegate.backgroundPainter` with `paintOrder` 100, calling the overridable `paintSelectionHighlight` |
+| Position the handles | `context.pushLayer(LeaderLayer(...))` in `paint` | `delegate.anchors` with a `TextAnchor.point` per handle |
+| Drop cached geometry after a layout | Calls from `markNeedsLayout` and `performLayout` | `didLayoutText` |
+| Unregister and dispose | `dispose`, and the `registrar` and `text` setters | `didRemoveText` |
+
+`SelectableRegion` keeps everything that is not specific to text: the gesture recognizers, the handle and toolbar widgets, the magnifier, the clipboard and keyboard actions, and the coordination of one selection across `Selectable`s of any kind (text, images, custom render objects) through `SelectionRegistrar`.
+
+Because the highlight is an overridable method, restyling the selection is a small subclass:
 
 ```dart
-for (final TextBox textBox in paragraph.getBoxesForSelection(selection)) {
-  context.canvas.drawRect(textBox.toRect().shift(offset), selectionPaint);
+class RoundedSelectionPlugin extends TextSelectionPlugin {
+  const RoundedSelectionPlugin();
+
+  @override
+  void paintSelectionHighlight(Canvas canvas, TextDelegate delegate, TextSelection selection) {
+    final Paint paint = Paint()..color = delegate.selectionColor ?? const Color(0x00000000);
+    for (final TextBox box in delegate.getBoxesForSelection(selection)) {
+      canvas.drawRRect(RRect.fromRectAndRadius(box.toRect(), const Radius.circular(4)), paint);
+    }
+  }
 }
-```
 
-Because this is the same operation performed by a plugin `backgroundPainter`, `SelectableRegion` can install a `_SelectionHighlightTextPlugin` via `TextPluginScope` that reads the paragraph's active selection from `TextDelegate` and paints the highlight boxes.
-
-Moving selection highlight painting into a `TextPlugin` simplifies `RenderParagraph.paint` and allows apps to customize how selection highlights look (such as rounded selection corners or collaborative cursors) using the standard plugin pipeline.
-
----
-
-#### 5.2.2 Trade-offs and what `TextPlugin` cannot do alone
-
-Evaluating selection as a `TextPlugin` highlights four architectural trade-offs and boundaries:
-
-##### 1. Paint order between `SelectionArea` and inner feature plugins (solved by `TextPlugin.paintOrder`)
-
-`SelectionArea` is typically mounted near the root of an app or page, while feature plugins (such as `StockTickerPlugin`, which paints an opaque green pill behind `"GOOG"`) are mounted deeper inside the page body:
-
-```dart
-SelectionArea( // Outer scope: _SelectionHighlightTextPlugin (paintOrder: 100)
-  child: Scaffold(
-    body: TextPluginScope(
-      plugin: stockTickerPlugin, // Inner scope: opaque green pill (paintOrder: 0)
-      child: const Text('Buy GOOG today'),
-    ),
-  ),
+SelectionArea(
+  child: TextPluginScope(plugin: const RoundedSelectionPlugin(), child: page),
 )
 ```
 
-If plugin paint order were locked strictly to root-to-leaf widget tree nesting, the inner opaque `"GOOG"` pill would paint over the outer `SelectionArea` highlight, making `"GOOG"` look unselected. `TextPlugin.paintOrder` (see [Section 3.2](#32-textplugin-lifecycle-contract) and [Section 3.4](#34-textpluginscope-and-hierarchical-merging)) solves this cleanly: `_SelectionHighlightTextPlugin` declares a higher `paintOrder` (for example, `int get paintOrder => 100`) than default feature plugins (`paintOrder => 0`), so selection highlights always paint above opaque background badges from inner `TextPluginScope`s while still painting behind the paragraph's text glyphs.
+---
+
+#### 5.2.2 The four obstacles, and how each one is resolved
+
+##### 1. Paint order between the selection and feature plugins (solved by `TextPlugin.paintOrder`)
+
+A feature plugin such as `StockTickerPlugin` paints an opaque green pill behind `"GOOG"`. If the selection highlight were painted before the pill, `"GOOG"` would look unselected. `TextSelectionPlugin.paintOrder` is `100` and feature plugins default to `0`, and `RenderParagraph.paint` runs the background painters in a single pass in that order (see [Section 3.2](#32-textplugin-lifecycle-contract) and [Section 3.4](#34-textpluginscope-and-hierarchical-merging)), so the highlight is painted above the pill and behind the glyphs. The host has no selection-specific flag or second pass.
 
 ##### 2. Per-widget `Text(selectionColor: ...)` and inline `WidgetSpan`s
 
-A single `_SelectionHighlightTextPlugin` installed at the root `SelectableRegion` only knows the default selection color from `DefaultSelectionStyle`. If a descendant `Text('Warning', selectionColor: Colors.red)` overrides its selection color, or if a `Text.rich` contains inline `WidgetSpan`s that split the paragraph into multiple selectable ranges, the plugin cannot render accurately unless `TextDelegate` exposes per-paragraph `selectionColor` and `selections` (where `getBoxesForSelection` defaults to `includePlaceholders: false` so inline widgets are not highlighted).
+The plugin is stateless and keeps the state of each text widget on the side, so one `const` instance serves every text widget. It reads the color from `delegate.selectionColor`, which is the `selectionColor` of that particular `Text`, and it creates one `Selectable` per run of text between `WidgetSpan`s, so a `Text.rich` with an inline widget reports two selections and the widget itself is never highlighted.
 
-##### 3. Plugin opt-out (`TextPluginScope.none` versus `TextPluginScope.exclude`)
+##### 3. Plugin opt-out (`TextPluginScope.none` and `TextPluginScope.exclude`)
 
-If a developer wraps a sidebar in `TextPluginScope.none` so `SeoExtractorPlugin` ignores the sidebar text, `TextPluginScope.none` removes all ancestor plugins, including `_SelectionHighlightTextPlugin`. Users could still copy the sidebar text, but the visual selection highlight would disappear. Using `TextPluginScope.exclude(types: {SeoExtractorPlugin})` lets developers disable specific feature plugins without stripping selection highlighting.
+If the selection plugin were installed by a `TextPluginScope` around the region, wrapping a sidebar in `TextPluginScope.none` would also strip selection from it, and every app that uses `SelectionArea` would get a plugin scope. Selection therefore follows one rule that does not depend on scopes:
+
+> Selectable text (text that has a `SelectionRegistrar`) always has exactly one `TextSelectionPlugin`: the innermost one provided by a `TextPluginScope`, or else `const TextSelectionPlugin()`, which the text installs itself. Text that is not selectable has none.
+
+So `SelectionArea` works without any `TextPluginScope`, `TextPluginScope.none` and `TextPluginScope.exclude` cannot make text unselectable (`SelectionContainer.disabled` remains the way to do that), and a scope is only needed to replace the default plugin with a subclass.
 
 ##### 4. Mobile drag handles and cross-widget selection
 
-While `CustomPainter` can draw selection rectangles on a `Canvas`, it cannot replace the rest of `_SelectableFragment` inside `RenderParagraph`:
+The handles are widgets in the `Overlay` that follow a `LayerLink`. The region gives the two links to the `Selectable`s at the edges of the selection (`Selectable.pushHandleLayers`), and the plugin anchors them with a `TextAnchor.point` at the start and at the end of the selection. The host pushes the `LeaderLayer`s, and it is composited only while a handle is anchored to it (until now every selectable paragraph was composited all the time).
 
-1. Mobile selection drag handles (the teardrop handles on Android and iOS) require pushing composited `LeaderLayer`s (`context.pushLayer(LeaderLayer(...))`) into the `PaintingContext` during `RenderParagraph.paint`. A `CustomPainter` only receives a `Canvas` and cannot push composited layers.
-
-2. `SelectionArea` coordinates selection gestures across both text (`RenderParagraph`) and non-text widgets (such as selectable images), so `RenderParagraph` must still register its selectable fragments with `SelectionRegistrar`.
+Cross-widget selection needs nothing new. The plugin registers its `Selectable`s with `delegate.selectionRegistrar`, which is the registrar that `Text` already receives from `SelectionContainer`, and the region coordinates them as before.
 
 ---
 
-#### 5.2.3 Summary: what can and cannot move to `TextPlugin`
+#### 5.2.3 Summary: what is and is not a `TextPlugin`
 
-| Selection Responsibility | Can be a `TextPlugin`? | Architectural Reason |
+| Selection Responsibility | Is it in a `TextPlugin`? | How |
 | :--- | :--- | :--- |
-| **Drawing selection highlight boxes** | **Yes** | Maps directly to `TextDelegate.backgroundPainter` + `getBoxesForSelection(...)` + `paintOrder`, provided `TextDelegate` exposes `selections` and `selectionColor`. |
-| **Custom selection styles (rounded rects, animations)** | **Yes** | Custom `TextPlugin` painters can draw any `Canvas` decoration behind or in front of selected glyphs. |
-| **Mobile drag handle positioning (`LeaderLayer`)** | **No (not via `CustomPainter`)** | Requires `PaintingContext.pushLayer(LeaderLayer(...))` and `alwaysNeedsCompositing` on `RenderParagraph`. |
-| **Gesture dispatch and cross-widget selection** | **No** | Handled by `SelectableRegion` and `SelectionRegistrar` across both text and non-text `Selectable` render objects. |
+| **Drawing selection highlight boxes** | **Yes** | `TextDelegate.backgroundPainter` + `getBoxesForSelection(...)` + `paintOrder` 100. |
+| **Custom selection styles (rounded rects, animations)** | **Yes** | Override `TextSelectionPlugin.paintSelectionHighlight`. |
+| **Mobile drag handle positioning (`LeaderLayer`)** | **Yes** | `TextDelegate.anchors` ([Section 3.8](#38-anchoring-overlay-widgets-to-text-textanchor)). |
+| **The `Selectable`s of a paragraph (events, geometry, copied text)** | **Yes** | `TextDelegate.selectionRegistrar`, `reportSelections`, and the geometry getters. |
+| **Gestures, handle and toolbar widgets, cross-widget coordination** | **No** | Not specific to text. Stays in `SelectableRegion` and `SelectionRegistrar`. |
+| **Selection in `TextField` and `EditableText`** | **Not yet** | `RenderEditable` keeps its own selection painting and handle layers. |
 
-#### 5.2.4 Follow-up roadmap: what it would take to migrate `SelectionArea` to `TextPlugin`
+#### 5.2.4 Status of the migration, and what is left
 
-Moving all of `SelectionArea`'s text responsibilities into a `TextPlugin` involves a core trade-off: it removes roughly 2,100 lines of `_SelectableFragment` code from `RenderParagraph`, but it requires expanding `TextDelegate` beyond canvas painting into composited layer management and `SelectionRegistrar` plumbing.
+The migration is implemented in the prototype. `paragraph.dart` shrinks from about 4,040 lines to about 1,790, `selectable_region.dart` is back to what it is on `master`, and the existing widget tests for selection pass without being modified. In the rendering tests of `RenderParagraph` one expectation changed: a test constructed a paragraph and expected its `Selectable`s before the paragraph was attached and laid out.
 
-Because of that trade-off, this initial proposal keeps Flutter's built-in selection rendering unchanged while landing the core `TextPlugin` pipeline first. If we choose to migrate `SelectionArea` to `TextPlugin` in a follow-up, it would require four steps:
+The host keeps two selection-specific rules. Both are about lifetime, because a selection is state that cannot be recomputed from the text:
 
-1. Expose per-paragraph `selections` (`List<TextSelection>`) and `selectionColor` (`Color?`) on `TextDelegate`, and have `SelectionContainer` and `SelectableRegion` install `_SelectionHighlightTextPlugin` to draw selection boxes via `delegate.backgroundPainter`.
+1. The text is added to its selection plugin again (`didRemoveText`, then `didAddText` after the next layout) when its `SelectionRegistrar` changes, or when its text changes in a way that needs a new layout. These are the places where `RenderParagraph` used to recreate its fragments.
 
-2. Set `_SelectionHighlightTextPlugin.paintOrder` above default feature plugins (`0`) so outer `SelectionArea` highlights paint over opaque background badges from inner feature plugins.
+2. The delegate of the selection plugin is the only delegate that survives `detach()`. A scrolling list detaches and re-attaches the selected items that it keeps alive, and their selection has to survive that. The delegate is removed in `dispose()`.
 
-3. Extend `TextDelegate` with `delegate.registerHandleLayers(startLink, endLink)` so a selection plugin can push composited `LeaderLayer`s for mobile drag handles during `RenderParagraph.paint` and `RenderEditable._paintContents`.
+Behavior that changes with the migration:
 
-4. Use `TextPluginScope.exclude(types: {...})` on UI chrome so disabling feature plugins never strips `_SelectionHighlightTextPlugin`, and then remove the legacy selection highlight painting code from `RenderParagraph` and `RenderEditable`.
+- The `Selectable`s of a paragraph are registered after its first layout while attached (the plugin lifecycle of [Section 3.2](#32-textplugin-lifecycle-contract)) instead of at construction. `MultiSelectableSelectionContainerDelegate` already applies additions in a post-frame callback, so the region sees them in the same frame.
+- A selectable paragraph is composited only while a selection handle is anchored to it.
+- `TextPluginScope.none` and `TextPluginScope.exclude` do not affect selection.
 
-The scope's internal focus plugin ([Section 7.14](#714-keyboard-focus-for-annotated-text)) is a second instance of the same pattern (a framework concern implemented as an ordinary `TextPlugin` installed by a widget), which is encouraging for this migration.
+What is left before this can land:
+
+1. Goldens and benchmarks on CI for pages with a lot of selectable text. The compositing change alters the layer tree inside every `SelectionArea`, and every selectable paragraph now carries one `TextDelegate` for its selection plugin.
+
+2. `RenderEditable` still paints its own selection and pushes its own handle layers. Moving that to a plugin is a separate step, because an editable owns its selection instead of receiving it from a registrar.
+
+3. The plugin still depends on `RenderParagraph` for one thing: selecting by paragraph walks up the render tree to find the paragraphs that enclose a `WidgetSpan`. Everything else comes from `TextDelegate`. Until that is expressed through the delegate, custom `TextDelegateHostMixin` hosts cannot use the plugin.
+
+4. Deciding whether `TextSelectionPlugin` is public from the start, or internal until its API has settled.
+
+The scope's internal focus plugin ([Section 7.14](#714-keyboard-focus-for-annotated-text)) is a second instance of the same pattern (a framework concern implemented as an ordinary `TextPlugin`).
 
 ---
 
@@ -1183,6 +1269,8 @@ In `RenderParagraph._syncTextPluginDelegates`, we diff the existing `_textPlugin
 
 3. Only newly added plugins receive a new `TextDelegate` and schedule a post-layout `didAddText(delegate)`.
 
+The same diff runs when a render object is attached. Delegates do not outlive `detach()`, with one exception: the delegate of a `TextSelectionPlugin` is kept, so that a selection survives its paragraph being moved in the tree or kept alive off screen ([Section 5.2](#52-should-selection-highlighting-be-a-textplugin)).
+
 ---
 
 ### 7.7 Deduplicating plugins by `Type` and instance across nested scopes
@@ -1222,11 +1310,13 @@ The design now routes all interaction through the arena ([Section 3.7.1](#371-hi
 
 ### 7.9 `SelectionArea` and `SelectableRegion` coexistence
 
-When a `Text` widget is inside both a `SelectionArea` and a `TextPluginScope`, both `RenderParagraph`'s `_SelectableFragment`s and `TextDelegate` painters are active on the same `RenderParagraph`.
+When a `Text` widget is inside both a `SelectionArea` and a `TextPluginScope`, its `RenderParagraph` hosts the feature plugins of the scope and a `TextSelectionPlugin` ([Section 5.2](#52-should-selection-highlighting-be-a-textplugin)). They share one pipeline, so how they stack is the ordinary `paintOrder` rule and not a special case:
 
-If a plugin's `backgroundPainter` painted on top of the user's text selection highlight, an opaque plugin badge would hide the user's selection rectangle. If a plugin's `foregroundPainter` painted on top of selection drag handles, the handles could be covered.
+- The selection highlight is a background painter with `paintOrder` 100. It is painted above the background decorations of plugins that keep the default `0`, so an opaque badge does not hide the selection, and behind the glyphs. A plugin that has to paint a background above the selection declares a higher `paintOrder`.
 
-In `RenderParagraph.paint`, plugin `backgroundPainter`s paint behind `_SelectableFragment.paintSelection` (or with lower `paintOrder` than `_SelectionHighlightTextPlugin`) so user text selection remains visible over plugin background tints. Plugin `foregroundPainter`s paint in front of glyphs (for underlines and overlays) but behind `_SelectableFragment.paintHandles`.
+- Plugin `foregroundPainter`s paint in front of the glyphs (underlines, overlays). The selection handles are not painted by the paragraph: they are widgets in the `Overlay` that follow anchors ([Section 3.8](#38-anchoring-overlay-widgets-to-text-textanchor)), so a plugin painter cannot cover them.
+
+- Other plugins see the selection through `TextDelegate.selections` and `TextDelegate.selectionColor`, and their delegates are notified when it changes.
 
 ---
 
@@ -1236,7 +1326,7 @@ In Flutter, many UI controls use `Text` and `RichText` internally, including `Ap
 
 If a developer wraps their entire `MaterialApp` or `Scaffold` in a `TextPluginScope(plugin: searchPlugin, ...)`, searching for `'Add'` highlights the `'Add Text'` button label. Worse, if the search bar itself is inside the `TextPluginScope` and displays `'1 / 4'`, typing `'1'` matches the search bar's own match counter.
 
-`TextPluginScope.none` strips all ancestor `TextPlugin`s for its `child` subtree (and `TextPluginScope.exclude(types: {SearchInPagePlugin})` strips specific plugin types while preserving selection). Developers should either place `TextPluginScope` around the content body rather than the outer `Scaffold` chrome, or wrap embedded toolbars and search bars in `TextPluginScope.none`.
+`TextPluginScope.none` strips all ancestor `TextPlugin`s for its `child` subtree (and `TextPluginScope.exclude(types: {SearchInPagePlugin})` strips specific plugin types). Neither one makes the text unselectable, because selection does not come from a scope ([Section 5.2](#52-should-selection-highlighting-be-a-textplugin)). Developers should either place `TextPluginScope` around the content body rather than the outer `Scaffold` chrome, or wrap embedded toolbars and search bars in `TextPluginScope.none`.
 
 ---
 

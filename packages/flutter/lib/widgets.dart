@@ -16,7 +16,14 @@ export 'package:characters/characters.dart';
 export 'package:vector_math/vector_math_64.dart' show Matrix4;
 
 export 'foundation.dart' show Brightness, UniqueKey;
-export 'rendering.dart' show TextAnnotation, TextDelegate, TextPlugin, TextSelectionHandleType;
+export 'rendering.dart'
+    show
+        TextAnchor,
+        TextAnnotation,
+        TextDelegate,
+        TextPlugin,
+        TextSelectionHandleType,
+        TextSelectionPlugin;
 export 'src/widgets/actions.dart';
 export 'src/widgets/adapter.dart';
 export 'src/widgets/animated_cross_fade.dart';

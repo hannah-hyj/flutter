@@ -78,7 +78,16 @@ export 'src/rendering/sliver_tree.dart';
 export 'src/rendering/stack.dart';
 export 'src/rendering/table.dart';
 export 'src/rendering/table_border.dart';
-export 'src/rendering/text_plugin.dart';
+export 'src/rendering/text_plugin.dart'
+    hide
+        TextAnnotationSemanticsInformation,
+        TextPluginHost,
+        applyRecognizerSemantics,
+        applyTextAnnotationsToSemantics,
+        hasTextAnchors,
+        pushTextAnchorLayers,
+        textAnnotationsAt;
+export 'src/rendering/text_selection_plugin.dart' hide resolveTextSelectionPlugin;
 export 'src/rendering/texture.dart';
 export 'src/rendering/tweens.dart';
 export 'src/rendering/view.dart';

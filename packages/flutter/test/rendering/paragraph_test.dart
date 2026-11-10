@@ -1045,10 +1045,195 @@ void main() {
         textDirection: TextDirection.ltr,
         registrar: registrar,
       );
+      // The selectables are created by a TextSelectionPlugin, which like every
+      // text plugin is added once the paragraph is attached and laid out.
+      expect(registrar.selectables.length, 0);
+      layout(paragraph);
       expect(registrar.selectables.length, 1);
 
       paragraph.text = const TextSpan(text: '');
       expect(registrar.selectables.length, 0);
+    });
+
+    test('selectables follow the text and the registrar, and survive a detach', () {
+      final registrar = TestSelectionRegistrar();
+      final paragraph = RenderParagraph(
+        const TextSpan(
+          text: '1234567',
+          style: TextStyle(color: Color(0xFFFF0000)),
+        ),
+        textDirection: TextDirection.ltr,
+        registrar: registrar,
+      );
+      layout(paragraph);
+      final Selectable selectable = registrar.selectables.single;
+      expect(paragraph.selectableBelongsToParagraph(selectable), isTrue);
+      selectable.dispatchSelectionEvent(const SelectAllSelectionEvent());
+      expect(paragraph.selections, <TextSelection>[
+        const TextSelection(baseOffset: 0, extentOffset: 7),
+      ]);
+
+      // A change that only needs a repaint keeps the selectable and its
+      // selection.
+      paragraph.text = const TextSpan(
+        text: '1234567',
+        style: TextStyle(color: Color(0xFF00FF00)),
+      );
+      pumpFrame();
+      expect(registrar.selectables.single, same(selectable));
+      expect(paragraph.selections, hasLength(1));
+
+      // So does detaching the paragraph and attaching it again, which is what
+      // a list does to keep a selected item alive.
+      TestRenderingFlutterBinding.instance.renderView.child = null;
+      expect(paragraph.attached, isFalse);
+      expect(registrar.selectables.single, same(selectable));
+      layout(paragraph);
+      expect(registrar.selectables.single, same(selectable));
+      expect(paragraph.selections, hasLength(1));
+
+      // New text gets new selectables once it is laid out.
+      paragraph.text = const TextSpan(text: 'abc');
+      expect(registrar.selectables, isEmpty);
+      expect(paragraph.selections, isEmpty);
+      expect(paragraph.selectableBelongsToParagraph(selectable), isFalse);
+      pumpFrame();
+      expect(registrar.selectables.single, isNot(same(selectable)));
+
+      // So does a new registrar.
+      final otherRegistrar = TestSelectionRegistrar();
+      paragraph.registrar = otherRegistrar;
+      expect(registrar.selectables, isEmpty);
+      pumpFrame();
+      expect(otherRegistrar.selectables, hasLength(1));
+
+      // Text without a registrar is not selectable.
+      paragraph.registrar = null;
+      expect(otherRegistrar.selectables, isEmpty);
+      pumpFrame();
+      expect(otherRegistrar.selectables, isEmpty);
+    });
+
+    test('becomes selectable after being detached before its selectables were created', () {
+      final registrar = TestSelectionRegistrar();
+      final paragraph = RenderParagraph(
+        const TextSpan(text: '1234567'),
+        textDirection: TextDirection.ltr,
+      );
+      final parent = RenderProxyBox(paragraph);
+      layout(parent);
+      expect(registrar.selectables, isEmpty);
+
+      // The paragraph becomes selectable, and is detached before the end of
+      // the frame in which its selectables would have been created. A list
+      // does this to an item that it keeps alive while it is scrolled away.
+      paragraph.registrar = registrar;
+      parent.child = null;
+      pumpFrame();
+      expect(paragraph.attached, isFalse);
+      expect(registrar.selectables, isEmpty);
+
+      // The paragraph comes back unchanged, so it is not laid out again.
+      expect(paragraph.debugNeedsLayout, isFalse);
+      parent.child = paragraph;
+      pumpFrame();
+      expect(registrar.selectables, hasLength(1));
+      expect(paragraph.selectableBelongsToParagraph(registrar.selectables.single), isTrue);
+    });
+
+    test('is composited only while it anchors selection handles', () {
+      final registrar = TestSelectionRegistrar();
+      final paragraph = RenderParagraph(
+        const TextSpan(text: '1234567'),
+        textDirection: TextDirection.ltr,
+        registrar: registrar,
+      );
+      layout(paragraph, phase: EnginePhase.compositingBits);
+      final Selectable selectable = registrar.selectables.single;
+      expect(paragraph.needsCompositing, isFalse);
+
+      // Handle links alone are not painted: there is no selection edge yet.
+      final startHandle = LayerLink();
+      final endHandle = LayerLink();
+      selectable.pushHandleLayers(startHandle, endHandle);
+      pumpFrame(phase: EnginePhase.compositingBits);
+      expect(paragraph.needsCompositing, isFalse);
+
+      selectable.dispatchSelectionEvent(const SelectAllSelectionEvent());
+      pumpFrame(phase: EnginePhase.compositingBits);
+      expect(paragraph.needsCompositing, isTrue);
+
+      final paintingContext = MockPaintingContext();
+      paragraph.paint(paintingContext, const Offset(10.0, 20.0));
+      final List<LeaderLayer> leaders = paintingContext.pushedLayers
+          .whereType<LeaderLayer>()
+          .toList();
+      expect(leaders.map((LeaderLayer layer) => layer.link), <LayerLink>[startHandle, endHandle]);
+      // The handles attach to the bottom of the line at each selection edge.
+      expect(leaders.first.offset, const Offset(10.0, 20.0 + 14.0));
+      expect(leaders.last.offset, const Offset(10.0 + 7 * 14.0, 20.0 + 14.0));
+
+      selectable.pushHandleLayers(null, null);
+      pumpFrame(phase: EnginePhase.compositingBits);
+      expect(paragraph.needsCompositing, isFalse);
+    });
+
+    test('selectable geometry is up to date as soon as the paragraph is laid out', () {
+      final registrar = TestSelectionRegistrar();
+      final paragraph = RenderParagraph(
+        const TextSpan(text: '1234 5678'),
+        textDirection: TextDirection.ltr,
+        registrar: registrar,
+      );
+      List<Rect> paragraphBoxes() {
+        return paragraph
+            .getBoxesForSelection(
+              const TextSelection(baseOffset: 0, extentOffset: 9),
+              boxHeightStyle: ui.BoxHeightStyle.max,
+            )
+            .map((ui.TextBox box) => box.toRect())
+            .toList();
+      }
+
+      // What a parent sees right after it laid out the paragraph, which is
+      // before the selection plugin is told about the new layout.
+      final seenByParent = <({List<Rect> selectable, List<Rect> paragraph})>[];
+      final parent = _RenderLayoutProbe(
+        childMaxWidth: 200.0,
+        onChildLaidOut: () {
+          for (final Selectable selectable in registrar.selectables) {
+            seenByParent.add((selectable: selectable.boundingBoxes, paragraph: paragraphBoxes()));
+          }
+        },
+        child: paragraph,
+      );
+      layout(parent);
+      // The selectable did not exist yet during the first layout.
+      expect(seenByParent, isEmpty);
+      final Selectable selectable = registrar.selectables.single;
+      final List<Rect> singleLine = selectable.boundingBoxes;
+      expect(singleLine, paragraphBoxes());
+      expect(singleLine, hasLength(1));
+      expect(selectable.size, const Size(9 * 14.0, 14.0));
+
+      // The parent gives the paragraph less room, so the text wraps.
+      parent.childMaxWidth = 5 * 14.0;
+      pumpFrame();
+      expect(seenByParent, hasLength(1));
+      expect(seenByParent.single.paragraph, hasLength(2));
+      expect(seenByParent.single.selectable, seenByParent.single.paragraph);
+      expect(selectable.boundingBoxes, paragraphBoxes());
+      expect(selectable.size.height, 2 * 14.0);
+
+      // The paragraph asks for a layout itself, and no longer wraps.
+      seenByParent.clear();
+      paragraph.softWrap = false;
+      pumpFrame();
+      expect(seenByParent, hasLength(1));
+      expect(seenByParent.single.paragraph, singleLine);
+      expect(seenByParent.single.selectable, singleLine);
+      expect(selectable.boundingBoxes, singleLine);
+      expect(selectable.size, const Size(9 * 14.0, 14.0));
     });
 
     test('paints selection highlight', () async {
@@ -1671,14 +1856,21 @@ class MockCanvas extends Fake implements Canvas {
   Paint? drawnRectPaint;
   List<Type> drawnItemTypes = <Type>[];
 
+  int _saveCount = 1;
+
+  @override
+  int getSaveCount() => _saveCount;
+
   @override
   void save() {
     operations.add('save');
+    _saveCount += 1;
   }
 
   @override
   void saveLayer(Rect? bounds, Paint paint) {
     operations.add('saveLayer');
+    _saveCount += 1;
   }
 
   @override
@@ -1703,6 +1895,7 @@ class MockCanvas extends Fake implements Canvas {
   @override
   void restore() {
     operations.add('restore');
+    _saveCount -= 1;
   }
 
   @override
@@ -1735,6 +1928,35 @@ class MockPaintingContext extends Fake implements PaintingContext {
   }) {
     operations.add('pushLayer');
     pushedLayers.add(childLayer);
+  }
+}
+
+/// Lays out its child with [childMaxWidth], and calls [onChildLaidOut] right
+/// after that, while the layout phase is still running.
+class _RenderLayoutProbe extends RenderProxyBox {
+  _RenderLayoutProbe({
+    required this._childMaxWidth,
+    required this.onChildLaidOut,
+    required RenderBox child,
+  }) : super(child);
+
+  final VoidCallback onChildLaidOut;
+
+  double get childMaxWidth => _childMaxWidth;
+  double _childMaxWidth;
+  set childMaxWidth(double value) {
+    if (value == _childMaxWidth) {
+      return;
+    }
+    _childMaxWidth = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void performLayout() {
+    child!.layout(BoxConstraints(maxWidth: _childMaxWidth), parentUsesSize: true);
+    size = constraints.constrain(child!.size);
+    onChildLaidOut();
   }
 }
 

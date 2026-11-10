@@ -12,6 +12,7 @@ import 'dart:ui'
     show
         BoxHeightStyle,
         BoxWidthStyle,
+        LineMetrics,
         StringAttribute,
         TextBox,
         TextDirection,
@@ -27,8 +28,11 @@ import 'package:flutter/services.dart';
 import 'box.dart';
 import 'custom_paint.dart';
 import 'editable.dart';
+import 'layer.dart';
 import 'object.dart';
 import 'paragraph.dart';
+import 'selection.dart';
+import 'text_selection_plugin.dart';
 
 /// An interface for plugins that interact with and change the visual appearance
 /// of text rendered by [RenderParagraph] and [RenderEditable] (such as via [Text],
@@ -40,8 +44,9 @@ import 'paragraph.dart';
 /// Each text widget in the scope is represented by a [TextDelegate], which
 /// allows the plugin to query the displayed string, query layout metrics (such
 /// as [TextDelegate.getBoxesForSelection]), attach a
-/// [TextDelegate.backgroundPainter] or [TextDelegate.foregroundPainter], and
-/// make ranges interactive and accessible with [TextDelegate.annotations].
+/// [TextDelegate.backgroundPainter] or [TextDelegate.foregroundPainter],
+/// make ranges interactive and accessible with [TextDelegate.annotations], and
+/// attach overlay widgets to the text with [TextDelegate.anchors].
 ///
 /// Multiple [TextPlugin]s can be composed for the same subtree by nesting
 /// [TextPluginScope] widgets or using [TextPluginScope.multiple]. By default,
@@ -57,6 +62,9 @@ import 'paragraph.dart';
 ///    [RenderEditable] managed by a [TextPlugin].
 ///  * [TextAnnotation], which describes how a range of text behaves (taps,
 ///    mouse cursor, hover) and what it means to assistive technology.
+///  * [TextAnchor], which pins a [LayerLink] to the text so that a widget in
+///    an [Overlay] can follow it.
+///  * [TextSelectionPlugin], the plugin that makes static text selectable.
 abstract class TextPlugin {
   /// Abstract const constructor. This constructor enables subclasses to provide
   /// const constructors so that they can be used in const expressions.
@@ -92,18 +100,10 @@ abstract class TextPlugin {
   /// [paintOrder], their relative order is determined by their
   /// [TextPluginScope] installation order (outermost scope first).
   ///
-  /// Defaults to `0`.
+  /// Defaults to `0`. [TextSelectionPlugin] uses `100`, so that the selection
+  /// highlight is painted on top of the background decorations of plugins
+  /// that keep the default.
   int get paintOrder => 0;
-
-  /// Whether this plugin paints text selection highlights.
-  ///
-  /// When a plugin with [handlesSelectionHighlight] set to `true` is active
-  /// on a [RenderParagraph], its [TextDelegate.backgroundPainter] is painted
-  /// after other plugin background painters (immediately behind the text
-  /// glyphs) and replaces the built-in selection highlight painting on
-  /// [RenderParagraph].
-  @internal
-  bool get handlesSelectionHighlight => false;
 
   /// Called after layout whenever a new text widget ([Text], [RichText], or
   /// [EditableText]) appears in the subtree covered by this plugin.
@@ -445,6 +445,58 @@ void applyRecognizerSemantics(SemanticsConfiguration configuration, GestureRecog
   }
 }
 
+/// Pins a [LayerLink] to a place in a text widget, so that a widget in an
+/// [Overlay] can follow the text with a [CompositedTransformFollower].
+///
+/// A [TextPlugin] installs anchors with [TextDelegate.anchors]. While an
+/// anchor is installed, the text widget pushes a [LeaderLayer] for [link] at
+/// [rect] every time it paints. The follower then stays attached to the text
+/// through scrolling, transforms, and repaints, without the plugin having to
+/// track any of them.
+///
+/// This is how [TextSelectionPlugin] positions the selection handles of a
+/// [SelectableRegion]: the handles are widgets in the [Overlay], and each one
+/// follows an anchor at an edge of the selection. A popup such as a link
+/// preview can be attached to a range the same way, using
+/// [TextDelegate.getBoundsForAnnotation] or
+/// [TextDelegate.getBoxesForSelection] to compute [rect].
+///
+/// The [rect] is expressed in the coordinate space of the text widget. It is
+/// not recomputed when the text is laid out again: a plugin that anchors to
+/// glyphs sets new anchors from [TextPlugin.didLayoutText].
+@immutable
+class TextAnchor {
+  /// Creates an anchor that keeps [link] attached to [rect].
+  const TextAnchor({required this.link, required this.rect});
+
+  /// Creates an anchor for a single point of the text widget, such as an
+  /// edge of the selection.
+  factory TextAnchor.point({required LayerLink link, required Offset offset}) {
+    return TextAnchor(link: link, rect: offset & Size.zero);
+  }
+
+  /// The link that followers use to find this anchor.
+  final LayerLink link;
+
+  /// The area that the leader covers, in the local coordinates of the text
+  /// widget.
+  ///
+  /// A follower aligns itself with this rectangle through
+  /// [CompositedTransformFollower.targetAnchor].
+  final Rect rect;
+
+  @override
+  bool operator ==(Object other) {
+    return other is TextAnchor && identical(other.link, link) && other.rect == rect;
+  }
+
+  @override
+  int get hashCode => Object.hash(link, rect);
+
+  @override
+  String toString() => '${objectRuntimeType(this, 'TextAnchor')}($rect)';
+}
+
 /// The interface a render object implements to host [TextDelegate]s.
 ///
 /// Implemented by [RenderParagraph], [RenderEditable], and
@@ -456,6 +508,49 @@ abstract interface class TextPluginHost {
 
   /// Called by [delegate] after its [TextDelegate.annotations] changed.
   void didChangeTextAnnotations(TextDelegate delegate);
+
+  /// Called by [delegate] after its [TextDelegate.anchors] changed.
+  ///
+  /// The host repaints, and updates its compositing bits because it pushes
+  /// layers exactly while anchors are installed.
+  void didChangeTextAnchors(TextDelegate delegate);
+
+  /// Called by [delegate] after the selections it reports with
+  /// [TextDelegate.reportSelections] changed.
+  void didChangeTextSelections(TextDelegate delegate);
+}
+
+/// Whether any of [delegates] has a [TextAnchor] installed, in which case the
+/// host pushes layers when it paints and therefore needs compositing.
+@internal
+bool hasTextAnchors(Iterable<TextDelegate> delegates) {
+  for (final delegate in delegates) {
+    if (delegate.anchors.isNotEmpty) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Pushes a [LeaderLayer] for every [TextAnchor] installed on [delegates].
+///
+/// Called by the hosts at the end of their `paint`, with the `offset` they
+/// were asked to paint at.
+@internal
+void pushTextAnchorLayers(
+  PaintingContext context,
+  Offset offset,
+  Iterable<TextDelegate> delegates,
+) {
+  for (final delegate in delegates) {
+    for (final TextAnchor anchor in delegate.anchors) {
+      context.pushLayer(
+        LeaderLayer(link: anchor.link, offset: offset + anchor.rect.topLeft),
+        (PaintingContext context, Offset offset) {},
+        Offset.zero,
+      );
+    }
+  }
 }
 
 /// Returns the [TextAnnotation]s covering the code unit at [offset], topmost
@@ -642,6 +737,8 @@ List<InlineSpanSemanticsInformation> applyTextAnnotationsToSemantics(
 ///  * Install [TextAnnotation]s via [annotations] to make ranges tappable,
 ///    give them a mouse cursor, expose them to assistive technology, and make
 ///    them keyboard focusable.
+///  * Install [TextAnchor]s via [anchors] so that widgets in an [Overlay]
+///    (selection handles, popups) can follow a place in the text.
 ///  * Listen for text, layout, selection, or annotation updates via
 ///    [addListener].
 class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
@@ -742,12 +839,50 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     return ranges;
   }
 
+  /// The [SelectionRegistrar] that the text widget represented by this
+  /// delegate contributes its selectable content to, if any.
+  ///
+  /// Non-null for a [RenderParagraph] inside a [SelectableRegion] that has
+  /// not been opted out with [SelectionContainer.disabled]. Null for editable
+  /// text, which manages its own selection.
+  ///
+  /// A plugin that implements selection (see [TextSelectionPlugin]) adds its
+  /// [Selectable]s to this registrar in [TextPlugin.didAddText] and removes
+  /// them in [TextPlugin.didRemoveText].
+  SelectionRegistrar? get selectionRegistrar => _paragraph?.registrar;
+
+  /// Reports the ranges of [text] that are currently selected.
+  ///
+  /// Called by the plugin that implements selection for this text widget
+  /// (see [TextSelectionPlugin]) whenever its selection changes. Every plugin
+  /// on the text widget can then read the ranges from [selections], and the
+  /// listeners of their delegates are notified.
+  void reportSelections(List<TextSelection> value) {
+    assert(!isDisposed);
+    assert(
+      plugin is TextSelectionPlugin,
+      'Only the plugin that implements selection for a text widget can report its selections.',
+    );
+    if (listEquals(_reportedSelections, value)) {
+      return;
+    }
+    _reportedSelections = List<TextSelection>.unmodifiable(value);
+    (renderObject as TextPluginHost).didChangeTextSelections(this);
+  }
+
+  /// The selections last passed to [reportSelections].
+  @internal
+  List<TextSelection> get reportedSelections => _reportedSelections;
+  List<TextSelection> _reportedSelections = const <TextSelection>[];
+
   /// The active text selections in the text widget represented by this
   /// delegate.
   ///
-  /// For a [RenderParagraph] with embedded [PlaceholderSpan]s (such as
-  /// [WidgetSpan]s), each selectable text fragment may have its own
-  /// [TextSelection].
+  /// For a [RenderParagraph] these are the ranges that its selection plugin
+  /// reported with [reportSelections]. With embedded [PlaceholderSpan]s (such
+  /// as [WidgetSpan]s), each run of text between two placeholders may have
+  /// its own [TextSelection]. For a [RenderEditable] this is the selection of
+  /// the field.
   List<TextSelection> get selections {
     if (_paragraph != null) {
       return _paragraph!.selections;
@@ -818,8 +953,8 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// Whether the user can select the text represented by this delegate.
   ///
   /// `true` for a [RenderParagraph] registered with a [SelectionRegistrar]
-  /// (inside a [SelectableRegion] or [SelectionArea]) and for a
-  /// [RenderEditable] with interactive selection enabled.
+  /// (inside a [SelectableRegion]) and for a [RenderEditable] with interactive
+  /// selection enabled.
   bool get isSelectable {
     if (_paragraph != null) {
       return _paragraph!.registrar != null;
@@ -901,6 +1036,30 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// that cover the code unit at [offset], topmost first.
   List<TextAnnotation> annotationsAt(int offset) {
     return textAnnotationsAt((renderObject as TextPluginHost).textPluginDelegates, offset);
+  }
+
+  /// The [TextAnchor]s this plugin has installed on this text widget.
+  ///
+  /// Each anchor keeps a [LayerLink] attached to a rectangle of the text
+  /// widget, so that a [CompositedTransformFollower] in an [Overlay] (a
+  /// selection handle, a popup) can follow the text. See [TextAnchor] for
+  /// details.
+  ///
+  /// While the list is not empty the text widget is composited, because it
+  /// pushes one [LeaderLayer] per anchor when it paints.
+  List<TextAnchor> get anchors => _anchors;
+  List<TextAnchor> _anchors = const <TextAnchor>[];
+  set anchors(List<TextAnchor> value) {
+    assert(!isDisposed);
+    if (listEquals(_anchors, value)) {
+      return;
+    }
+    _anchors = List<TextAnchor>.unmodifiable(value);
+    for (final TextAnchor anchor in _anchors) {
+      // Lets followers align with any edge of the anchored rectangle.
+      anchor.link.leaderSize = anchor.rect.size;
+    }
+    (renderObject as TextPluginHost).didChangeTextAnchors(this);
   }
 
   /// The local bounding rectangle of the glyphs covered by [annotation], or
@@ -1074,6 +1233,64 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
       return _editable!.getFullHeightForCaret(position);
     }
     return _host!.getFullHeightForCaret(position);
+  }
+
+  /// An estimate of the height of a line of the text.
+  ///
+  /// See [TextPainter.preferredLineHeight].
+  double get preferredLineHeight {
+    if (_paragraph != null) {
+      return _paragraph!.preferredLineHeight;
+    }
+    if (_editable != null) {
+      return _editable!.preferredLineHeight;
+    }
+    return _host!.preferredLineHeight;
+  }
+
+  /// Returns the [ui.TextRange] of the line that contains [position].
+  ///
+  /// Valid only after layout (see [hasLayout]).
+  ui.TextRange getLineBoundary(ui.TextPosition position) {
+    if (_paragraph != null) {
+      return _paragraph!.getLineBoundary(position);
+    }
+    if (_editable != null) {
+      final TextSelection line = _editable!.getLineAtOffset(position);
+      return ui.TextRange(start: line.start, end: line.end);
+    }
+    return _host!.getLineBoundary(position);
+  }
+
+  /// Returns the metrics of every laid out line of the text.
+  ///
+  /// See [TextPainter.computeLineMetrics]. Valid only after layout (see
+  /// [hasLayout]).
+  List<ui.LineMetrics> computeLineMetrics() {
+    if (_paragraph != null) {
+      return _paragraph!.computeLineMetrics();
+    }
+    if (_editable != null) {
+      return _editable!.computeLineMetrics();
+    }
+    return _host!.computeLineMetrics();
+  }
+
+  /// A [TextBoundary] for moving a caret or a selection edge word by word,
+  /// the way `Ctrl+Arrow` (`Option+Arrow` on macOS) does.
+  ///
+  /// Unlike [getWordBoundary], it skips the whitespace and punctuation
+  /// between words. See [WordBoundary.moveByWordBoundary].
+  ///
+  /// Valid only after layout (see [hasLayout]).
+  TextBoundary get moveByWordBoundary {
+    if (_paragraph != null) {
+      return _paragraph!.wordBoundaries.moveByWordBoundary;
+    }
+    if (_editable != null) {
+      return _editable!.wordBoundaries.moveByWordBoundary;
+    }
+    return _host!.moveByWordBoundary;
   }
 
   /// Applies the paint transform from the underlying render object up to
@@ -1251,6 +1468,14 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
       _annotations = const <TextAnnotation>[];
       (renderObject as TextPluginHost).didChangeTextAnnotations(this);
     }
+    if (_anchors.isNotEmpty) {
+      _anchors = const <TextAnchor>[];
+      (renderObject as TextPluginHost).didChangeTextAnchors(this);
+    }
+    if (_reportedSelections.isNotEmpty) {
+      _reportedSelections = const <TextSelection>[];
+      (renderObject as TextPluginHost).didChangeTextSelections(this);
+    }
     super.dispose();
   }
 }
@@ -1263,8 +1488,8 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
 ///  1. Implement [plainText], [textDirection], and [getBoxesForSelection].
 ///  2. Call [markNeedsTextDelegateUpdate] when [plainText] changes.
 ///  3. Call [didLayoutTextDelegates] at the end of [performLayout].
-///  4. Call [paintTextPluginBackgrounds] and [paintTextPluginForegrounds]
-///     inside [paint].
+///  4. Call [paintTextPluginBackgrounds], [paintTextPluginForegrounds], and
+///     [paintTextPluginAnchors] inside [paint].
 ///  5. Optionally call [hitTestTextAnnotations] in [hitTestChildren] and
 ///     [annotateSemanticsInformation] when building semantics, so that
 ///     [TextAnnotation]s installed by plugins become tappable and accessible.
@@ -1315,6 +1540,28 @@ mixin TextDelegateHostMixin on RenderBox implements TextPluginHost {
   /// Returns the full caret height for [position].
   double getFullHeightForCaret(ui.TextPosition position) => hasSize ? size.height : 0.0;
 
+  /// An estimate of the height of a line of [plainText].
+  ///
+  /// Defaults to the height of this render object.
+  double get preferredLineHeight => hasSize ? size.height : 0.0;
+
+  /// Returns the range of the line that contains [position].
+  ///
+  /// Defaults to the whole of [plainText].
+  ui.TextRange getLineBoundary(ui.TextPosition position) =>
+      ui.TextRange(start: 0, end: plainText.length);
+
+  /// Returns the metrics of every laid out line.
+  ///
+  /// Defaults to an empty list.
+  List<ui.LineMetrics> computeLineMetrics() => const <ui.LineMetrics>[];
+
+  /// A [TextBoundary] for moving through [plainText] word by word.
+  ///
+  /// Defaults to a boundary around the whole of [plainText], which matches
+  /// the default of [getWordBoundary].
+  TextBoundary get moveByWordBoundary => DocumentBoundary(plainText);
+
   /// The [TextPlugin]s that this render object is registered with.
   List<TextPlugin>? get textPlugins => _textPlugins;
   List<TextPlugin>? _textPlugins;
@@ -1338,6 +1585,34 @@ mixin TextDelegateHostMixin on RenderBox implements TextPluginHost {
       }
     }
   }
+
+  @override
+  @internal
+  void didChangeTextAnchors(TextDelegate delegate) {
+    markNeedsCompositingBitsUpdate();
+    markNeedsPaint();
+  }
+
+  @override
+  @internal
+  void didChangeTextSelections(TextDelegate delegate) {
+    if (_textPluginDelegates == null) {
+      return;
+    }
+    for (final TextDelegate other in _textPluginDelegates!.values.toList(growable: false)) {
+      if (!other.isDisposed) {
+        other.notifyChanged();
+      }
+    }
+  }
+
+  /// Whether this render object pushes layers when it paints.
+  ///
+  /// True while a plugin has a [TextAnchor] installed (see
+  /// [paintTextPluginAnchors]). Subclasses that override this getter must
+  /// include `super.alwaysNeedsCompositing`.
+  @override
+  bool get alwaysNeedsCompositing => hasTextAnchors(textPluginDelegates);
 
   /// Adds the [TextAnnotation]s covering the code unit at [offset] to
   /// [result], topmost first, so they participate in gesture recognition and
@@ -1431,7 +1706,12 @@ mixin TextDelegateHostMixin on RenderBox implements TextPluginHost {
   }
 
   void _syncTextPluginDelegates({List<TextPlugin>? oldPlugins}) {
-    final List<TextPlugin> rawPlugins = _textPlugins ?? const <TextPlugin>[];
+    // This host has no [SelectionRegistrar], so its text is not selectable
+    // and a [TextSelectionPlugin] provided by a scope does not apply to it.
+    final List<TextPlugin> rawPlugins = resolveTextSelectionPlugin(
+      _textPlugins ?? const <TextPlugin>[],
+      selectable: false,
+    );
     final newPlugins = <TextPlugin>[...rawPlugins];
     mergeSort<TextPlugin>(
       newPlugins,
@@ -1556,6 +1836,15 @@ mixin TextDelegateHostMixin on RenderBox implements TextPluginHost {
         _paintWithCustomPainter(context.canvas, offset, painter);
       }
     }
+  }
+
+  /// Pushes the layers of the [TextAnchor]s of all active [TextPlugin]s.
+  ///
+  /// Call this at the end of [paint], with the `offset` that [paint] was
+  /// given.
+  @protected
+  void paintTextPluginAnchors(PaintingContext context, Offset offset) {
+    pushTextAnchorLayers(context, offset, textPluginDelegates);
   }
 
   void _removeAllTextPluginDelegates() {

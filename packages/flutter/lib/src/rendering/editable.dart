@@ -21,6 +21,7 @@ import 'layout_helper.dart';
 import 'object.dart';
 import 'paragraph.dart';
 import 'text_plugin.dart';
+import 'text_selection_plugin.dart';
 import 'viewport_offset.dart';
 
 const double _kCaretGap = 1.0; // pixels
@@ -478,7 +479,12 @@ class RenderEditable extends RenderBox
   }
 
   void _syncTextPluginDelegates({List<TextPlugin>? oldPlugins}) {
-    final List<TextPlugin> rawPlugins = _textPlugins ?? const <TextPlugin>[];
+    // An editable owns its selection, so a [TextSelectionPlugin] that a scope
+    // provides for the static text around it does not apply here.
+    final List<TextPlugin> rawPlugins = resolveTextSelectionPlugin(
+      _textPlugins ?? const <TextPlugin>[],
+      selectable: false,
+    );
     final newPlugins = <TextPlugin>[...rawPlugins];
     mergeSort<TextPlugin>(
       newPlugins,
@@ -565,6 +571,29 @@ class RenderEditable extends RenderBox
     }
     for (final TextDelegate other in _textPluginDelegates!.values.toList(growable: false)) {
       if (!identical(other, delegate) && !other.isDisposed) {
+        other.notifyChanged();
+      }
+    }
+  }
+
+  @override
+  @internal
+  void didChangeTextAnchors(TextDelegate delegate) {
+    // No compositing bits to update: an editable always composites, because
+    // the render objects of its painters are repaint boundaries.
+    markNeedsPaint();
+  }
+
+  @override
+  @internal
+  void didChangeTextSelections(TextDelegate delegate) {
+    // An editable owns its selection (see [selection]), so no plugin is
+    // expected to report one. Treated like any other selection change.
+    if (_textPluginDelegates == null) {
+      return;
+    }
+    for (final TextDelegate other in _textPluginDelegates!.values.toList(growable: false)) {
+      if (!other.isDisposed) {
         other.notifyChanged();
       }
     }
@@ -2370,6 +2399,19 @@ class RenderEditable extends RenderBox
   /// {@macro flutter.painting.TextPainter.wordBoundaries}
   WordBoundary get wordBoundaries => _textPainter.wordBoundaries;
 
+  /// Returns the metrics of every line of the text as laid out.
+  ///
+  /// Valid only after [layout].
+  ///
+  /// See also:
+  ///
+  ///  * [TextPainter.computeLineMetrics], the method in TextPainter to get
+  ///    the equivalent metrics.
+  List<ui.LineMetrics> computeLineMetrics() {
+    _computeTextMetricsIfNeeded();
+    return _textPainter.computeLineMetrics();
+  }
+
   /// Select a word around the location of the last tap down.
   ///
   /// {@macro flutter.rendering.RenderEditable.selectPosition}
@@ -2993,6 +3035,7 @@ class RenderEditable extends RenderBox
     if (selection != null && selection.isValid) {
       _paintHandleLayers(context, getEndpointsForSelection(selection), offset);
     }
+    pushTextAnchorLayers(context, offset, textPluginDelegates);
   }
 
   final LayerHandle<ClipRectLayer> _clipRectLayer = LayerHandle<ClipRectLayer>();
