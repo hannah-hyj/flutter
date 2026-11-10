@@ -63,47 +63,52 @@ class SpellcheckIssue {
   final SpellcheckRule rule;
 }
 
+/// Callback invoked when a user taps a squiggly-underlined word.
+typedef SpellcheckTapCallback = void Function(SpellcheckIssue issue);
+
 /// A [TextPlugin] that performs live spellchecking and editorial style-guide
 /// linting across all [Text] and [RichText] widgets in its scope, painting
 /// wavy squiggly underlines via [TextDelegate.foregroundPainter].
 class SpellcheckLinterPlugin extends TextPlugin {
   /// Creates a [SpellcheckLinterPlugin].
-  SpellcheckLinterPlugin();
+  SpellcheckLinterPlugin({this.onIssueTapped});
+
+  /// Optional callback invoked when a flagged word is tapped.
+  final SpellcheckTapCallback? onIssueTapped;
 
   /// Built-in spelling and style-guide rules.
-  static const Map<String, SpellcheckRule> defaultRules =
-      <String, SpellcheckRule>{
-        'recieve': SpellcheckRule(
-          incorrectWord: 'recieve',
-          suggestion: 'receive',
-          message: 'Spelling: "i" before "e" except after "c".',
-          severity: LintSeverity.spellingError,
-        ),
-        'seperate': SpellcheckRule(
-          incorrectWord: 'seperate',
-          suggestion: 'separate',
-          message: 'Spelling: "separate" is spelled with "-par-", not "-per-".',
-          severity: LintSeverity.spellingError,
-        ),
-        'occured': SpellcheckRule(
-          incorrectWord: 'occured',
-          suggestion: 'occurred',
-          message: 'Spelling: double "r" in past tense "occurred".',
-          severity: LintSeverity.spellingError,
-        ),
-        'teh': SpellcheckRule(
-          incorrectWord: 'teh',
-          suggestion: 'the',
-          message: 'Spelling: common keyboard transposition typo.',
-          severity: LintSeverity.spellingError,
-        ),
-        'utilize': SpellcheckRule(
-          incorrectWord: 'utilize',
-          suggestion: 'use',
-          message: 'Style Guide: prefer concise "use" over "utilize".',
-          severity: LintSeverity.styleSuggestion,
-        ),
-      };
+  static const Map<String, SpellcheckRule> defaultRules = <String, SpellcheckRule>{
+    'recieve': SpellcheckRule(
+      incorrectWord: 'recieve',
+      suggestion: 'receive',
+      message: 'Spelling: "i" before "e" except after "c".',
+      severity: LintSeverity.spellingError,
+    ),
+    'seperate': SpellcheckRule(
+      incorrectWord: 'seperate',
+      suggestion: 'separate',
+      message: 'Spelling: "separate" is spelled with "-par-", not "-per-".',
+      severity: LintSeverity.spellingError,
+    ),
+    'occured': SpellcheckRule(
+      incorrectWord: 'occured',
+      suggestion: 'occurred',
+      message: 'Spelling: double "r" in past tense "occurred".',
+      severity: LintSeverity.spellingError,
+    ),
+    'teh': SpellcheckRule(
+      incorrectWord: 'teh',
+      suggestion: 'the',
+      message: 'Spelling: common keyboard transposition typo.',
+      severity: LintSeverity.spellingError,
+    ),
+    'utilize': SpellcheckRule(
+      incorrectWord: 'utilize',
+      suggestion: 'use',
+      message: 'Style Guide: prefer concise "use" over "utilize".',
+      severity: LintSeverity.styleSuggestion,
+    ),
+  };
 
   static final RegExp _wordTokenizer = RegExp(r'\b[A-Za-z]+\b');
 
@@ -153,13 +158,26 @@ class SpellcheckLinterPlugin extends TextPlugin {
     if (issues.isEmpty) {
       _issuesByDelegate.remove(delegate);
       delegate.foregroundPainter = null;
-    } else {
-      _issuesByDelegate[delegate] = issues;
-      delegate.foregroundPainter = _SpellcheckSquigglePainter(
-        delegate: delegate,
-        issues: issues,
-      );
+      delegate.annotations = const <TextAnnotation>[];
+      return;
     }
+    _issuesByDelegate[delegate] = issues;
+    delegate.foregroundPainter = _SpellcheckSquigglePainter(delegate: delegate, issues: issues);
+    // Each flagged word is a tappable annotation: the tap goes through the
+    // gesture arena (so scrolling over a squiggle never opens the popup), and
+    // screen readers hear the diagnostic instead of just the misspelled word.
+    delegate.annotations = <TextAnnotation>[
+      if (onIssueTapped != null)
+        for (final SpellcheckIssue issue in issues)
+          TextAnnotation(
+            range: issue.range,
+            cursor: SystemMouseCursors.click,
+            semanticsLabel:
+                '${issue.matchedText}, ${issue.rule.severity == LintSeverity.spellingError ? 'misspelled' : 'style suggestion'}, '
+                'suggested ${issue.rule.suggestion}',
+            onTap: () => onIssueTapped!(issue),
+          ),
+    ];
   }
 }
 
@@ -193,10 +211,7 @@ class _SpellcheckSquigglePainter extends CustomPainter {
 
     for (final SpellcheckIssue issue in issues) {
       final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
-        TextSelection(
-          baseOffset: issue.range.start,
-          extentOffset: issue.range.end,
-        ),
+        TextSelection(baseOffset: issue.range.start, extentOffset: issue.range.end),
         includePlaceholders: false,
       );
       final paintToUse = issue.rule.severity == LintSeverity.spellingError

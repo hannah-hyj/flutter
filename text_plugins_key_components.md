@@ -48,7 +48,8 @@ abstract class TextPlugin {
   void didLayoutText(TextDelegate delegate) {}
 
   void didRemoveText(TextDelegate delegate) {}
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {}
+  // No raw pointer hook: input is declared per range with TextAnnotation
+  // (TextDelegate.annotations) and arbitrated by the gesture arena.
 }
 ```
 

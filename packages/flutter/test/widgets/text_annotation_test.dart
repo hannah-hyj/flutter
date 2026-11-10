@@ -19,6 +19,7 @@ class _AnnotatingPlugin extends TextPlugin {
     this.semanticsLabel,
     this.cursor = MouseCursor.defer,
     this.onEnter,
+    this.onHover,
     this.onExit,
     this.recognizerFactory,
     this.useKey = false,
@@ -31,6 +32,7 @@ class _AnnotatingPlugin extends TextPlugin {
   final String? semanticsLabel;
   final MouseCursor cursor;
   final PointerEnterEventListener? onEnter;
+  final PointerHoverEventListener? onHover;
   final PointerExitEventListener? onExit;
   final GestureRecognizer Function(String match)? recognizerFactory;
   final bool useKey;
@@ -57,6 +59,7 @@ class _AnnotatingPlugin extends TextPlugin {
           semanticsLabel: semanticsLabel,
           cursor: cursor,
           onEnter: onEnter,
+          onHover: onHover,
           onExit: onExit,
         ),
     ];
@@ -379,12 +382,14 @@ void main() {
     WidgetTester tester,
   ) async {
     var enters = 0;
+    var hovers = 0;
     var exits = 0;
     final plugin = _AnnotatingPlugin(
       pattern: _urlPattern,
       onTap: (_) {},
       cursor: SystemMouseCursors.click,
       onEnter: (PointerEnterEvent event) => enters += 1,
+      onHover: (PointerHoverEvent event) => hovers += 1,
       onExit: (PointerExitEvent event) => exits += 1,
     );
 
@@ -406,15 +411,24 @@ void main() {
     await mouse.moveTo(_globalCenterOf(delegate, 'https://flutter.dev'));
     await tester.pump();
     expect(enters, 1);
+    expect(hovers, 1);
     expect(exits, 0);
     expect(
       RendererBinding.instance.mouseTracker.debugDeviceActiveCursor(1),
       SystemMouseCursors.click,
     );
 
+    // Moving within the range keeps reporting hover positions.
+    await mouse.moveTo(_globalCenterOf(delegate, 'flutter.dev'));
+    await tester.pump();
+    expect(enters, 1);
+    expect(hovers, 2);
+    expect(exits, 0);
+
     await mouse.moveTo(_globalCenterOf(delegate, 'Visit'));
     await tester.pump();
     expect(enters, 1);
+    expect(hovers, 2);
     expect(exits, 1);
     expect(
       RendererBinding.instance.mouseTracker.debugDeviceActiveCursor(1),

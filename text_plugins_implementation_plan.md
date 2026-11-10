@@ -184,7 +184,7 @@ These come from the chunhtai / Renzo reviews and the talk-plan discrepancy list.
 | D1 | Is `PipelineOwner.schedulePostLayoutCallback` acceptable as a pipeline hook? | PR 1 | `@internal`, flushed at end of `flushLayout()` | Keep `@internal`; add a `_debugDoingPostLayoutCallbacks` flag so `markNeedsLayout` from a callback asserts in debug (talk-plan gap 5.2 #3). |
 | D2 | Lifecycle contract: does `didLayoutText` also fire in the same frame as `didAddText` / `didUpdateText`? (RFC §3.2 says "at most one"; code fires both.) | PR 2 | Fires both | Keep the code behavior (plugins implement one "layout is valid" hook), update RFC §3.2 and the sequence diagram. |
 | D3 | `TextDelegate` metadata so plugins know what they are attached to: `isEditable`, `isReadOnly`, `isSelectable`, `isObscured` | PR 2 (on the host interface) | Absent | Add to `TextDelegateHost`; `RenderParagraph`/`RenderEditable` implement in PR 7/8. |
-| D4 | Keep `TextDelegate.onPointerEvent`? | PR 2 | Present | Drop: redundant with `TextPlugin.handlePointerEvent` and a second way to do the same thing. |
+| D4 | Keep `TextDelegate.onPointerEvent` / `TextPlugin.handlePointerEvent`? | PR 2 | Removed on `text-plugin-annotations` | Both dropped: `TextAnnotation` (`onTap`/`onLongPress`/`recognizer`, `onEnter`/`onHover`/`onExit`) is the single input path and the only one that goes through the gesture arena. |
 | D5 | Plugin identity: delegates are reconciled by **instance**; constructing plugins inline in `build` churns every delegate each rebuild. | PR 3 | By instance | Document "hoist plugin instances into `State`" in `TextPluginScope` docs and the sample; leave room for an additive `TextPlugin.shouldUpdate(old)`/key protocol later. |
 | D6 | `handlesSelectionHighlight` flag vs. `paintOrder` | PR 7 | `@internal` flag + hard-coded second background pass | Drop the flag; `RenderParagraph.paint` runs painters strictly by `paintOrder`. F1 uses `paintOrder => 100`. |
 | D7 | Obscured text fields (Renzo P0) | PR 8 | Delegates created for `obscureText` fields; `delegate.text` returns the briefly revealed char | `RenderEditable(obscureText: true)` creates delegates only for plugins with `supportsObscuredText == true`; `delegate.text`/`textSpan` return the fully obscured string; `isObscured` exposed. |
@@ -244,7 +244,7 @@ These come from the chunhtai / Renzo reviews and the talk-plan discrepancy list.
 
 **Scope** (`rendering/text_plugin.dart`, exported from `rendering.dart`)
 
-- `abstract class TextPlugin`: `const` ctor, `paintOrder`, `scopeKey` (D8, default `runtimeType`), `supportsObscuredText` (D7, default `false`), `didAddText`, `didUpdateText`, `didLayoutText`, `didRemoveText`, `handlePointerEvent`. **Not yet:** `needsOffscreenContent` (PR 13), `handlesSelectionHighlight` (dropped, D6).
+- `abstract class TextPlugin`: `const` ctor, `paintOrder`, `scopeKey` (D8, default `runtimeType`), `supportsObscuredText` (D7, default `false`), `didAddText`, `didUpdateText`, `didLayoutText`, `didRemoveText` (no raw pointer hook, D4). **Not yet:** `needsOffscreenContent` (PR 13), `handlesSelectionHighlight` (dropped, D6).
 - `abstract interface class TextDelegateHost` (name negotiable) — the contract a `RenderBox` fulfils to be wrapped by a delegate: `plainText` (cached by the host, see PR 3), `textSpan`, `textDirection`, `getBoxesForSelection(selection, {boxHeightStyle, boxWidthStyle})`, `getPositionForOffset`, `getWordBoundary`, `getOffsetForCaret`, `getFullHeightForCaret`, and metadata `isEditable`, `isReadOnly`, `isSelectable`, `isObscured` (D3).
 - `class TextDelegate extends ChangeNotifier`: talks only to the host. Keeps `text`, `textSpan`, `placeholderRanges`, `textDirection`, `hasLayout`, `size`, `paintBounds`, `attached`, `backgroundPainter`/`foregroundPainter` (with `shouldRepaint` + listener management), `getBoxesForSelection(... includePlaceholders = false)` with the placeholder-splitting logic, geometry pass-throughs, `localToGlobal`/`globalToLocal`/`getTransformTo`, `markNeedsPaint`, `@internal` lifecycle flags. **Not yet:** `compareTo` (PR 4), `showOnScreen`/`ensureVisible` (PR 5), `selections`/`selectionColor` (F1), `onPointerEvent` (dropped, D4).
 
@@ -273,7 +273,7 @@ These come from the chunhtai / Renzo reviews and the talk-plan discrepancy list.
 - `hasLayout == true` inside every callback (the "Lifecycle callbacks have valid layout" test, L738).
 - Plugin list reconciliation keeps existing delegates (RFC §7.6) and dedups duplicate instances (RFC §7.7 part 2).
 - Paint order: background painters by `paintOrder` then installation order; foreground after host content; a painter with unbalanced `save()` throws in debug (RFC §7.12).
-- Pointer events reach `handlePointerEvent` in paint order.
+- Pointer input is declared with `TextDelegate.annotations` (`TextAnnotation`); annotations are hit-test targets ahead of the paragraph, topmost first.
 - Painter `repaint` listenable triggers host repaint (L245).
 - `textPlugins = null` → no delegates, no scheduled callback (zero-cost guarantee).
 
