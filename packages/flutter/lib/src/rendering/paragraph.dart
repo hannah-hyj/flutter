@@ -578,6 +578,14 @@ class RenderParagraph extends RenderBox
     _syncTextPluginDelegates(oldPlugins: oldPlugins);
   }
 
+  /// The [TextDelegate] that represents this paragraph for [plugin], or null if
+  /// [plugin] is not one of [textPlugins] or this paragraph is not attached.
+  ///
+  /// The delegate exists from the moment this paragraph is attached, which is
+  /// before [TextPlugin.didAddText] is called for it.
+  @internal
+  TextDelegate? textDelegateFor(TextPlugin plugin) => _textPluginDelegates?[plugin];
+
   bool _textPluginFlushScheduled = false;
 
   void _scheduleTextPluginFlush() {

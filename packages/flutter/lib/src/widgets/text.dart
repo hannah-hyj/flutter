@@ -25,6 +25,7 @@ import 'inherited_theme.dart';
 import 'media_query.dart';
 import 'selectable_region.dart';
 import 'selection_container.dart';
+import 'text_plugin.dart';
 
 // Examples can assume:
 // late BuildContext context;
@@ -798,6 +799,9 @@ class Text extends StatelessWidget {
             DefaultSelectionStyle.defaultColor,
         text: effectiveTextSpan,
       );
+      // Adds the layers that TextWidgetPlugins build their widgets in. This
+      // returns the RichText unchanged when no such plugin is in scope.
+      result = TextPluginWidgetHost.maybeWrap(context, child: result);
     }
     if (semanticsLabel != null || semanticsIdentifier != null) {
       result = Semantics(
@@ -962,7 +966,7 @@ class _RichText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final SelectionRegistrar? registrar = SelectionContainer.maybeOf(context);
-    return RichText(
+    final richText = RichText(
       key: textKey,
       textAlign: textAlign,
       textDirection: textDirection,
@@ -978,6 +982,7 @@ class _RichText extends StatelessWidget {
       selectionColor: selectionColor,
       text: text,
     );
+    return TextPluginWidgetHost.maybeWrap(context, child: richText);
   }
 }
 

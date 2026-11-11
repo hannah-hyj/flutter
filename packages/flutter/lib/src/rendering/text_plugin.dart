@@ -161,7 +161,29 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// Tracks whether the underlying render object currently has an up-to-date
   /// layout in both debug and release builds.
   @internal
-  bool hasValidLayout = false;
+  bool get hasValidLayout => _hasValidLayout;
+  bool _hasValidLayout = false;
+  @internal
+  set hasValidLayout(bool value) {
+    if (value == _hasValidLayout) {
+      return;
+    }
+    _hasValidLayout = value;
+    if (!value) {
+      onLayoutInvalidated?.call();
+    }
+  }
+
+  /// Called when the layout of the underlying render object becomes invalid,
+  /// which is when the render object is marked as needing layout.
+  ///
+  /// [TextPlugin.didLayoutText] and the listeners of this delegate are only
+  /// notified once the new layout exists, after the layout phase. This
+  /// callback is for code that has to do its own work during that layout
+  /// phase, and so has to mark its render objects as needing layout together
+  /// with the text.
+  @internal
+  VoidCallback? onLayoutInvalidated;
 
   /// Whether [TextPlugin.didAddText] has been dispatched for this delegate.
   @internal
@@ -685,6 +707,15 @@ mixin TextDelegateHostMixin on RenderBox {
     }
     _syncTextPluginDelegates(oldPlugins: oldPlugins);
   }
+
+  /// The [TextDelegate] that represents this render object for [plugin], or
+  /// null if [plugin] is not one of [textPlugins] or this render object is not
+  /// attached.
+  ///
+  /// The delegate exists from the moment this render object is attached, which
+  /// is before [TextPlugin.didAddText] is called for it.
+  @internal
+  TextDelegate? textDelegateFor(TextPlugin plugin) => _textPluginDelegates?[plugin];
 
   bool _textPluginFlushScheduled = false;
 
