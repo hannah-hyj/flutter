@@ -8,13 +8,70 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
-import 'spoiler_mask_plugin.dart';
+/// Category of hidden text span (spoiler tag or flashcard cloze).
+enum SpoilerMaskKind {
+  /// A forum/chat spoiler span (e.g. `||Darth Vader||`).
+  spoiler('Spoiler'),
+
+  /// A flashcard cloze-deletion study answer (e.g. `{{RenderParagraph}}`).
+  cloze('Cloze Study');
+
+  const SpoilerMaskKind(this.label);
+
+  /// Human-readable label for the mask category.
+  final String label;
+}
+
+/// Represents a detected spoiler or cloze-study text span within a [TextDelegate].
+@immutable
+class SpoilerMaskMatch {
+  /// Creates a [SpoilerMaskMatch].
+  const SpoilerMaskMatch({
+    required this.delegate,
+    required this.range,
+    required this.kind,
+    required this.rawValue,
+  });
+
+  /// The [TextDelegate] containing this masked span.
+  final TextDelegate delegate;
+
+  /// The character range of the masked span within [TextDelegate.text].
+  final TextRange range;
+
+  /// The category of masked span.
+  final SpoilerMaskKind kind;
+
+  /// The underlying masked text value.
+  final String rawValue;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    return other is SpoilerMaskMatch &&
+        other.delegate == delegate &&
+        other.range == range &&
+        other.kind == kind;
+  }
+
+  @override
+  int get hashCode => Object.hash(delegate, range, kind);
+}
+
+/// Callback signature invoked when a hidden span is shown or hidden.
+typedef SpoilerMaskTapCallback = void Function(
+  SpoilerMaskMatch match, {
+  required bool isRevealed,
+});
 
 /// A [TextPlugin] that hides spoilers (`||...||`) and cloze answers
 /// (`{{...}}`) behind frosted glass.
 ///
-/// [SpoilerMaskPlugin] covers the same spans with an opaque bar, which a
-/// [CustomPainter] can draw. Frosted glass blurs what is already painted
+/// A painter-only plugin could cover the same spans with an opaque bar,
+/// which a [CustomPainter] can draw, but it could not be tapped to show the
+/// span. Frosted glass blurs what is already painted
 /// behind it. That takes a compositing layer, and a painter cannot create
 /// one. So this plugin has no painter: it puts a [BackdropFilter] on every
 /// line of every span, in [TextWidgetLayer.foreground].

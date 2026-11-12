@@ -13,11 +13,11 @@ The page starts with a "What to try" list. Below it are five short sections of t
    - Covers every line of a `||spoiler||` or `{{cloze}}` span with a `BackdropFilter` (`TextWidgetLayer.foreground`). It has no painter, and the only lifecycle callback it uses is `didRemoveText`.
    - In a text field the span is shown while the caret is inside it.
 
-Each has a chip that switches back to the painter-only plugin for the same feature (`SpellcheckLinterPlugin`, `SpoilerMaskPlugin`).
+Each has a chip. With the first one off, the painter-only `SpellcheckLinterPlugin` still underlines the words. With the second one off there is no spoiler plugin: a plugin that only paints cannot be tapped, so it could not show a span again.
 
 ## Other Plugins in `lib/plugins`
 
-`SearchInPagePlugin`, `StockTickerPlugin`, `LinkifyPlugin`, `SeoExtractorPlugin` and `ReadAloudPlugin` belong to the larger demo of the painter-only design. This app does not use them.
+`SearchInPagePlugin`, `StockTickerPlugin`, `SeoExtractorPlugin` and `ReadAloudPlugin` belong to the larger demo of the painter-only design. This app does not use them.
 
 ## Running the Demo
 
