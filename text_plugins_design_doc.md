@@ -268,7 +268,7 @@ Both experiments are built directly on top of the stage 1 branch. Sections [8](#
 
 ## 3. Stage 1: architecture and component design
 
-Sections 3 to 7 describe stage 1, which is what this RFC proposes. Everything in them matches the prototype on the [`text-plugin-mvp`](https://github.com/hannah-hyj/flutter/tree/text-plugin-mvp) branch unless a sentence says otherwise. [Appendix A](#appendix-a-what-was-verified) lists what was verified by running and what was only read.
+Sections 3 to 7 describe stage 1, which is what this RFC proposes. Everything in them matches the prototype on the [`text-plugin-mvp`](https://github.com/hannah-hyj/flutter/tree/text-plugin-mvp) branch unless a sentence says otherwise. A live demo of the stage 1 example app, with its five paint-only plugins, is at [text-plugin-mvp-demo.web.app](https://text-plugin-mvp-demo.web.app/). [Appendix A](#appendix-a-what-was-verified) lists what was verified by running and what was only read.
 
 At the widget level, developers wrap any subtree in `TextPluginScope`:
 
@@ -1308,7 +1308,7 @@ The prototype does not enforce this yet. Whether to add an assertion is open ([S
 ## 8. Stage 2: annotations
 
 > Stage 2 is a future stage. It is **not** part of what this RFC asks to land. It is here to show that interaction can be added on top of stage 1.
-> Branch: [`text-plugin-annotations`](https://github.com/hannah-hyj/flutter/tree/text-plugin-annotations). The statements in this section come from the design notes and the tests on that branch. They will be checked again after the branch is rebased onto the current stage 1 branch.
+> Branch: [`text-plugin-annotations`](https://github.com/hannah-hyj/flutter/tree/text-plugin-annotations). Live demo: [text-plugin-annotations-demo.web.app](https://text-plugin-annotations-demo.web.app/). The statements in this section come from the design notes and the tests on that branch. They will be checked again after the branch is rebased onto the current stage 1 branch.
 
 ### 8.1 What it adds
 
