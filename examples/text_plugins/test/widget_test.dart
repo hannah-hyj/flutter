@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:text_plugins/main.dart';
@@ -10,7 +11,7 @@ import 'package:text_plugins/plugins/search_in_page_plugin.dart';
 
 void main() {
   testWidgets(
-    'TextPluginsDemoApp showcases search, stock tickers, and SEO plugins',
+    'TextPluginsDemoApp showcases search, stock tickers, linkify, and SEO plugins',
     (WidgetTester tester) async {
       await tester.pumpWidget(const TextPluginsDemoApp());
       await tester.pump();
@@ -95,7 +96,67 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('2 / 3'), findsOneWidget);
 
-      // 2. SeoExtractorPlugin: record initial widget count and verify adding a note increments it.
+      // 2. StockTickerPlugin & LinkifyPlugin: tap on "GOOG" and "https://flutter.dev"
+      // inside the standard Text widget.
+      final Finder reportParagraphFinder = find.byKey(
+        const Key('market_report_text'),
+      );
+      await tester.ensureVisible(reportParagraphFinder);
+      await tester.pumpAndSettle();
+      final RenderParagraph paragraph = tester.renderObject<RenderParagraph>(
+        find.descendant(
+          of: reportParagraphFinder,
+          matching: find.byType(RichText),
+        ),
+      );
+      final String plainText = paragraph.text.toPlainText();
+
+      // Tap on "GOOG" in the paragraph.
+      final int googIndex = plainText.indexOf('GOOG');
+      final List<TextBox> googBoxes = paragraph.getBoxesForSelection(
+        TextSelection(baseOffset: googIndex, extentOffset: googIndex + 4),
+      );
+      final Offset googGlobalCenter = paragraph.localToGlobal(
+        googBoxes.first.toRect().center,
+      );
+      await tester.tapAt(googGlobalCenter);
+      await tester.pumpAndSettle();
+
+      // Verify the Stock Quote bottom sheet and banner appear for GOOG.
+      expect(find.text('Alphabet Inc.'), findsOneWidget);
+      expect(find.byKey(const Key('last_tapped_ticker')), findsOneWidget);
+
+      // Dismiss the bottom sheet.
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      // Tap on "https://flutter.dev" in the paragraph.
+      await tester.ensureVisible(reportParagraphFinder);
+      await tester.pumpAndSettle();
+      final int urlIndex = plainText.indexOf('https://flutter.dev');
+      final List<TextBox> urlBoxes = paragraph.getBoxesForSelection(
+        TextSelection(
+          baseOffset: urlIndex,
+          extentOffset: urlIndex + 'https://flutter.dev'.length,
+        ),
+      );
+      final Offset urlGlobalCenter = paragraph.localToGlobal(
+        urlBoxes.first.toRect().center,
+      );
+      await tester.tapAt(urlGlobalCenter);
+      await tester.pumpAndSettle();
+
+      // Verify LinkifyPlugin handled the tap.
+      expect(find.byKey(const Key('last_tapped_url')), findsOneWidget);
+      expect(
+        find.text('Last tapped link: https://flutter.dev'),
+        findsOneWidget,
+      );
+      ScaffoldMessenger.of(tester.element(reportParagraphFinder))
+          .clearSnackBars();
+      await tester.pumpAndSettle();
+
+      // 3. SeoExtractorPlugin: record initial widget count and verify adding a note increments it.
       // (includes static paragraphs + EditableText / TextField in TextPluginScope).
       final Text initialSeoChip = tester.widget<Text>(
         find.byKey(const Key('seo_widget_count')),
@@ -119,7 +180,7 @@ void main() {
       expect(find.text('2 / 4'), findsOneWidget);
       expect(find.text('Text Widgets: ${initialCount + 1}'), findsOneWidget);
 
-      // 3. Lazy Loading & Scroll-to-Match:
+      // 4. Lazy Loading & Scroll-to-Match:
       // While lazy loading is active, offscreen "Lazy Archive #20" is not yet built.
       expect(find.byKey(const Key('lazy_archive_text_20')), findsNothing);
       await tester.enterText(
@@ -145,7 +206,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('lazy_archive_text_20')), findsOneWidget);
 
-      // 4. ReadAloudPlugin: step word-by-word through the document in true visual order.
+      // 5. ReadAloudPlugin: step word-by-word through the document in true visual order.
       expect(find.byKey(const Key('read_aloud_status')), findsOneWidget);
       expect(find.textContaining('Idle ('), findsOneWidget);
       await tester.tap(find.byKey(const Key('read_aloud_next_word_button')));
@@ -155,7 +216,62 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Speaking: "Text" (2/'), findsOneWidget);
 
-      // 5. Verify SelectionArea coexistence zone under the Opt-Out Zone.
+      // 6. SpellcheckLinterPlugin & SpoilerMaskPlugin on custom_note_text_0:
+      final Finder customNote0Finder = find.byKey(
+        const Key('custom_note_text_0'),
+      );
+      await tester.ensureVisible(customNote0Finder);
+      await tester.pumpAndSettle();
+      final RenderParagraph noteParagraph = tester
+          .renderObject<RenderParagraph>(
+            find.descendant(
+              of: customNote0Finder,
+              matching: find.byType(RichText),
+            ),
+          );
+      final String notePlainText = noteParagraph.text.toPlainText();
+
+      // Tap on misspelled word "recieve".
+      final int recieveIndex = notePlainText.indexOf('recieve');
+      final List<TextBox> recieveBoxes = noteParagraph.getBoxesForSelection(
+        TextSelection(
+          baseOffset: recieveIndex,
+          extentOffset: recieveIndex + 'recieve'.length,
+        ),
+      );
+      final Offset recieveGlobalCenter = noteParagraph.localToGlobal(
+        recieveBoxes.first.toRect().center,
+      );
+      await tester.tapAt(recieveGlobalCenter);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('last_tapped_spellcheck')), findsOneWidget);
+      expect(find.text('Lint "recieve" → "receive"'), findsOneWidget);
+
+      // Tap on masked spoiler "||Rosebud is the sled||" to reveal it, then tap again to mask it.
+      final int spoilerIndex = notePlainText.indexOf('||Rosebud is the sled||');
+      final List<TextBox> spoilerBoxes = noteParagraph.getBoxesForSelection(
+        TextSelection(
+          baseOffset: spoilerIndex,
+          extentOffset: spoilerIndex + '||Rosebud is the sled||'.length,
+        ),
+      );
+      await tester.tapAt(
+        noteParagraph.localToGlobal(spoilerBoxes.first.toRect().center),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('last_tapped_spoiler')), findsOneWidget);
+      expect(
+        find.text('Spoiler: Revealed (||Rosebud is the sled||)'),
+        findsOneWidget,
+      );
+
+      await tester.tapAt(
+        noteParagraph.localToGlobal(spoilerBoxes.first.toRect().center),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Spoiler: Masked (••••••••)'), findsOneWidget);
+
+      // 7. Verify SelectionArea coexistence zone under the Opt-Out Zone.
       final Finder selectionAreaZoneFinder = find.byKey(
         const Key('selection_area_zone'),
       );
@@ -179,7 +295,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('1 / 1'), findsOneWidget);
 
-      // 6. Verify closing the search widget and pressing Ctrl+F to reopen and focus it.
+      // 8. Verify closing the search widget and pressing Ctrl+F to reopen and focus it.
       await tester.tap(find.byKey(const Key('search_position_floating_chip')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('floating_search_bar')), findsOneWidget);
