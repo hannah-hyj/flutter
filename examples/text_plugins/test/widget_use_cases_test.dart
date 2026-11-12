@@ -18,7 +18,6 @@ import 'package:text_plugins/main.dart';
 import 'package:text_plugins/plugins/frosted_spoiler_plugin.dart';
 import 'package:text_plugins/plugins/spellcheck_linter_plugin.dart';
 import 'package:text_plugins/plugins/spellcheck_suggestions_plugin.dart';
-import 'package:text_plugins/plugins/spoiler_mask_plugin.dart';
 
 // What the menu shows for "recieve": an action in a text field, and plain
 // text elsewhere.
@@ -57,16 +56,52 @@ class _CountingFrosted extends FrostedSpoilerPlugin {
   }
 }
 
-/// Counts the pointer-down events that reach the text itself.
-class _PointerLogPlugin extends TextPlugin {
-  int downs = 0;
+/// Covers every `||spoiler||` with an opaque bar, using only a painter.
+class _PaintedMaskPlugin extends TextPlugin {
+  static final RegExp _pattern = RegExp(r'\|\|[^|\n]+\|\|');
 
   @override
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {
-    if (event is PointerDownEvent) {
-      downs += 1;
+  void didAddText(TextDelegate delegate) => _update(delegate);
+
+  @override
+  void didUpdateText(TextDelegate delegate) => _update(delegate);
+
+  @override
+  void didRemoveText(TextDelegate delegate) {
+    delegate.foregroundPainter = null;
+  }
+
+  void _update(TextDelegate delegate) {
+    delegate.foregroundPainter = _MaskPainter(delegate, <TextRange>[
+      for (final RegExpMatch match in _pattern.allMatches(delegate.text))
+        TextRange(start: match.start, end: match.end),
+    ]);
+  }
+}
+
+class _MaskPainter extends CustomPainter {
+  _MaskPainter(this.delegate, this.ranges);
+
+  final TextDelegate delegate;
+  final List<TextRange> ranges;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (!delegate.hasLayout) {
+      return;
+    }
+    final paint = Paint()..color = const Color(0xFF263238);
+    for (final TextRange range in ranges) {
+      for (final ui.TextBox box in delegate.getBoxesForSelection(
+        TextSelection(baseOffset: range.start, extentOffset: range.end),
+      )) {
+        canvas.drawRect(box.toRect(), paint);
+      }
     }
   }
+
+  @override
+  bool shouldRepaint(_MaskPainter oldDelegate) => true;
 }
 
 /// Marks the word "recieve" from ranges that it collects in the lifecycle
@@ -134,6 +169,16 @@ RenderParagraph _paragraph(WidgetTester tester, String containing) {
         (RenderParagraph paragraph) =>
             paragraph.text.toPlainText().contains(containing),
       );
+}
+
+/// Whether a pointer at [position] hits the text that contains
+/// [containing] itself, and not only something in front of it.
+bool _hitsText(WidgetTester tester, String containing, Offset position) {
+  final RenderParagraph paragraph = _paragraph(tester, containing);
+  return tester
+      .hitTestOnBinding(position)
+      .path
+      .any((HitTestEntry entry) => identical(entry.target, paragraph));
 }
 
 /// The text field that contains [word], or the one whose text is [text].
@@ -322,15 +367,11 @@ void main() {
     });
 
     testWidgets('leaves the tap to the text', (WidgetTester tester) async {
-      final tapped = <String>[];
-      final plugin = SpellcheckSuggestionsPlugin(
-        onIssueTapped: (SpellcheckIssue issue) => tapped.add(issue.matchedText),
-      );
+      final plugin = SpellcheckSuggestionsPlugin();
       addTearDown(plugin.dispose);
-      final pointerLog = _PointerLogPlugin();
       await tester.pumpWidget(
         _app(
-          plugins: <TextPlugin>[plugin, pointerLog],
+          plugins: <TextPlugin>[plugin],
           child: const Align(
             alignment: Alignment.topLeft,
             child: Text('Teams recieve alerts'),
@@ -338,13 +379,14 @@ void main() {
         ),
       );
 
-      await tester.tapAt(_word(tester, 'Teams', 'recieve').center);
+      // The target of the word is in front of the text, and the text is
+      // still hit.
+      final Offset center = _word(tester, 'Teams', 'recieve').center;
+      expect(_hitsText(tester, 'Teams', center), isTrue);
+
+      await tester.tapAt(center);
       await tester.pump();
       expect(_menuMessage, findsOneWidget);
-      // The text was hit as well: the first-version callback of the base
-      // class fired, and so did another plugin's.
-      expect(tapped, <String>['recieve']);
-      expect(pointerLog.downs, 1);
     });
 
     testWidgets('a drag or a long press on the word is not a tap', (
@@ -993,40 +1035,38 @@ void main() {
     });
 
     testWidgets('takes the tap, unlike a painter', (WidgetTester tester) async {
-      Future<int> downsReachingTheText(TextPlugin spoilerPlugin) async {
-        final pointerLog = _PointerLogPlugin();
+      Future<bool> spoilerTapHitsTheText(TextPlugin spoilerPlugin) async {
         await tester.pumpWidget(
           _app(
-            plugins: <TextPlugin>[spoilerPlugin, pointerLog],
+            plugins: <TextPlugin>[spoilerPlugin],
             child: const Align(
               alignment: Alignment.topLeft,
               child: Text('See ||https://flutter.dev|| now'),
             ),
           ),
         );
-        await tester.tapAt(
+        // A pointer next to the spoiler always hits the text.
+        expect(
+          _hitsText(tester, 'See', _word(tester, 'See', 'now').center),
+          isTrue,
+        );
+        final bool onSpoiler = _hitsText(
+          tester,
+          'See',
           _word(tester, 'See', '||https://flutter.dev||').center,
         );
-        await tester.pump();
-        // A tap next to the spoiler always reaches the text.
-        final int onSpoiler = pointerLog.downs;
-        await tester.tapAt(_word(tester, 'See', 'now').center);
-        await tester.pump();
-        expect(pointerLog.downs, onSpoiler + 1);
         await tester.pumpWidget(const SizedBox());
         return onSpoiler;
       }
 
-      // The painter cannot stop the event: whatever is under the mask, such
-      // as a link from another plugin, is activated together with it.
-      final painted = SpoilerMaskPlugin();
-      addTearDown(painted.dispose);
-      expect(await downsReachingTheText(painted), 1);
+      // A painter cannot stop the event: whatever is under the mask, such
+      // as a link in the text, is hit together with it.
+      expect(await spoilerTapHitsTheText(_PaintedMaskPlugin()), isTrue);
 
       // The widget is in front of the text, so the text is not hit.
       final frosted = FrostedSpoilerPlugin();
       addTearDown(frosted.dispose);
-      expect(await downsReachingTheText(frosted), 0);
+      expect(await spoilerTapHitsTheText(frosted), isFalse);
     });
 
     testWidgets('moves with the text when it scrolls, and builds nothing', (
@@ -1407,8 +1447,7 @@ void main() {
         return result;
       }
 
-      final painted = SpoilerMaskPlugin();
-      addTearDown(painted.dispose);
+      final painted = _PaintedMaskPlugin();
       final frosted = FrostedSpoilerPlugin();
       addTearDown(frosted.dispose);
       final linter = SpellcheckLinterPlugin();
@@ -1496,8 +1535,7 @@ void main() {
       (WidgetTester tester) async {
         final frosted = FrostedSpoilerPlugin();
         addTearDown(frosted.dispose);
-        final painted = SpoilerMaskPlugin();
-        addTearDown(painted.dispose);
+        final painted = _PaintedMaskPlugin();
 
         await tester.pumpWidget(
           _app(plugins: <TextPlugin>[painted], child: const Text('a ||b|| c')),

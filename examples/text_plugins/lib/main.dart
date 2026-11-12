@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'plugins/frosted_spoiler_plugin.dart';
 import 'plugins/spellcheck_linter_plugin.dart';
 import 'plugins/spellcheck_suggestions_plugin.dart';
-import 'plugins/spoiler_mask_plugin.dart';
 
 void main() {
   runApp(const TextPluginsDemoApp());
@@ -63,7 +62,9 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
         'scrolls with the text.',
     'Keyboard: Tab to a flagged word, Enter opens its menu, Escape closes '
         'it. Tab to a blurred span, Enter toggles it.',
-    'Chips: switch one off to get the painter-only version of that plugin.',
+    'Chips: the first one off leaves the painter-only spell check, '
+        'underlines only. The second one off leaves the spoiler markers '
+        'as plain text: a painter-only plugin cannot be tapped.',
   ];
 
   static const TextStyle _bodyStyle = TextStyle(fontSize: 16, height: 1.5);
@@ -71,7 +72,6 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
   late final SpellcheckSuggestionsPlugin _suggestionsPlugin;
   late final SpellcheckLinterPlugin _linterPlugin;
   late final FrostedSpoilerPlugin _frostedPlugin;
-  late final SpoilerMaskPlugin _paintedPlugin;
   late final AnimationController _moveController;
 
   final TextEditingController _fieldController = TextEditingController(
@@ -96,12 +96,10 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
   void initState() {
     super.initState();
     _suggestionsPlugin = SpellcheckSuggestionsPlugin(
-      onIssueTapped: _handleIssueTapped,
       onReplace: _handleReplaced,
     );
-    _linterPlugin = SpellcheckLinterPlugin(onIssueTapped: _handleIssueTapped);
+    _linterPlugin = SpellcheckLinterPlugin();
     _frostedPlugin = FrostedSpoilerPlugin(onMatchTapped: _handleSpoilerTapped);
-    _paintedPlugin = SpoilerMaskPlugin(onMatchTapped: _handleSpoilerTapped);
     _moveController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 8),
@@ -113,21 +111,19 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     _moveController.dispose();
     _suggestionsPlugin.dispose();
     _frostedPlugin.dispose();
-    _paintedPlugin.dispose();
     _fieldController.dispose();
     _lastEvent.dispose();
     super.dispose();
   }
 
-  // When a chip is off, the painter-only plugin for the same feature is used.
+  // With its chip off, the spell check falls back to the painter-only
+  // plugin, which still underlines. The spoilers have no painter-only
+  // version: a plugin that only paints cannot be tapped, so it could not
+  // show a span again.
   List<TextPlugin> get _plugins => <TextPlugin>[
     if (_useSuggestionMenu) _suggestionsPlugin else _linterPlugin,
-    if (_useFrostedGlass) _frostedPlugin else _paintedPlugin,
+    if (_useFrostedGlass) _frostedPlugin,
   ];
-
-  void _handleIssueTapped(SpellcheckIssue issue) {
-    _lastEvent.value = 'pointer down on "${issue.matchedText}"';
-  }
 
   void _handleSpoilerTapped(
     SpoilerMaskMatch match, {
@@ -275,7 +271,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
               key: const Key('chip_frosted_spoiler'),
               visualDensity: VisualDensity.compact,
               label: const Text('Frosted glass'),
-              tooltip: 'Off: the painter-only spoiler mask',
+              tooltip: 'Off: no spoiler plugin, the markers are plain text',
               selected: _useFrostedGlass,
               onSelected: (bool value) {
                 setState(() {

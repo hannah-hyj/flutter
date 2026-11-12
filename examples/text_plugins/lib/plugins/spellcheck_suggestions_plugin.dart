@@ -45,7 +45,7 @@ typedef SpellcheckReplaceCallback = void Function(
 class SpellcheckSuggestionsPlugin extends SpellcheckLinterPlugin
     with TextWidgetPlugin, ChangeNotifier {
   /// Creates a [SpellcheckSuggestionsPlugin].
-  SpellcheckSuggestionsPlugin({super.onIssueTapped, this.onReplace});
+  SpellcheckSuggestionsPlugin({this.onReplace});
 
   /// Called after the plugin has replaced a flagged word in a text field.
   final SpellcheckReplaceCallback? onReplace;
