@@ -9,11 +9,11 @@ An interactive demonstration of the **Text Plugins** architecture (`TextPlugin`,
    - Supports case-sensitive matching and Previous/Next navigation with automatic scroll-into-view (`TextDelegate.showOnScreen`).
 2. **Stock Ticker Highlighter (`StockTickerPlugin`)**:
    - Automatically detects stock ticker symbols (`GOOG`, `AAPL`, `MSFT`, `NVDA`, `TSLA`, `AMZN`) in any `Text` widget.
-   - Paints color-coded badges and dotted underlines (`TextDelegate.getBoxesForSelection`).
-3. **SEO / Live Text Extractor (`SeoExtractorPlugin`)**:
+   - Paints color-coded badges and dotted underlines, and handles tap events (`TextPlugin.handlePointerEvent` + `TextDelegate.getBoxesForSelection`) to open a live stock quote sheet.
+3. **Linkify (`LinkifyPlugin`)**:
+   - Auto-detects URLs (`http://`, `https://`, `www.`) in any `Text` widget, highlights them as links, and makes them clickable.
+4. **SEO / Live Text Extractor (`SeoExtractorPlugin`)**:
    - Tracks all active `Text` widgets (`didAddText`, `didUpdateText`, `didRemoveText`) and generates live word/character counts and a `schema.org` JSON-LD payload without needing the semantics tree.
-
-Plugins in this version only paint. They do not receive pointer events and they do not change semantics, so a plugin that needs a tap to be useful (a link, a spoiler that is revealed on tap) is not part of this demo.
 
 ## Running the Demo
 
