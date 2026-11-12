@@ -11,7 +11,6 @@ import 'package:flutter_test/flutter_test.dart';
 class _RecordingTextPlugin extends TextPlugin {
   final List<TextDelegate> activeDelegates = <TextDelegate>[];
   final List<String> log = <String>[];
-  final List<PointerEvent> pointerEvents = <PointerEvent>[];
 
   @override
   void didAddText(TextDelegate delegate) {
@@ -33,12 +32,6 @@ class _RecordingTextPlugin extends TextPlugin {
   void didRemoveText(TextDelegate delegate) {
     activeDelegates.remove(delegate);
     log.add('plugin:remove:${delegate.text}');
-  }
-
-  @override
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {
-    pointerEvents.add(event);
-    log.add('plugin:pointer:${event.runtimeType}:${delegate.text}');
   }
 }
 
@@ -292,34 +285,6 @@ void main() {
 
     expect(plugin.activeDelegates, hasLength(1));
     expect(plugin.activeDelegates.single.text, 'Included');
-  });
-
-  testWidgets('TextPlugin and TextDelegate receive pointer events on Text', (
-    WidgetTester tester,
-  ) async {
-    final plugin = _RecordingTextPlugin();
-    final delegateEvents = <PointerEvent>[];
-
-    await tester.pumpWidget(
-      Directionality(
-        textDirection: TextDirection.ltr,
-        child: TextPluginScope(
-          plugin: plugin,
-          child: const Center(child: Text('Tap Me')),
-        ),
-      ),
-    );
-
-    final TextDelegate delegate = plugin.activeDelegates.single;
-    delegate.onPointerEvent = delegateEvents.add;
-
-    await tester.tap(find.text('Tap Me'));
-    await tester.pump();
-
-    expect(plugin.pointerEvents, isNotEmpty);
-    expect(plugin.pointerEvents.whereType<PointerDownEvent>(), hasLength(1));
-    expect(plugin.pointerEvents.whereType<PointerUpEvent>(), hasLength(1));
-    expect(delegateEvents.whereType<PointerDownEvent>(), hasLength(1));
   });
 
   testWidgets('TextPluginScope works alongside SelectionArea', (WidgetTester tester) async {

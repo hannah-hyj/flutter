@@ -8,12 +8,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'plugins/linkify_plugin.dart';
 import 'plugins/read_aloud_plugin.dart';
 import 'plugins/search_in_page_plugin.dart';
 import 'plugins/seo_extractor_plugin.dart';
 import 'plugins/spellcheck_linter_plugin.dart';
-import 'plugins/spoiler_mask_plugin.dart';
 import 'plugins/stock_ticker_plugin.dart';
 
 void main() {
@@ -106,9 +104,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     with SingleTickerProviderStateMixin {
   late final SearchInPagePlugin _searchPlugin;
   late final StockTickerPlugin _stockTickerPlugin;
-  late final LinkifyPlugin _linkifyPlugin;
   late final SeoExtractorPlugin _seoPlugin;
-  late final SpoilerMaskPlugin _spoilerPlugin;
   late final ReadAloudPlugin _readAloudPlugin;
   late final SpellcheckLinterPlugin _spellcheckPlugin;
 
@@ -122,18 +118,10 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
   bool _isFloatingSearchBar = true;
   Offset _floatingSearchOffset = const Offset(20, 12);
   bool _enableStockPlugin = true;
-  bool _enableLinkifyPlugin = true;
   bool _enableSeoPlugin = true;
-  bool _enableSpoilerPlugin = true;
   bool _enableReadAloudPlugin = true;
   bool _enableSpellcheckPlugin = true;
   bool _showSeoInspector = true;
-
-  StockTickerInfo? _lastTappedTicker;
-  String? _lastTappedUrl;
-  SpoilerMaskMatch? _lastTappedSpoiler;
-  bool _lastTappedSpoilerRevealed = false;
-  SpellcheckIssue? _lastTappedSpellcheckIssue;
 
   static const String _alphabet = 'abcdefghijklmnopqrstuvwxyz';
   static const Duration _changingTextInterval = Duration(milliseconds: 300);
@@ -146,8 +134,8 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
   bool _isChangingTextPlaying = true;
 
   static const String _initialCustomNote =
-      r'Try $NVDA or $AAPL at https://pub.dev — teams recieve seperate alerts '
-      r'and utilize spoiler ||Rosebud is the sled|| (or cloze study {{RenderParagraph}}).';
+      r'Try $NVDA or $AAPL — teams recieve seperate alerts and utilize '
+      r'one channel for deploys.';
 
   final List<String> _customNotes = <String>[_initialCustomNote];
 
@@ -155,14 +143,10 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
   void initState() {
     super.initState();
     _searchPlugin = SearchInPagePlugin()..query = _searchController.text;
-    _stockTickerPlugin = StockTickerPlugin(onTickerTapped: _handleTickerTapped);
-    _linkifyPlugin = LinkifyPlugin(onLinkTapped: _handleLinkTapped);
+    _stockTickerPlugin = StockTickerPlugin();
     _seoPlugin = SeoExtractorPlugin();
-    _spoilerPlugin = SpoilerMaskPlugin(onMatchTapped: _handleSpoilerTapped);
     _readAloudPlugin = ReadAloudPlugin();
-    _spellcheckPlugin = SpellcheckLinterPlugin(
-      onIssueTapped: _handleSpellcheckTapped,
-    );
+    _spellcheckPlugin = SpellcheckLinterPlugin();
 
     _moveController = AnimationController(
       vsync: this,
@@ -231,134 +215,11 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     _moveController.dispose();
     _searchPlugin.dispose();
     _seoPlugin.dispose();
-    _spoilerPlugin.dispose();
     _readAloudPlugin.dispose();
     _searchController.dispose();
     _customNoteController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
-  }
-
-  void _handleSpoilerTapped(
-    SpoilerMaskMatch match, {
-    required bool isRevealed,
-  }) {
-    setState(() {
-      _lastTappedSpoiler = match;
-      _lastTappedSpoilerRevealed = isRevealed;
-    });
-  }
-
-  void _handleSpellcheckTapped(SpellcheckIssue issue) {
-    setState(() {
-      _lastTappedSpellcheckIssue = issue;
-    });
-  }
-
-  void _handleTickerTapped(StockTickerInfo info) {
-    setState(() {
-      _lastTappedTicker = info;
-    });
-    if (!mounted) {
-      return;
-    }
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (BuildContext context) {
-        final bool isUp = info.isPositive;
-        final badgeColor = isUp
-            ? const Color(0xFF2E7D32)
-            : const Color(0xFFC62828);
-        final sign = isUp ? '+' : '';
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: badgeColor.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: badgeColor),
-                    ),
-                    child: Text(
-                      info.symbol,
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                        color: badgeColor,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      info.companyName,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: <Widget>[
-                      Text(
-                        '\$${info.price.toStringAsFixed(2)}',
-                        style: Theme.of(context).textTheme.titleLarge
-                            ?.copyWith(fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        '$sign${info.changePercent.toStringAsFixed(2)}%',
-                        style: TextStyle(
-                          color: badgeColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Market Cap: ${info.marketCap}',
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
-              const SizedBox(height: 8),
-              Text(info.summary, style: Theme.of(context).textTheme.bodyMedium),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _handleLinkTapped(String url) {
-    setState(() {
-      _lastTappedUrl = url;
-    });
-    if (!mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text('Opened link via LinkifyPlugin: $url'),
-          action: SnackBarAction(
-            label: 'Copy URL',
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: url));
-            },
-          ),
-        ),
-      );
   }
 
   void _addCustomNote() {
@@ -374,11 +235,9 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
 
   List<TextPlugin> get _activePlugins => <TextPlugin>[
     if (_enableStockPlugin) _stockTickerPlugin,
-    if (_enableLinkifyPlugin) _linkifyPlugin,
     if (_enableSpellcheckPlugin) _spellcheckPlugin,
     if (_enableReadAloudPlugin) _readAloudPlugin,
     if (_enableSearchPlugin) _searchPlugin,
-    if (_enableSpoilerPlugin) _spoilerPlugin,
     if (_enableSeoPlugin) _seoPlugin,
   ];
 
@@ -464,11 +323,6 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
               if (_enableSearchPlugin && !_isFloatingSearchBar)
                 _buildSearchBar(colorScheme),
               if (_enableReadAloudPlugin) _buildReadAloudBar(colorScheme),
-              if (_lastTappedTicker != null ||
-                  _lastTappedUrl != null ||
-                  _lastTappedSpoiler != null ||
-                  _lastTappedSpellcheckIssue != null)
-                _buildInteractionBanner(colorScheme),
               Expanded(
                 child: Stack(
                   children: <Widget>[
@@ -536,7 +390,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
             child: Text(
               'First-Party vs. Ecosystem Showcases: Find in Page (Ctrl+F / Cmd+F) will be '
               'provided as a first-party plugin. The other plugins in this demo—Stock '
-              'Tickers, Linkify URLs, Spoiler & Cloze Mask, Spellcheck Linter, Read-Aloud (TTS), '
+              'Tickers, Spellcheck Linter, Read-Aloud (TTS), '
               'and SEO Extractor—are showcases illustrating the flexibility of TextPlugin '
               'and what community packages can potentially achieve.',
               key: Key('plugin_overview_note'),
@@ -588,33 +442,6 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
               onSelected: (bool value) {
                 setState(() {
                   _enableStockPlugin = value;
-                });
-              },
-            ),
-            const SizedBox(width: 6),
-            FilterChip(
-              visualDensity: VisualDensity.compact,
-              showCheckmark: false,
-              avatar: const Icon(Icons.link, size: 16),
-              label: const Text('Linkify URLs'),
-              selected: _enableLinkifyPlugin,
-              onSelected: (bool value) {
-                setState(() {
-                  _enableLinkifyPlugin = value;
-                });
-              },
-            ),
-            const SizedBox(width: 6),
-            FilterChip(
-              key: const Key('chip_spoiler_plugin'),
-              visualDensity: VisualDensity.compact,
-              showCheckmark: false,
-              avatar: const Icon(Icons.visibility_off_outlined, size: 16),
-              label: const Text('Spoiler & Cloze Mask'),
-              selected: _enableSpoilerPlugin,
-              onSelected: (bool value) {
-                setState(() {
-                  _enableSpoilerPlugin = value;
                 });
               },
             ),
@@ -1038,59 +865,6 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     );
   }
 
-  Widget _buildInteractionBanner(ColorScheme colorScheme) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      color: colorScheme.secondaryContainer,
-      child: Wrap(
-        spacing: 16,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: <Widget>[
-          if (_lastTappedTicker != null)
-            Text(
-              'Last tapped ticker: ${_lastTappedTicker!.symbol} '
-              '(\$${_lastTappedTicker!.price.toStringAsFixed(2)})',
-              key: const Key('last_tapped_ticker'),
-              style: TextStyle(
-                color: colorScheme.onSecondaryContainer,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          if (_lastTappedUrl != null)
-            Text(
-              'Last tapped link: $_lastTappedUrl',
-              key: const Key('last_tapped_url'),
-              style: TextStyle(
-                color: colorScheme.onSecondaryContainer,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          if (_lastTappedSpoiler != null)
-            Text(
-              '${_lastTappedSpoiler!.kind.label}: '
-              '${_lastTappedSpoilerRevealed ? "Revealed (${_lastTappedSpoiler!.rawValue})" : "Masked (••••••••)"}',
-              key: const Key('last_tapped_spoiler'),
-              style: TextStyle(
-                color: colorScheme.onSecondaryContainer,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          if (_lastTappedSpellcheckIssue != null)
-            Text(
-              'Lint "${_lastTappedSpellcheckIssue!.matchedText}" → '
-              '"${_lastTappedSpellcheckIssue!.rule.suggestion}"',
-              key: const Key('last_tapped_spellcheck'),
-              style: TextStyle(
-                color: colorScheme.onSecondaryContainer,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildScopedArticleContent() {
     return TextPluginScope.multiple(
       plugins: _activePlugins,
@@ -1212,7 +986,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                           const SizedBox(height: 6),
                           const Text(
                             'Try typing GOOG, AAPL, https://flutter.dev, or search queries directly in '
-                            'the TextField below. Active TextPlugins highlight, linkify, and lint '
+                            'the TextField below. Active TextPlugins highlight and lint '
                             'editable text live as you type!',
                             style: TextStyle(
                               fontSize: 14,
@@ -1416,16 +1190,15 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                 children: <Widget>[
                   Text(
                     'Drag across these paragraphs to select text while TextPlugins '
-                    'simultaneously highlight GOOG, AAPL, and https://dart.dev, lint '
-                    'seperate typos, and mask spoiler ||Hidden plot twist||.',
+                    'simultaneously highlight GOOG and AAPL, and lint '
+                    'seperate typos.',
                     key: Key('selection_area_paragraph_1'),
                     style: TextStyle(fontSize: 15, height: 1.5),
                   ),
                   SizedBox(height: 8),
                   Text(
                     'Second selectable paragraph: Selection highlights paint cleanly '
-                    'over plugin background tints for NVDA and MSFT while preserving '
-                    'click and tap interactions.',
+                    'over plugin background tints for NVDA and MSFT.',
                     key: Key('selection_area_paragraph_2'),
                     style: TextStyle(fontSize: 15, height: 1.5),
                   ),

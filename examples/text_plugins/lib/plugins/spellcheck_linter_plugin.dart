@@ -63,52 +63,47 @@ class SpellcheckIssue {
   final SpellcheckRule rule;
 }
 
-/// Callback invoked when a user taps a squiggly-underlined word.
-typedef SpellcheckTapCallback = void Function(SpellcheckIssue issue);
-
 /// A [TextPlugin] that performs live spellchecking and editorial style-guide
 /// linting across all [Text] and [RichText] widgets in its scope, painting
 /// wavy squiggly underlines via [TextDelegate.foregroundPainter].
 class SpellcheckLinterPlugin extends TextPlugin {
   /// Creates a [SpellcheckLinterPlugin].
-  SpellcheckLinterPlugin({this.onIssueTapped});
-
-  /// Optional callback invoked when a flagged word is tapped.
-  final SpellcheckTapCallback? onIssueTapped;
+  SpellcheckLinterPlugin();
 
   /// Built-in spelling and style-guide rules.
-  static const Map<String, SpellcheckRule> defaultRules = <String, SpellcheckRule>{
-    'recieve': SpellcheckRule(
-      incorrectWord: 'recieve',
-      suggestion: 'receive',
-      message: 'Spelling: "i" before "e" except after "c".',
-      severity: LintSeverity.spellingError,
-    ),
-    'seperate': SpellcheckRule(
-      incorrectWord: 'seperate',
-      suggestion: 'separate',
-      message: 'Spelling: "separate" is spelled with "-par-", not "-per-".',
-      severity: LintSeverity.spellingError,
-    ),
-    'occured': SpellcheckRule(
-      incorrectWord: 'occured',
-      suggestion: 'occurred',
-      message: 'Spelling: double "r" in past tense "occurred".',
-      severity: LintSeverity.spellingError,
-    ),
-    'teh': SpellcheckRule(
-      incorrectWord: 'teh',
-      suggestion: 'the',
-      message: 'Spelling: common keyboard transposition typo.',
-      severity: LintSeverity.spellingError,
-    ),
-    'utilize': SpellcheckRule(
-      incorrectWord: 'utilize',
-      suggestion: 'use',
-      message: 'Style Guide: prefer concise "use" over "utilize".',
-      severity: LintSeverity.styleSuggestion,
-    ),
-  };
+  static const Map<String, SpellcheckRule> defaultRules =
+      <String, SpellcheckRule>{
+        'recieve': SpellcheckRule(
+          incorrectWord: 'recieve',
+          suggestion: 'receive',
+          message: 'Spelling: "i" before "e" except after "c".',
+          severity: LintSeverity.spellingError,
+        ),
+        'seperate': SpellcheckRule(
+          incorrectWord: 'seperate',
+          suggestion: 'separate',
+          message: 'Spelling: "separate" is spelled with "-par-", not "-per-".',
+          severity: LintSeverity.spellingError,
+        ),
+        'occured': SpellcheckRule(
+          incorrectWord: 'occured',
+          suggestion: 'occurred',
+          message: 'Spelling: double "r" in past tense "occurred".',
+          severity: LintSeverity.spellingError,
+        ),
+        'teh': SpellcheckRule(
+          incorrectWord: 'teh',
+          suggestion: 'the',
+          message: 'Spelling: common keyboard transposition typo.',
+          severity: LintSeverity.spellingError,
+        ),
+        'utilize': SpellcheckRule(
+          incorrectWord: 'utilize',
+          suggestion: 'use',
+          message: 'Style Guide: prefer concise "use" over "utilize".',
+          severity: LintSeverity.styleSuggestion,
+        ),
+      };
 
   static final RegExp _wordTokenizer = RegExp(r'\b[A-Za-z]+\b');
 
@@ -138,30 +133,6 @@ class SpellcheckLinterPlugin extends TextPlugin {
     _issuesByDelegate.remove(delegate);
   }
 
-  @override
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {
-    if (event is! PointerDownEvent || onIssueTapped == null || !delegate.hasLayout) {
-      return;
-    }
-    final List<SpellcheckIssue>? issues = _issuesByDelegate[delegate];
-    if (issues == null || issues.isEmpty) {
-      return;
-    }
-    final Offset localPosition = event.localPosition;
-    for (final SpellcheckIssue issue in issues) {
-      final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
-        TextSelection(baseOffset: issue.range.start, extentOffset: issue.range.end),
-        includePlaceholders: false,
-      );
-      for (final box in boxes) {
-        if (box.toRect().inflate(3.0).contains(localPosition)) {
-          onIssueTapped!(issue);
-          return;
-        }
-      }
-    }
-  }
-
   void _lintDelegate(TextDelegate delegate) {
     final String plainText = delegate.text;
     final issues = <SpellcheckIssue>[];
@@ -184,7 +155,10 @@ class SpellcheckLinterPlugin extends TextPlugin {
       delegate.foregroundPainter = null;
     } else {
       _issuesByDelegate[delegate] = issues;
-      delegate.foregroundPainter = _SpellcheckSquigglePainter(delegate: delegate, issues: issues);
+      delegate.foregroundPainter = _SpellcheckSquigglePainter(
+        delegate: delegate,
+        issues: issues,
+      );
     }
   }
 }
@@ -219,7 +193,10 @@ class _SpellcheckSquigglePainter extends CustomPainter {
 
     for (final SpellcheckIssue issue in issues) {
       final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
-        TextSelection(baseOffset: issue.range.start, extentOffset: issue.range.end),
+        TextSelection(
+          baseOffset: issue.range.start,
+          extentOffset: issue.range.end,
+        ),
         includePlaceholders: false,
       );
       final paintToUse = issue.rule.severity == LintSeverity.spellingError

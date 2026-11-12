@@ -24,8 +24,7 @@ import 'paragraph.dart';
 /// [RichText], and [EditableText] widgets) within a [TextPluginScope].
 ///
 /// A [TextPlugin] is notified after layout as text widgets are added, updated,
-/// laid out, and removed within its scope, and can also receive pointer events
-/// originating from those text widgets.
+/// laid out, and removed within its scope.
 ///
 /// Each text widget in the scope is represented by a [TextDelegate], which
 /// allows the plugin to query the displayed string, query layout metrics (such
@@ -68,11 +67,11 @@ abstract class TextPlugin {
   /// Defaults to `false`.
   bool get needsOffscreenContent => false;
 
-  /// The relative order in which this plugin paints and receives pointer
-  /// events compared to other active [TextPlugin]s on the same text widget.
+  /// The relative order in which this plugin paints compared to other active
+  /// [TextPlugin]s on the same text widget.
   ///
-  /// Plugins with a lower [paintOrder] paint first (further in the background)
-  /// and receive pointer events first. When two plugins have the same
+  /// Plugins with a lower [paintOrder] paint first (further in the
+  /// background). When two plugins have the same
   /// [paintOrder], their relative order is determined by their
   /// [TextPluginScope] installation order (outermost scope first).
   ///
@@ -112,10 +111,6 @@ abstract class TextPlugin {
   /// Called whenever a text widget is removed from the subtree covered by this
   /// plugin.
   void didRemoveText(TextDelegate delegate) {}
-
-  /// Called whenever a pointer event occurs on a text widget covered by this
-  /// plugin.
-  void handlePointerEvent(TextDelegate delegate, PointerEvent event) {}
 }
 
 /// A delegate representing a text render object ([RenderParagraph] or
@@ -133,8 +128,7 @@ abstract class TextPlugin {
 ///    ([Comparable]).
 ///  * Provide a [backgroundPainter] or [foregroundPainter] to paint behind or
 ///    in front of the text.
-///  * Listen for text or layout updates via [addListener], or register an
-///    [onPointerEvent] callback.
+///  * Listen for text or layout updates via [addListener].
 class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// Creates a [TextDelegate] for the given [RenderObject] ([RenderParagraph],
   /// [RenderEditable], or [TextDelegateHostMixin]) and [TextPlugin].
@@ -279,8 +273,8 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// Whether the underlying render object has a valid, up-to-date layout.
   ///
   /// Guaranteed to be `true` during [TextPlugin.didAddText],
-  /// [TextPlugin.didUpdateText], [TextPlugin.didLayoutText],
-  /// [CustomPainter.paint], and [TextPlugin.handlePointerEvent].
+  /// [TextPlugin.didUpdateText], [TextPlugin.didLayoutText], and
+  /// [CustomPainter.paint].
   bool get hasLayout => hasValidLayout && renderObject.hasSize && !renderObject.debugNeedsLayout;
 
   /// The size of the underlying render object.
@@ -291,10 +285,6 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// An estimate of the bounds of the underlying render object in its
   /// local coordinate system.
   Rect get paintBounds => renderObject.paintBounds;
-
-  /// Optional callback invoked when a [PointerEvent] occurs on the text widget
-  /// represented by this delegate.
-  ValueChanged<PointerEvent>? onPointerEvent;
 
   /// A [CustomPainter] to be painted in front of the text widget.
   CustomPainter? get foregroundPainter => _foregroundPainter;
@@ -619,7 +609,6 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     detachPainters();
     _backgroundPainter = null;
     _foregroundPainter = null;
-    onPointerEvent = null;
     super.dispose();
   }
 }
@@ -913,17 +902,6 @@ mixin TextDelegateHostMixin on RenderBox {
       }
     }
     super.markNeedsLayout();
-  }
-
-  @override
-  void handleEvent(PointerEvent event, BoxHitTestEntry entry) {
-    super.handleEvent(event, entry);
-    if (_textPluginDelegates != null && _textPluginDelegates!.isNotEmpty) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
-        delegate.onPointerEvent?.call(event);
-        delegate.plugin.handlePointerEvent(delegate, event);
-      }
-    }
   }
 
   @override
