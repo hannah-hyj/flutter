@@ -2146,6 +2146,11 @@ class EditableText extends StatefulWidget {
   ///
   /// If null, [TextPluginScope.maybeOf] is used to obtain the active
   /// [TextPlugin]s from the ambient [BuildContext].
+  ///
+  /// When [obscureText] is true, this editable text is not registered with
+  /// any [TextPlugin], neither the ones in this list nor the ones in the
+  /// ambient [TextPluginScope]. A plugin can therefore never read, paint on
+  /// or search the text of a password field.
   final List<TextPlugin>? textPlugins;
 
   /// The default value for [selectionHeightStyle].
@@ -6084,8 +6089,12 @@ class EditableTextState extends State<EditableText>
                                     promptRectRange: _currentPromptRectRange,
                                     promptRectColor: widget.autocorrectionTextRectColor,
                                     clipBehavior: widget.clipBehavior,
-                                    textPlugins:
-                                        widget.textPlugins ?? TextPluginScope.maybeOf(context),
+                                    // Obscured text is never given to a text
+                                    // plugin, so that a plugin cannot read
+                                    // a password.
+                                    textPlugins: widget.obscureText
+                                        ? null
+                                        : widget.textPlugins ?? TextPluginScope.maybeOf(context),
                                   ),
                                 ),
                               ),

@@ -595,6 +595,68 @@ void main() {
     expect(plugin.log, contains('plugin:remove:Updated Editable'));
   });
 
+  testWidgets('An obscured EditableText is not registered with any TextPlugin', (
+    WidgetTester tester,
+  ) async {
+    final scopePlugin = _RecordingTextPlugin();
+    final explicitPlugin = _RecordingTextPlugin();
+    final controller = TextEditingController(text: 'hunter2');
+    addTearDown(controller.dispose);
+    final focusNode = FocusNode();
+    addTearDown(focusNode.dispose);
+
+    Widget build({required bool obscureText, List<TextPlugin>? textPlugins}) {
+      return Directionality(
+        textDirection: TextDirection.ltr,
+        child: MediaQuery(
+          data: const MediaQueryData(),
+          child: TextPluginScope(
+            plugin: scopePlugin,
+            child: EditableText(
+              controller: controller,
+              focusNode: focusNode,
+              obscureText: obscureText,
+              textPlugins: textPlugins,
+              style: const TextStyle(),
+              cursorColor: const Color(0xFFFF0000),
+              backgroundCursorColor: const Color(0xFF000000),
+            ),
+          ),
+        ),
+      );
+    }
+
+    RenderEditable findRenderEditable() {
+      return tester.state<EditableTextState>(find.byType(EditableText)).renderEditable;
+    }
+
+    // Obscured from the start: the plugin of the scope never sees the field.
+    await tester.pumpWidget(build(obscureText: true));
+    expect(findRenderEditable().textPlugins, isNull);
+    expect(scopePlugin.activeDelegates, isEmpty);
+    expect(scopePlugin.log, isEmpty);
+
+    // Plugins passed to the field directly are skipped as well.
+    await tester.pumpWidget(build(obscureText: true, textPlugins: <TextPlugin>[explicitPlugin]));
+    expect(findRenderEditable().textPlugins, isNull);
+    expect(explicitPlugin.activeDelegates, isEmpty);
+    expect(explicitPlugin.log, isEmpty);
+
+    // No longer obscured: the plugin of the scope is told about the field.
+    await tester.pumpWidget(build(obscureText: false));
+    expect(findRenderEditable().textPlugins, <TextPlugin>[scopePlugin]);
+    expect(scopePlugin.activeDelegates, hasLength(1));
+    expect(scopePlugin.log, contains('plugin:add:hunter2'));
+
+    // Obscured again: the plugin loses the field.
+    scopePlugin.log.clear();
+    await tester.pumpWidget(build(obscureText: true));
+    expect(findRenderEditable().textPlugins, isNull);
+    expect(scopePlugin.activeDelegates, isEmpty);
+    expect(scopePlugin.log, hasLength(1));
+    expect(scopePlugin.log.single, startsWith('plugin:remove:'));
+  });
+
   testWidgets(
     'SelectableRegion installs _SelectionHighlightTextPlugin and exposes selections and selectionColor on TextDelegate',
     (WidgetTester tester) async {
