@@ -2,24 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-import 'plugins/read_aloud_plugin.dart';
-import 'plugins/search_in_page_plugin.dart';
-import 'plugins/seo_extractor_plugin.dart';
+import 'plugins/frosted_spoiler_plugin.dart';
 import 'plugins/spellcheck_linter_plugin.dart';
-import 'plugins/stock_ticker_plugin.dart';
+import 'plugins/spellcheck_suggestions_plugin.dart';
+import 'plugins/spoiler_mask_plugin.dart';
 
 void main() {
   runApp(const TextPluginsDemoApp());
 }
 
-/// Demo application showcasing the [TextPlugin], [TextDelegate], and
-/// [TextPluginScope] architecture from `Text-Plugins-One-Pager.md`.
+/// A small app for trying out the two text plugins that build widgets:
+/// [SpellcheckSuggestionsPlugin] and [FrostedSpoilerPlugin].
 class TextPluginsDemoApp extends StatelessWidget {
   /// Creates the [TextPluginsDemoApp].
   const TextPluginsDemoApp({super.key});
@@ -27,71 +24,18 @@ class TextPluginsDemoApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Text Plugins Demo',
+      title: 'Text plugins with widgets',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6750A4), // Modern Material 3 Purple
-          brightness: Brightness.light,
-          surface: const Color(0xFFFBFDF8),
-          surfaceContainerHighest: const Color(0xFFEADDFF),
-        ),
-        scaffoldBackgroundColor: const Color(0xFFFBFDF8),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFFFBFDF8),
-          elevation: 0,
-          scrolledUnderElevation: 2,
-          centerTitle: false,
-          iconTheme: IconThemeData(color: Color(0xFF1D1B20)),
-          titleTextStyle: TextStyle(
-            color: Color(0xFF1D1B20),
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
-            letterSpacing: -0.5,
-          ),
-        ),
-        cardTheme: CardThemeData(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: const BorderSide(color: Color(0xFFE0E0E0), width: 1),
-          ),
-          color: Colors.white,
-          margin: const EdgeInsets.symmetric(vertical: 8),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: const Color(0xFFF4EFF4),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: BorderSide.none,
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(color: Color(0xFF6750A4), width: 2),
-          ),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 20,
-            vertical: 16,
-          ),
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          ),
-        ),
-        chipTheme: const ChipThemeData(showCheckmark: false),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6750A4)),
       ),
       home: const TextPluginsHomePage(),
     );
   }
 }
 
-/// Main interactive workbench for testing and composing [TextPlugin]s.
+/// The page of the demo: a list of things to try, and text to try them on.
 class TextPluginsHomePage extends StatefulWidget {
   /// Creates the [TextPluginsHomePage].
   const TextPluginsHomePage({super.key});
@@ -102,93 +46,118 @@ class TextPluginsHomePage extends StatefulWidget {
 
 class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     with SingleTickerProviderStateMixin {
-  late final SearchInPagePlugin _searchPlugin;
-  late final StockTickerPlugin _stockTickerPlugin;
-  late final SeoExtractorPlugin _seoPlugin;
-  late final ReadAloudPlugin _readAloudPlugin;
-  late final SpellcheckLinterPlugin _spellcheckPlugin;
+  // Shown at the top of the page, outside the scope of the plugins.
+  static const List<String> _whatToTry = <String>[
+    'Paragraphs: click a word with a wavy underline. A menu opens next to '
+        'it and shows the suggestion. It only offers to replace the word '
+        'in a text field: a plugin cannot change the text of a Text widget.',
+    'Paragraphs: click a blurred span to show it, and again to hide it.',
+    'Text field: click "recieve". The caret moves and the menu opens. '
+        '"Replace with" fixes the word. The plugin edits through the field.',
+    'Text field: move the caret into the blurred span and out again. The '
+        'span is clear while the caret is inside.',
+    'Selection: drag to select the text, also starting on a blurred span.',
+    'Moving text: open a menu and watch it follow the card. The blur moves '
+        'with the text.',
+    'Scrolling: scroll with a menu open. The menu closes, and the blur '
+        'scrolls with the text.',
+    'Keyboard: Tab to a flagged word, Enter opens its menu, Escape closes '
+        'it. Tab to a blurred span, Enter toggles it.',
+    'Chips: switch one off to get the painter-only version of that plugin.',
+  ];
 
-  final TextEditingController _searchController = TextEditingController(
-    text: 'Flutter',
-  );
-  final TextEditingController _customNoteController = TextEditingController();
-  final FocusNode _searchFocusNode = FocusNode();
+  static const TextStyle _bodyStyle = TextStyle(fontSize: 16, height: 1.5);
 
-  bool _enableSearchPlugin = false;
-  bool _isFloatingSearchBar = true;
-  Offset _floatingSearchOffset = const Offset(20, 12);
-  bool _enableStockPlugin = true;
-  bool _enableSeoPlugin = true;
-  bool _enableReadAloudPlugin = true;
-  bool _enableSpellcheckPlugin = true;
-  bool _showSeoInspector = true;
-
-  static const String _alphabet = 'abcdefghijklmnopqrstuvwxyz';
-  static const Duration _changingTextInterval = Duration(milliseconds: 300);
-
+  late final SpellcheckSuggestionsPlugin _suggestionsPlugin;
+  late final SpellcheckLinterPlugin _linterPlugin;
+  late final FrostedSpoilerPlugin _frostedPlugin;
+  late final SpoilerMaskPlugin _paintedPlugin;
   late final AnimationController _moveController;
-  bool _isMovingCardPlaying = true;
 
-  Timer? _changingTextTimer;
-  int _changingTextLength = 1;
-  bool _isChangingTextPlaying = true;
+  final TextEditingController _fieldController = TextEditingController(
+    text: 'We recieve ||a secret|| by mail',
+  );
+  final ValueNotifier<String> _lastEvent = ValueNotifier<String>('none yet');
 
-  static const String _initialCustomNote =
-      r'Try $NVDA or $AAPL — teams recieve seperate alerts and utilize '
-      r'one channel for deploys.';
+  // The paragraphs of the first section. The "Add as paragraph" button adds
+  // the text of the field to them.
+  final List<String> _paragraphs = <String>[
+    'Teams recieve seperate alerts when a build fails. The ending of the '
+        'story: ||the gardener was the heir all along||.',
+    'We utilize one channel for deploys. Study card: {{RenderParagraph}} '
+        'lays out text.',
+  ];
 
-  final List<String> _customNotes = <String>[_initialCustomNote];
+  bool _useSuggestionMenu = true;
+  bool _useFrostedGlass = true;
+  bool _isMoving = true;
 
   @override
   void initState() {
     super.initState();
-    _searchPlugin = SearchInPagePlugin()..query = _searchController.text;
-    _stockTickerPlugin = StockTickerPlugin();
-    _seoPlugin = SeoExtractorPlugin();
-    _readAloudPlugin = ReadAloudPlugin();
-    _spellcheckPlugin = SpellcheckLinterPlugin();
-
+    _suggestionsPlugin = SpellcheckSuggestionsPlugin(
+      onIssueTapped: _handleIssueTapped,
+      onReplace: _handleReplaced,
+    );
+    _linterPlugin = SpellcheckLinterPlugin(onIssueTapped: _handleIssueTapped);
+    _frostedPlugin = FrostedSpoilerPlugin(onMatchTapped: _handleSpoilerTapped);
+    _paintedPlugin = SpoilerMaskPlugin(onMatchTapped: _handleSpoilerTapped);
     _moveController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 6),
+      duration: const Duration(seconds: 8),
     )..repeat();
-
-    _startChangingTextTimer();
-    HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
   }
 
-  bool _handleGlobalKeyEvent(KeyEvent event) {
-    if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
-        (event.logicalKey == LogicalKeyboardKey.keyF ||
-            event.physicalKey == PhysicalKeyboardKey.keyF) &&
-        (HardwareKeyboard.instance.isControlPressed ||
-            HardwareKeyboard.instance.isMetaPressed)) {
-      _activateFindInPage();
-      return true;
-    }
-    return false;
+  @override
+  void dispose() {
+    _moveController.dispose();
+    _suggestionsPlugin.dispose();
+    _frostedPlugin.dispose();
+    _paintedPlugin.dispose();
+    _fieldController.dispose();
+    _lastEvent.dispose();
+    super.dispose();
   }
 
-  void _startChangingTextTimer() {
-    _changingTextTimer?.cancel();
-    _changingTextTimer = Timer.periodic(_changingTextInterval, (_) {
-      _stepChangingText();
-    });
+  // When a chip is off, the painter-only plugin for the same feature is used.
+  List<TextPlugin> get _plugins => <TextPlugin>[
+    if (_useSuggestionMenu) _suggestionsPlugin else _linterPlugin,
+    if (_useFrostedGlass) _frostedPlugin else _paintedPlugin,
+  ];
+
+  void _handleIssueTapped(SpellcheckIssue issue) {
+    _lastEvent.value = 'pointer down on "${issue.matchedText}"';
   }
 
-  void _stepChangingText() {
-    if (!mounted) {
+  void _handleSpoilerTapped(
+    SpoilerMaskMatch match, {
+    required bool isRevealed,
+  }) {
+    _lastEvent.value =
+        '${match.kind.label.toLowerCase()} ${isRevealed ? 'shown' : 'hidden'}';
+  }
+
+  // Called after the plugin has replaced a word in the text field. In other
+  // text the menu only shows the suggestion: a plugin cannot change the text
+  // of a Text widget.
+  void _handleReplaced(SpellcheckIssue issue, String replacement) {
+    _lastEvent.value = 'replaced "${issue.matchedText}" with "$replacement"';
+  }
+
+  void _addParagraph() {
+    final String text = _fieldController.text.trim();
+    if (text.isEmpty) {
       return;
     }
     setState(() {
-      _changingTextLength = (_changingTextLength % _alphabet.length) + 1;
+      _paragraphs.add(text);
     });
   }
 
-  void _toggleMovingCard() {
+  void _toggleMoving() {
     setState(() {
-      _isMovingCardPlaying = !_isMovingCardPlaying;
-      if (_isMovingCardPlaying) {
+      _isMoving = !_isMoving;
+      if (_isMoving) {
         _moveController.repeat();
       } else {
         _moveController.stop();
@@ -196,205 +165,41 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     });
   }
 
-  void _toggleChangingText() {
-    setState(() {
-      _isChangingTextPlaying = !_isChangingTextPlaying;
-      if (_isChangingTextPlaying) {
-        _startChangingTextTimer();
-      } else {
-        _changingTextTimer?.cancel();
-        _changingTextTimer = null;
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
-    _changingTextTimer?.cancel();
-    _moveController.dispose();
-    _searchPlugin.dispose();
-    _seoPlugin.dispose();
-    _readAloudPlugin.dispose();
-    _searchController.dispose();
-    _customNoteController.dispose();
-    _searchFocusNode.dispose();
-    super.dispose();
-  }
-
-  void _addCustomNote() {
-    final String text = _customNoteController.text.trim();
-    if (text.isEmpty) {
-      return;
-    }
-    setState(() {
-      _customNotes.add(text);
-      _customNoteController.clear();
-    });
-  }
-
-  List<TextPlugin> get _activePlugins => <TextPlugin>[
-    if (_enableStockPlugin) _stockTickerPlugin,
-    if (_enableSpellcheckPlugin) _spellcheckPlugin,
-    if (_enableReadAloudPlugin) _readAloudPlugin,
-    if (_enableSearchPlugin) _searchPlugin,
-    if (_enableSeoPlugin) _seoPlugin,
-  ];
-
-  void _activateFindInPage() {
-    if (!_enableSearchPlugin) {
-      setState(() {
-        _enableSearchPlugin = true;
-      });
-    }
-    _searchPlugin.eagerLoadOffscreenText = true;
-    _searchFocusNode.requestFocus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _searchFocusNode.requestFocus();
-        _searchController.selection = TextSelection(
-          baseOffset: 0,
-          extentOffset: _searchController.text.length,
-        );
-      }
-    });
-  }
-
-  void _closeFindInPage() {
-    _searchFocusNode.unfocus();
-    setState(() {
-      _enableSearchPlugin = false;
-    });
-  }
-
-  void _setFloatingSearchBar(bool floating) {
-    if (_isFloatingSearchBar == floating) {
-      return;
-    }
-    final bool hadFocus = _searchFocusNode.hasFocus;
-    setState(() {
-      _isFloatingSearchBar = floating;
-    });
-    if (hadFocus) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _searchFocusNode.requestFocus();
-        }
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.keyF, control: true):
-            _activateFindInPage,
-        const SingleActivator(LogicalKeyboardKey.keyF, meta: true):
-            _activateFindInPage,
-      },
-      child: Focus(
-        autofocus: true,
-        child: Scaffold(
-          appBar: AppBar(
-            backgroundColor: colorScheme.primaryContainer,
-            title: const Text('Flutter Text Plugins Workbench'),
-            actions: <Widget>[
-              IconButton(
-                tooltip: _showSeoInspector
-                    ? 'Hide SEO Inspector'
-                    : 'Show SEO Inspector',
-                icon: Icon(
-                  _showSeoInspector ? Icons.schema : Icons.schema_outlined,
-                ),
-                onPressed: () {
-                  setState(() {
-                    _showSeoInspector = !_showSeoInspector;
-                  });
-                },
-              ),
-            ],
-          ),
-          body: Column(
-            children: <Widget>[
-              _buildPluginOverviewBanner(colorScheme),
-              _buildPluginControlHeader(colorScheme),
-              if (_enableSearchPlugin && !_isFloatingSearchBar)
-                _buildSearchBar(colorScheme),
-              if (_enableReadAloudPlugin) _buildReadAloudBar(colorScheme),
-              Expanded(
-                child: Stack(
-                  children: <Widget>[
-                    LayoutBuilder(
-                      builder:
-                          (BuildContext context, BoxConstraints constraints) {
-                            final bool wideScreen =
-                                constraints.maxWidth >= 720 &&
-                                _showSeoInspector;
-                            final Widget articleContent =
-                                _buildScopedArticleContent();
-                            if (wideScreen) {
-                              return Row(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: <Widget>[
-                                  Expanded(flex: 3, child: articleContent),
-                                  const VerticalDivider(width: 1),
-                                  Expanded(
-                                    flex: 2,
-                                    child: _buildSeoInspectorPanel(),
-                                  ),
-                                ],
-                              );
-                            }
-                            return Column(
-                              children: <Widget>[
-                                Expanded(child: articleContent),
-                                if (_showSeoInspector) ...<Widget>[
-                                  const Divider(height: 1),
-                                  SizedBox(
-                                    height: 160,
-                                    child: _buildSeoInspectorPanel(),
-                                  ),
-                                ],
-                              ],
-                            );
-                          },
-                    ),
-                    if (_enableSearchPlugin && _isFloatingSearchBar)
-                      _buildFloatingSearchBar(colorScheme),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: colorScheme.primaryContainer,
+        title: const Text('Text plugins with widgets'),
       ),
-    );
-  }
-
-  Widget _buildPluginOverviewBanner(ColorScheme colorScheme) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: colorScheme.primaryContainer.withValues(alpha: 0.45),
-        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Icon(Icons.info_outline, size: 18, color: colorScheme.primary),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text(
-              'First-Party vs. Ecosystem Showcases: Find in Page (Ctrl+F / Cmd+F) will be '
-              'provided as a first-party plugin. The other plugins in this demo—Stock '
-              'Tickers, Spellcheck Linter, Read-Aloud (TTS), '
-              'and SEO Extractor—are showcases illustrating the flexibility of TextPlugin '
-              'and what community packages can potentially achieve.',
-              key: Key('plugin_overview_note'),
-              style: TextStyle(fontSize: 13, height: 1.4),
+          _buildWhatToTry(colorScheme),
+          _buildControls(colorScheme),
+          Expanded(
+            child: TextPluginScope.multiple(
+              plugins: _plugins,
+              child: SingleChildScrollView(
+                key: const Key('article_scroll_view'),
+                padding: const EdgeInsets.all(16),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 720),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        _buildParagraphs(),
+                        _buildTextField(),
+                        _buildSelection(),
+                        _buildMovingText(colorScheme),
+                        _buildScrolling(),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ],
@@ -402,1081 +207,277 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     );
   }
 
-  Widget _buildPluginControlHeader(ColorScheme colorScheme) {
+  Widget _buildWhatToTry(ColorScheme colorScheme) {
     return Material(
-      color: colorScheme.surfaceContainerLow,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Row(
-          children: <Widget>[
-            Text(
-              'Active TextPlugins:',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilterChip(
-              key: const Key('chip_search_plugin'),
-              visualDensity: VisualDensity.compact,
-              showCheckmark: false,
-              avatar: const Icon(Icons.search, size: 16),
-              label: const Text('Search in Page'),
-              selected: _enableSearchPlugin,
-              onSelected: (bool value) {
-                setState(() {
-                  _enableSearchPlugin = value;
-                });
-              },
-            ),
-            const SizedBox(width: 6),
-            FilterChip(
-              visualDensity: VisualDensity.compact,
-              showCheckmark: false,
-              avatar: const Icon(Icons.trending_up, size: 16),
-              label: const Text('Stock Tickers'),
-              selected: _enableStockPlugin,
-              onSelected: (bool value) {
-                setState(() {
-                  _enableStockPlugin = value;
-                });
-              },
-            ),
-            const SizedBox(width: 6),
-            FilterChip(
-              key: const Key('chip_spellcheck_plugin'),
-              visualDensity: VisualDensity.compact,
-              showCheckmark: false,
-              avatar: const Icon(Icons.spellcheck, size: 16),
-              label: const Text('Spellcheck Linter'),
-              selected: _enableSpellcheckPlugin,
-              onSelected: (bool value) {
-                setState(() {
-                  _enableSpellcheckPlugin = value;
-                });
-              },
-            ),
-            const SizedBox(width: 6),
-            FilterChip(
-              key: const Key('chip_read_aloud_plugin'),
-              visualDensity: VisualDensity.compact,
-              showCheckmark: false,
-              avatar: const Icon(Icons.record_voice_over_outlined, size: 16),
-              label: const Text('Read-Aloud (TTS)'),
-              selected: _enableReadAloudPlugin,
-              onSelected: (bool value) {
-                if (!value) {
-                  _readAloudPlugin.stop();
-                }
-                setState(() {
-                  _enableReadAloudPlugin = value;
-                });
-              },
-            ),
-            const SizedBox(width: 6),
-            FilterChip(
-              visualDensity: VisualDensity.compact,
-              showCheckmark: false,
-              avatar: const Icon(Icons.analytics_outlined, size: 16),
-              label: const Text('SEO Extractor'),
-              selected: _enableSeoPlugin,
-              onSelected: (bool value) {
-                setState(() {
-                  _enableSeoPlugin = value;
-                });
-              },
-            ),
-          ],
+      color: colorScheme.secondaryContainer,
+      child: ExpansionTile(
+        key: const Key('what_to_try'),
+        initiallyExpanded: true,
+        shape: const Border(),
+        leading: const Icon(Icons.checklist),
+        title: const Text(
+          'What to try',
+          style: TextStyle(fontWeight: FontWeight.w600),
         ),
-      ),
-    );
-  }
-
-  Widget _buildReadAloudBar(ColorScheme colorScheme) {
-    return ListenableBuilder(
-      listenable: _readAloudPlugin,
-      builder: (BuildContext context, Widget? child) {
-        final ReadAloudWord? active = _readAloudPlugin.currentWord;
-        final int total = _readAloudPlugin.words.length;
-        final int current = active == null
-            ? 0
-            : _readAloudPlugin.currentWordIndex + 1;
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerLow,
-            border: Border(
-              bottom: BorderSide(color: colorScheme.outlineVariant),
-            ),
-          ),
-          child: Row(
-            children: <Widget>[
-              const Icon(Icons.record_voice_over, size: 18),
-              const SizedBox(width: 8),
-              Text(
-                active != null
-                    ? 'Speaking: "${active.word}" ($current/$total)'
-                    : 'Read-Aloud Idle ($total words)',
-                key: const Key('read_aloud_status'),
-                style: const TextStyle(
-                  fontWeight: FontWeight.w500,
-                  fontSize: 13,
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                key: const Key('read_aloud_prev_word_button'),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Previous word',
-                icon: const Icon(Icons.skip_previous, size: 20),
-                onPressed: total > 0 ? _readAloudPlugin.stepPreviousWord : null,
-              ),
-              IconButton(
-                key: const Key('read_aloud_play_button'),
-                visualDensity: VisualDensity.compact,
-                tooltip: _readAloudPlugin.isPlaying
-                    ? 'Pause Read-Aloud'
-                    : 'Play Read-Aloud',
-                icon: Icon(
-                  _readAloudPlugin.isPlaying
-                      ? Icons.pause_circle
-                      : Icons.play_circle,
-                  size: 22,
-                ),
-                onPressed: total > 0 ? _readAloudPlugin.togglePlay : null,
-              ),
-              IconButton(
-                key: const Key('read_aloud_next_word_button'),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Next word',
-                icon: const Icon(Icons.skip_next, size: 20),
-                onPressed: total > 0 ? _readAloudPlugin.stepNextWord : null,
-              ),
-              IconButton(
-                key: const Key('read_aloud_stop_button'),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Stop Read-Aloud',
-                icon: const Icon(Icons.stop_circle_outlined, size: 20),
-                onPressed: active != null ? _readAloudPlugin.stop : null,
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildSearchPositionOptions() {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        ChoiceChip(
-          key: const Key('search_position_top_chip'),
-          visualDensity: VisualDensity.compact,
-          showCheckmark: false,
-          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-          label: const Text('At Top', style: TextStyle(fontSize: 12)),
-          tooltip: 'Dock search bar at the top of the page',
-          selected: !_isFloatingSearchBar,
-          onSelected: (bool selected) {
-            if (selected) {
-              _setFloatingSearchBar(false);
-            }
-          },
-        ),
-        const SizedBox(width: 4),
-        ChoiceChip(
-          key: const Key('search_position_floating_chip'),
-          visualDensity: VisualDensity.compact,
-          showCheckmark: false,
-          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-          label: const Text('Floating', style: TextStyle(fontSize: 12)),
-          tooltip: 'Display search bar as a floating overlay widget',
-          selected: _isFloatingSearchBar,
-          onSelected: (bool selected) {
-            if (selected) {
-              _setFloatingSearchBar(true);
-            }
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSearchBar(ColorScheme colorScheme) {
-    return ListenableBuilder(
-      listenable: _searchPlugin,
-      builder: (BuildContext context, Widget? child) {
-        final int total = _searchPlugin.matches.length;
-        final int current = total == 0 ? 0 : _searchPlugin.activeMatchIndex + 1;
-        return Container(
-          key: const Key('top_search_bar'),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-            border: Border(
-              bottom: BorderSide(color: colorScheme.outlineVariant),
-            ),
-          ),
-          child: Row(
-            children: <Widget>[
-              const Icon(Icons.find_in_page_outlined),
-              const SizedBox(width: 10),
-              Expanded(
-                child: TextField(
-                  key: const Key('search_input'),
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  decoration: const InputDecoration(
-                    hintText: 'Find in page (Ctrl+F / Cmd+F, e.g. Flutter, GOOG, Archive #20)...',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (String value) {
-                    _searchPlugin.query = value;
-                  },
-                  onEditingComplete: () {},
-                  onSubmitted: (_) {
-                    _searchPlugin.nextMatch();
-                  },
-                ),
-              ),
-              const SizedBox(width: 6),
-              FilterChip(
-                visualDensity: VisualDensity.compact,
-                showCheckmark: false,
-                labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                label: const Text('Aa'),
-                tooltip: 'Case sensitive',
-                selected: _searchPlugin.caseSensitive,
-                onSelected: (bool value) {
-                  _searchPlugin.caseSensitive = value;
-                },
-              ),
-              const SizedBox(width: 6),
-              FilterChip(
-                key: const Key('eager_load_chip'),
-                visualDensity: VisualDensity.compact,
-                showCheckmark: false,
-                labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                avatar: const Icon(Icons.bolt, size: 15),
-                label: const Text(
-                  'Cancel Lazy Load',
-                  style: TextStyle(fontSize: 12),
-                ),
-                tooltip: 'Eagerly lay out offscreen SliverList items (auto-enabled on Ctrl+F)',
-                selected: _searchPlugin.eagerLoadOffscreenText,
-                onSelected: (bool value) {
-                  _searchPlugin.eagerLoadOffscreenText = value;
-                },
-              ),
-              const SizedBox(width: 6),
-              _buildSearchPositionOptions(),
-              const SizedBox(width: 8),
-              Text(
-                '$current / $total',
-                key: const Key('search_match_count'),
-                style: const TextStyle(
-                  fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
-                ),
-              ),
-              IconButton(
-                key: const Key('search_prev_button'),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Previous match',
-                icon: const Icon(Icons.keyboard_arrow_up),
-                onPressed: total > 0 ? _searchPlugin.previousMatch : null,
-              ),
-              IconButton(
-                key: const Key('search_next_button'),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Next match',
-                icon: const Icon(Icons.keyboard_arrow_down),
-                onPressed: total > 0 ? _searchPlugin.nextMatch : null,
-              ),
-              IconButton(
-                key: const Key('search_close_button'),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Close search (Ctrl+F / Cmd+F to reopen)',
-                icon: const Icon(Icons.close, size: 18),
-                onPressed: _closeFindInPage,
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildFloatingSearchBar(ColorScheme colorScheme) {
-    return Positioned(
-      right: _floatingSearchOffset.dx,
-      top: _floatingSearchOffset.dy,
-      child: ListenableBuilder(
-        listenable: _searchPlugin,
-        builder: (BuildContext context, Widget? child) {
-          final int total = _searchPlugin.matches.length;
-          final int current = total == 0
-              ? 0
-              : _searchPlugin.activeMatchIndex + 1;
-          return Material(
-            key: const Key('floating_search_bar'),
-            elevation: 8,
-            shadowColor: Colors.black38,
-            color: colorScheme.surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-              side: BorderSide(
-                color: colorScheme.primary.withValues(alpha: 0.45),
-                width: 1.5,
-              ),
-            ),
-            child: SizedBox(
-              width: 480,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Row(
-                      children: <Widget>[
-                        GestureDetector(
-                          onPanUpdate: (DragUpdateDetails details) {
-                            setState(() {
-                              _floatingSearchOffset = Offset(
-                                (_floatingSearchOffset.dx - details.delta.dx)
-                                    .clamp(8.0, 600.0),
-                                (_floatingSearchOffset.dy + details.delta.dy)
-                                    .clamp(8.0, 500.0),
-                              );
-                            });
-                          },
-                          child: MouseRegion(
-                            cursor: SystemMouseCursors.move,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                              ),
-                              child: Icon(
-                                Icons.drag_indicator,
-                                size: 20,
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: TextField(
-                            key: const Key('search_input'),
-                            controller: _searchController,
-                            focusNode: _searchFocusNode,
-                            decoration: const InputDecoration(
-                              hintText: 'Find in page (Ctrl+F / Cmd+F)...',
-                              isDense: true,
-                              border: OutlineInputBorder(),
-                            ),
-                            onChanged: (String value) {
-                              _searchPlugin.query = value;
-                            },
-                            onEditingComplete: () {},
-                            onSubmitted: (_) {
-                              _searchPlugin.nextMatch();
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '$current / $total',
-                          key: const Key('search_match_count'),
-                          style: const TextStyle(
-                            fontFeatures: <FontFeature>[
-                              FontFeature.tabularFigures(),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          key: const Key('search_prev_button'),
-                          visualDensity: VisualDensity.compact,
-                          tooltip: 'Previous match',
-                          icon: const Icon(Icons.keyboard_arrow_up),
-                          onPressed: total > 0
-                              ? _searchPlugin.previousMatch
-                              : null,
-                        ),
-                        IconButton(
-                          key: const Key('search_next_button'),
-                          visualDensity: VisualDensity.compact,
-                          tooltip: 'Next match',
-                          icon: const Icon(Icons.keyboard_arrow_down),
-                          onPressed: total > 0 ? _searchPlugin.nextMatch : null,
-                        ),
-                        IconButton(
-                          key: const Key('search_close_button'),
-                          visualDensity: VisualDensity.compact,
-                          tooltip: 'Close search (Ctrl+F / Cmd+F to reopen)',
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: _closeFindInPage,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: <Widget>[
-                        FilterChip(
-                          visualDensity: VisualDensity.compact,
-                          showCheckmark: false,
-                          label: const Text('Aa'),
-                          tooltip: 'Case sensitive',
-                          selected: _searchPlugin.caseSensitive,
-                          onSelected: (bool value) {
-                            _searchPlugin.caseSensitive = value;
-                          },
-                        ),
-                        FilterChip(
-                          key: const Key('eager_load_chip'),
-                          visualDensity: VisualDensity.compact,
-                          showCheckmark: false,
-                          avatar: const Icon(Icons.bolt, size: 16),
-                          label: const Text('Cancel Lazy Load'),
-                          tooltip: 'Eagerly lay out offscreen SliverList items (auto-enabled on Ctrl+F)',
-                          selected: _searchPlugin.eagerLoadOffscreenText,
-                          onSelected: (bool value) {
-                            _searchPlugin.eagerLoadOffscreenText = value;
-                          },
-                        ),
-                        _buildSearchPositionOptions(),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildScopedArticleContent() {
-    return TextPluginScope.multiple(
-      plugins: _activePlugins,
-      child: CustomScrollView(
-        key: const Key('article_scroll_view'),
-        slivers: <Widget>[
-          SliverPadding(
-            padding: const EdgeInsets.all(20),
-            sliver: SliverToBoxAdapter(
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        children: <Widget>[
+          // Scrolls by itself when the window is small.
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 200),
+            child: SingleChildScrollView(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  const Text(
-                    'Composable Text Plugins in Flutter',
-                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Every paragraph below is rendered using standard Flutter Text and Text.rich '
-                    'widgets—no custom SearchableText or LinkText widgets required. Multiple '
-                    'TextPlugins inspect, highlight, and handle pointer events on the same Text '
-                    'widgets simultaneously.',
-                    style: TextStyle(fontSize: 16, height: 1.5),
-                  ),
-                  const SizedBox(height: 20),
-                  Card(
-                    key: const Key('static_text_card'),
-                    elevation: 0,
-                    color: Theme.of(context).colorScheme.surfaceContainerLow,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Row(
-                            children: <Widget>[
-                              Icon(
-                                Icons.article_outlined,
-                                size: 20,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                              const SizedBox(width: 8),
-                              const Expanded(
-                                child: Text(
-                                  '1. Static Text & RichText (Market & Ecosystem Report)',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          const Text(
-                            'Flutter continues to power multi-platform applications built at '
-                            'GOOG and across the industry. Developers building for AAPL iOS/macOS, '
-                            'MSFT Windows, and web browsers can learn more at https://flutter.dev '
-                            'and https://dart.dev.',
-                            key: Key('market_report_text'),
-                            style: TextStyle(fontSize: 15, height: 1.55),
-                          ),
-                          const SizedBox(height: 10),
-                          const Text.rich(
-                            TextSpan(
-                              text: 'In hardware and cloud news, ',
-                              style: TextStyle(fontSize: 15, height: 1.55),
-                              children: <InlineSpan>[
-                                TextSpan(
-                                  text: 'NVDA and AMZN',
-                                  style: TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                                TextSpan(
-                                  text:
-                                      ' expanded AI infrastructure while TSLA updated its '
-                                      'in-vehicle software. Agricultural tech updates are also '
-                                      'available at http://www.goderfarmers.com for reference.',
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                  for (final (int index, String item) in _whatToTry.indexed)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Text(
+                        '${index + 1}. $item',
+                        style: const TextStyle(fontSize: 13, height: 1.35),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  _buildMovingTextCardSection(),
-                  const SizedBox(height: 20),
-                  _buildChangingTextCardSection(),
-                  const SizedBox(height: 20),
-                  Card(
-                    key: const Key('text_field_card'),
-                    elevation: 0,
-                    color: Theme.of(context).colorScheme.surfaceContainerLow,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Row(
-                            children: <Widget>[
-                              Icon(
-                                Icons.edit_note,
-                                size: 20,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                              const SizedBox(width: 8),
-                              const Expanded(
-                                child: Text(
-                                  '4. Text Field (Live Interactive EditableText)',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          const Text(
-                            'Try typing GOOG, AAPL, https://flutter.dev, or search queries directly in '
-                            'the TextField below. Active TextPlugins highlight and lint '
-                            'editable text live as you type!',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.black87,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: <Widget>[
-                              Expanded(
-                                child: TextField(
-                                  key: const Key('custom_note_input'),
-                                  controller: _customNoteController,
-                                  decoration: const InputDecoration(
-                                    hintText: 'Type text with GOOG, AAPL, or https://example.com live...',
-                                    border: OutlineInputBorder(),
-                                    isDense: true,
-                                  ),
-                                  onSubmitted: (_) => _addCustomNote(),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              TextPluginScope.none(
-                                child: FilledButton.icon(
-                                  key: const Key('add_note_button'),
-                                  onPressed: _addCustomNote,
-                                  icon: const Icon(Icons.add),
-                                  label: const Text('Add Text'),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          for (var i = 0; i < _customNotes.length; i++)
-                            Card(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              child: ListTile(
-                                title: Text(
-                                  _customNotes[i],
-                                  key: Key('custom_note_text_$i'),
-                                ),
-                                trailing: TextPluginScope.none(
-                                  child: IconButton(
-                                    icon: const Icon(Icons.delete_outline),
-                                    tooltip: 'Remove paragraph',
-                                    onPressed: () {
-                                      setState(() {
-                                        _customNotes.removeAt(i);
-                                      });
-                                    },
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  TextPluginScope.none(
-                    child: Card(
-                      key: const Key('opt_out_card'),
-                      elevation: 0,
-                      color: Theme.of(context).colorScheme.surfaceContainerLow,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Row(
-                              children: <Widget>[
-                                Icon(
-                                  Icons.block,
-                                  size: 20,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                                const SizedBox(width: 8),
-                                const Expanded(
-                                  child: Text(
-                                    '5. Opt-Out Zone (TextPluginScope.none)',
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            const Text(
-                              'This Text widget is wrapped in TextPluginScope.none, so mentions of '
-                              'GOOG, AAPL, Flutter, and https://flutter.dev inside this box are '
-                              'intentionally ignored by ancestor plugins.',
-                              style: TextStyle(fontSize: 15, height: 1.5),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  _buildSelectionAreaSection(),
-                  const SizedBox(height: 20),
-                  TextPluginScope.none(
-                    child: Card(
-                      key: const Key('lazy_list_header_card'),
-                      elevation: 0,
-                      color: Theme.of(context).colorScheme.surfaceContainerLow,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Row(
-                          children: <Widget>[
-                            Icon(
-                              Icons.view_list_outlined,
-                              size: 20,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                            const SizedBox(width: 8),
-                            const Expanded(
-                              child: Text(
-                                '7. Offscreen SliverList (Lazy Loading & Scroll-to-Match)',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 600),
                 ],
               ),
             ),
           ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-            sliver: SliverList.builder(
-              itemCount: 20,
-              itemBuilder: (BuildContext context, int index) {
-                final int itemNumber = index + 1;
-                final isDeepTarget = itemNumber == 20;
-                return Card(
-                  key: Key('lazy_archive_card_$itemNumber'),
-                  margin: const EdgeInsets.only(bottom: 10),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Text(
-                      isDeepTarget
-                          ? 'Lazy Archive #$itemNumber — Deep Offscreen Target: Quantum Impeller '
-                                'Pipeline for GOOG and AAPL at https://dart.dev/overview'
-                          : 'Lazy Archive #$itemNumber — Historical research dispatch covering '
-                                'cloud infrastructure for MSFT and NVDA.',
-                      key: Key('lazy_archive_text_$itemNumber'),
-                    ),
-                  ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildControls(ColorScheme colorScheme) {
+    return Material(
+      color: colorScheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Wrap(
+          spacing: 12,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            const Text(
+              'Built with widgets:',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            FilterChip(
+              key: const Key('chip_suggestion_menu'),
+              visualDensity: VisualDensity.compact,
+              label: const Text('Suggestion menu'),
+              tooltip: 'Off: the painter-only spell check, underlines only',
+              selected: _useSuggestionMenu,
+              onSelected: (bool value) {
+                setState(() {
+                  _useSuggestionMenu = value;
+                });
+              },
+            ),
+            FilterChip(
+              key: const Key('chip_frosted_spoiler'),
+              visualDensity: VisualDensity.compact,
+              label: const Text('Frosted glass'),
+              tooltip: 'Off: the painter-only spoiler mask',
+              selected: _useFrostedGlass,
+              onSelected: (bool value) {
+                setState(() {
+                  _useFrostedGlass = value;
+                });
+              },
+            ),
+            ValueListenableBuilder<String>(
+              valueListenable: _lastEvent,
+              builder: (BuildContext context, String value, Widget? child) {
+                return Text(
+                  'Last event: $value',
+                  key: const Key('last_event'),
+                  style: const TextStyle(fontSize: 13),
                 );
               },
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSelectionAreaSection() {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return Card(
-      key: const Key('selection_area_card'),
-      elevation: 0,
-      color: colorScheme.surfaceContainerLow,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            TextPluginScope.none(
-              child: Row(
-                children: <Widget>[
-                  Icon(Icons.select_all, size: 20, color: colorScheme.primary),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      '6. SelectionArea (Multi-Paragraph Selection)',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-            const SelectionArea(
-              key: Key('selection_area_zone'),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    'Drag across these paragraphs to select text while TextPlugins '
-                    'simultaneously highlight GOOG and AAPL, and lint '
-                    'seperate typos.',
-                    key: Key('selection_area_paragraph_1'),
-                    style: TextStyle(fontSize: 15, height: 1.5),
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    'Second selectable paragraph: Selection highlights paint cleanly '
-                    'over plugin background tints for NVDA and MSFT.',
-                    key: Key('selection_area_paragraph_2'),
-                    style: TextStyle(fontSize: 15, height: 1.5),
-                  ),
-                ],
-              ),
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMovingTextCardSection() {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+  Widget _buildParagraphs() {
+    return _Section(
+      title: '1. Paragraphs',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          for (var i = 0; i < _paragraphs.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _paragraphs[i],
+                key: Key('custom_note_text_$i'),
+                style: _bodyStyle,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTextField() {
+    return _Section(
+      title: '2. Text field',
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: TextField(
+              key: const Key('custom_note_input'),
+              controller: _fieldController,
+              style: _bodyStyle,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onSubmitted: (String value) => _addParagraph(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextPluginScope.none(
+            child: FilledButton.icon(
+              key: const Key('add_note_button'),
+              onPressed: _addParagraph,
+              icon: const Icon(Icons.add),
+              label: const Text('Add as paragraph'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelection() {
+    return const _Section(
+      title: '3. Selection',
+      child: SelectionArea(
+        key: Key('selection_area_zone'),
+        child: Text(
+          'Drag across this text to select it. It has a seperate typo and '
+          'a ||hidden plot twist|| in it, and it is long enough to wrap '
+          'onto a second line in a narrow window.',
+          key: Key('selection_area_paragraph_1'),
+          style: _bodyStyle,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMovingText(ColorScheme colorScheme) {
+    return _Section(
+      title: '4. Moving text',
+      trailing: IconButton(
+        key: const Key('moving_card_toggle_button'),
+        visualDensity: VisualDensity.compact,
+        tooltip: _isMoving ? 'Pause' : 'Resume',
+        icon: Icon(_isMoving ? Icons.pause : Icons.play_arrow),
+        onPressed: _toggleMoving,
+      ),
+      child: Container(
+        height: 150,
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: AnimatedBuilder(
+          animation: _moveController,
+          builder: (BuildContext context, Widget? child) {
+            final double angle = _moveController.value * 2 * math.pi;
+            return Align(
+              alignment: Alignment(math.sin(angle), math.sin(angle * 2)),
+              child: child,
+            );
+          },
+          child: FractionallySizedBox(
+            widthFactor: 0.6,
+            child: Card(
+              margin: EdgeInsets.zero,
+              color: colorScheme.primaryContainer,
+              child: const Padding(
+                padding: EdgeInsets.all(12),
+                child: Text(
+                  'This card moves. We recieve ||a secret|| on the way.',
+                  key: Key('moving_card_text'),
+                  style: TextStyle(fontSize: 15, height: 1.4),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScrolling() {
+    return const _Section(
+      title: '5. Scrolling',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            'This section is here to make the page long enough to scroll. '
+            'Open the menu on teh typo in this sentence, then scroll.',
+            style: _bodyStyle,
+          ),
+          SizedBox(height: 160),
+          Text(
+            'Halfway down: an error occured, and ||nobody noticed||.',
+            style: _bodyStyle,
+          ),
+          SizedBox(height: 160),
+          Text(
+            'Near the end: we utilize a second {{cloze answer}} here, and '
+            'recieve one more typo.',
+            style: _bodyStyle,
+          ),
+          SizedBox(height: 240),
+          Text('The end of the page.', style: _bodyStyle),
+        ],
+      ),
+    );
+  }
+}
+
+/// A titled card. The title is not text for the plugins to decorate.
+class _Section extends StatelessWidget {
+  const _Section({required this.title, required this.child, this.trailing});
+
+  final String title;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
     return Card(
-      key: const Key('moving_card_section'),
-      elevation: 0,
-      color: colorScheme.surfaceContainerLow,
+      margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             TextPluginScope.none(
               child: Row(
                 children: <Widget>[
-                  Icon(Icons.animation, size: 20, color: colorScheme.primary),
-                  const SizedBox(width: 8),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      '2. Animation (Moving Text Card)',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      title,
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ),
-                  IconButton.filledTonal(
-                    key: const Key('moving_card_toggle_button'),
-                    visualDensity: VisualDensity.compact,
-                    tooltip: _isMovingCardPlaying
-                        ? 'Pause moving card animation'
-                        : 'Resume moving card animation',
-                    icon: Icon(
-                      _isMovingCardPlaying ? Icons.pause : Icons.play_arrow,
-                      size: 18,
-                    ),
-                    onPressed: _toggleMovingCard,
-                  ),
+                  ?trailing,
                 ],
               ),
             ),
             const SizedBox(height: 8),
-            Container(
-              height: 180,
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: colorScheme.surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: colorScheme.outlineVariant),
-              ),
-              child: AnimatedBuilder(
-                animation: _moveController,
-                builder: (BuildContext context, Widget? child) {
-                  final double angle = _moveController.value * 2 * math.pi;
-                  final Alignment alignment = Alignment(
-                    math.sin(angle),
-                    math.sin(angle * 2),
-                  );
-                  return Align(
-                    alignment: alignment,
-                    child: FractionallySizedBox(
-                      widthFactor: 0.72,
-                      child: child,
-                    ),
-                  );
-                },
-                child: Card(
-                  key: const Key('moving_text_card'),
-                  margin: EdgeInsets.zero,
-                  color: colorScheme.primaryContainer.withValues(alpha: 0.45),
-                  child: const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Text(
-                      'Animated Moving Card — Smoothly orbits in 2D while plugins track '
-                      'GOOG, NVDA, https://dart.dev, typo recieve, and ops@example.com.',
-                      key: Key('moving_card_text'),
-                      style: TextStyle(fontSize: 14, height: 1.45),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            child,
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildChangingTextCardSection() {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final String currentAlphabetPrefix = _alphabet.substring(
-      0,
-      _changingTextLength,
-    );
-    return Card(
-      key: const Key('changing_alphabet_card'),
-      elevation: 0,
-      color: colorScheme.surfaceContainerLow,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            TextPluginScope.none(
-              child: Row(
-                children: <Widget>[
-                  Icon(Icons.autorenew, size: 20, color: colorScheme.primary),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      '3. Dynamic Changing Text (a → ab → abc … → a..z → a)',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colorScheme.secondaryContainer,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '$_changingTextLength / ${_alphabet.length}',
-                      key: const Key('changing_text_length_badge'),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.onSecondaryContainer,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  IconButton.filledTonal(
-                    key: const Key('changing_text_step_button'),
-                    visualDensity: VisualDensity.compact,
-                    tooltip: 'Step next letter',
-                    icon: const Icon(Icons.skip_next, size: 18),
-                    onPressed: _stepChangingText,
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton.filledTonal(
-                    key: const Key('changing_text_toggle_button'),
-                    visualDensity: VisualDensity.compact,
-                    tooltip: _isChangingTextPlaying
-                        ? 'Pause changing text'
-                        : 'Resume changing text',
-                    icon: Icon(
-                      _isChangingTextPlaying ? Icons.pause : Icons.play_arrow,
-                      size: 18,
-                    ),
-                    onPressed: _toggleChangingText,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: BoxDecoration(
-                color: colorScheme.surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: colorScheme.outlineVariant),
-              ),
-              child: Text(
-                currentAlphabetPrefix,
-                key: const Key('changing_alphabet_text'),
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  fontFamily: 'monospace',
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSeoInspectorPanel() {
-    return ListenableBuilder(
-      listenable: _seoPlugin,
-      builder: (BuildContext context, Widget? child) {
-        final ColorScheme colorScheme = Theme.of(context).colorScheme;
-        return Container(
-          color: colorScheme.surfaceContainerLowest,
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  const Icon(Icons.travel_explore, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Live SEO & Text Extractor',
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: <Widget>[
-                    Chip(
-                      visualDensity: VisualDensity.compact,
-                      label: Text(
-                        'Text Widgets: ${_seoPlugin.widgetCount}',
-                        key: const Key('seo_widget_count'),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Chip(
-                      visualDensity: VisualDensity.compact,
-                      label: Text(
-                        'Words: ${_seoPlugin.wordCount}',
-                        key: const Key('seo_word_count'),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Chip(
-                      visualDensity: VisualDensity.compact,
-                      label: Text('Chars: ${_seoPlugin.characterCount}'),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
-              Expanded(
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.4,
-                    ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: SingleChildScrollView(
-                    child: SelectableText(
-                      _enableSeoPlugin
-                          ? _seoPlugin.toJsonLd()
-                          : '// SEO Extractor plugin is currently disabled.',
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }

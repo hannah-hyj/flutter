@@ -215,6 +215,9 @@ void main() {
       expect(find.text('3 / 4'), findsOneWidget);
       expect(searchField.focusNode!.hasFocus, isTrue);
     },
+    // The demo page on this branch was reduced to the two plugins that build
+    // widgets, so the page that this test walks through is not there.
+    skip: true,
   );
 
   testWidgets(
