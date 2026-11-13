@@ -13,6 +13,7 @@ import 'plugins/search_in_page_plugin.dart';
 import 'plugins/seo_extractor_plugin.dart';
 import 'plugins/spellcheck_linter_plugin.dart';
 import 'plugins/stock_ticker_plugin.dart';
+import 'widgets/search_in_page_bar.dart';
 
 void main() {
   runApp(const TextPluginsDemoApp());
@@ -335,7 +336,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
               _buildPluginOverviewBanner(colorScheme),
               _buildPluginControlHeader(colorScheme),
               if (_enableSearchPlugin && !_isFloatingSearchBar)
-                _buildSearchBar(colorScheme),
+                _buildSearchBar(),
               if (_enableReadAloudPlugin) _buildReadAloudBar(colorScheme),
               Expanded(
                 child: Stack(
@@ -376,7 +377,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                           },
                     ),
                     if (_enableSearchPlugin && _isFloatingSearchBar)
-                      _buildFloatingSearchBar(colorScheme),
+                      _buildFloatingSearchBar(),
                   ],
                 ),
               ),
@@ -620,260 +621,39 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     );
   }
 
-  Widget _buildSearchBar(ColorScheme colorScheme) {
-    return ListenableBuilder(
-      listenable: _searchPlugin,
-      builder: (BuildContext context, Widget? child) {
-        final int total = _searchPlugin.matches.length;
-        final int current = total == 0 ? 0 : _searchPlugin.activeMatchIndex + 1;
-        return Container(
-          key: const Key('top_search_bar'),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-            border: Border(
-              bottom: BorderSide(color: colorScheme.outlineVariant),
-            ),
-          ),
-          child: Row(
-            children: <Widget>[
-              const Icon(Icons.find_in_page_outlined),
-              const SizedBox(width: 10),
-              Expanded(
-                child: TextField(
-                  key: const Key('search_input'),
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  decoration: const InputDecoration(
-                    hintText: 'Find in page (Ctrl+F / Cmd+F, e.g. Flutter, GOOG, Archive #20)...',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (String value) {
-                    _searchPlugin.query = value;
-                  },
-                  onEditingComplete: () {},
-                  onSubmitted: (_) {
-                    _searchPlugin.nextMatch();
-                  },
-                ),
-              ),
-              const SizedBox(width: 6),
-              FilterChip(
-                visualDensity: VisualDensity.compact,
-                showCheckmark: false,
-                labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                label: const Text('Aa'),
-                tooltip: 'Case sensitive',
-                selected: _searchPlugin.caseSensitive,
-                onSelected: (bool value) {
-                  _searchPlugin.caseSensitive = value;
-                },
-              ),
-              const SizedBox(width: 6),
-              FilterChip(
-                key: const Key('eager_load_chip'),
-                visualDensity: VisualDensity.compact,
-                showCheckmark: false,
-                labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                avatar: const Icon(Icons.bolt, size: 15),
-                label: const Text(
-                  'Cancel Lazy Load',
-                  style: TextStyle(fontSize: 12),
-                ),
-                tooltip: 'Eagerly lay out offscreen SliverList items (auto-enabled on Ctrl+F)',
-                selected: _searchPlugin.eagerLoadOffscreenText,
-                onSelected: (bool value) {
-                  _searchPlugin.eagerLoadOffscreenText = value;
-                },
-              ),
-              const SizedBox(width: 6),
-              _buildSearchPositionOptions(),
-              const SizedBox(width: 8),
-              Text(
-                '$current / $total',
-                key: const Key('search_match_count'),
-                style: const TextStyle(
-                  fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
-                ),
-              ),
-              IconButton(
-                key: const Key('search_prev_button'),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Previous match',
-                icon: const Icon(Icons.keyboard_arrow_up),
-                onPressed: total > 0 ? _searchPlugin.previousMatch : null,
-              ),
-              IconButton(
-                key: const Key('search_next_button'),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Next match',
-                icon: const Icon(Icons.keyboard_arrow_down),
-                onPressed: total > 0 ? _searchPlugin.nextMatch : null,
-              ),
-              IconButton(
-                key: const Key('search_close_button'),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Close search (Ctrl+F / Cmd+F to reopen)',
-                icon: const Icon(Icons.close, size: 18),
-                onPressed: _closeFindInPage,
-              ),
-            ],
-          ),
-        );
-      },
+  // The search bars are plain Material widgets in
+  // widgets/search_in_page_bar.dart. They listen to the plugin and call it.
+  // The plugin itself builds no widgets.
+  Widget _buildSearchBar() {
+    return DockedSearchInPageBar(
+      plugin: _searchPlugin,
+      controller: _searchController,
+      focusNode: _searchFocusNode,
+      onClose: _closeFindInPage,
+      hintText:
+          'Find in page (Ctrl+F / Cmd+F, e.g. Flutter, GOOG, Archive #20)...',
+      options: <Widget>[_buildSearchPositionOptions()],
     );
   }
 
-  Widget _buildFloatingSearchBar(ColorScheme colorScheme) {
+  Widget _buildFloatingSearchBar() {
     return Positioned(
       right: _floatingSearchOffset.dx,
       top: _floatingSearchOffset.dy,
-      child: ListenableBuilder(
-        listenable: _searchPlugin,
-        builder: (BuildContext context, Widget? child) {
-          final int total = _searchPlugin.matches.length;
-          final int current = total == 0
-              ? 0
-              : _searchPlugin.activeMatchIndex + 1;
-          return Material(
-            key: const Key('floating_search_bar'),
-            elevation: 8,
-            shadowColor: Colors.black38,
-            color: colorScheme.surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-              side: BorderSide(
-                color: colorScheme.primary.withValues(alpha: 0.45),
-                width: 1.5,
-              ),
-            ),
-            child: SizedBox(
-              width: 480,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Row(
-                      children: <Widget>[
-                        GestureDetector(
-                          onPanUpdate: (DragUpdateDetails details) {
-                            setState(() {
-                              _floatingSearchOffset = Offset(
-                                (_floatingSearchOffset.dx - details.delta.dx)
-                                    .clamp(8.0, 600.0),
-                                (_floatingSearchOffset.dy + details.delta.dy)
-                                    .clamp(8.0, 500.0),
-                              );
-                            });
-                          },
-                          child: MouseRegion(
-                            cursor: SystemMouseCursors.move,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                              ),
-                              child: Icon(
-                                Icons.drag_indicator,
-                                size: 20,
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: TextField(
-                            key: const Key('search_input'),
-                            controller: _searchController,
-                            focusNode: _searchFocusNode,
-                            decoration: const InputDecoration(
-                              hintText: 'Find in page (Ctrl+F / Cmd+F)...',
-                              isDense: true,
-                              border: OutlineInputBorder(),
-                            ),
-                            onChanged: (String value) {
-                              _searchPlugin.query = value;
-                            },
-                            onEditingComplete: () {},
-                            onSubmitted: (_) {
-                              _searchPlugin.nextMatch();
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '$current / $total',
-                          key: const Key('search_match_count'),
-                          style: const TextStyle(
-                            fontFeatures: <FontFeature>[
-                              FontFeature.tabularFigures(),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          key: const Key('search_prev_button'),
-                          visualDensity: VisualDensity.compact,
-                          tooltip: 'Previous match',
-                          icon: const Icon(Icons.keyboard_arrow_up),
-                          onPressed: total > 0
-                              ? _searchPlugin.previousMatch
-                              : null,
-                        ),
-                        IconButton(
-                          key: const Key('search_next_button'),
-                          visualDensity: VisualDensity.compact,
-                          tooltip: 'Next match',
-                          icon: const Icon(Icons.keyboard_arrow_down),
-                          onPressed: total > 0 ? _searchPlugin.nextMatch : null,
-                        ),
-                        IconButton(
-                          key: const Key('search_close_button'),
-                          visualDensity: VisualDensity.compact,
-                          tooltip: 'Close search (Ctrl+F / Cmd+F to reopen)',
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: _closeFindInPage,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: <Widget>[
-                        FilterChip(
-                          visualDensity: VisualDensity.compact,
-                          showCheckmark: false,
-                          label: const Text('Aa'),
-                          tooltip: 'Case sensitive',
-                          selected: _searchPlugin.caseSensitive,
-                          onSelected: (bool value) {
-                            _searchPlugin.caseSensitive = value;
-                          },
-                        ),
-                        FilterChip(
-                          key: const Key('eager_load_chip'),
-                          visualDensity: VisualDensity.compact,
-                          showCheckmark: false,
-                          avatar: const Icon(Icons.bolt, size: 16),
-                          label: const Text('Cancel Lazy Load'),
-                          tooltip: 'Eagerly lay out offscreen SliverList items (auto-enabled on Ctrl+F)',
-                          selected: _searchPlugin.eagerLoadOffscreenText,
-                          onSelected: (bool value) {
-                            _searchPlugin.eagerLoadOffscreenText = value;
-                          },
-                        ),
-                        _buildSearchPositionOptions(),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
+      child: FloatingSearchInPageBar(
+        plugin: _searchPlugin,
+        controller: _searchController,
+        focusNode: _searchFocusNode,
+        onClose: _closeFindInPage,
+        hintText: 'Find in page (Ctrl+F / Cmd+F)...',
+        options: <Widget>[_buildSearchPositionOptions()],
+        onDragUpdate: (Offset delta) {
+          setState(() {
+            _floatingSearchOffset = Offset(
+              (_floatingSearchOffset.dx - delta.dx).clamp(8.0, 600.0),
+              (_floatingSearchOffset.dy + delta.dy).clamp(8.0, 500.0),
+            );
+          });
         },
       ),
     );

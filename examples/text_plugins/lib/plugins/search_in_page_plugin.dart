@@ -5,8 +5,8 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show listEquals;
-import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/widgets.dart';
 
 /// Represents a single search match within a [TextDelegate].
 @immutable
@@ -48,6 +48,12 @@ class SearchMatch {
 /// A [TextPlugin] that implements browser-style "Find in Page" search and
 /// highlighting across all [Text] and [RichText] widgets in a
 /// [TextPluginScope].
+///
+/// The plugin has no user interface and does not depend on a design system.
+/// It is a [ChangeNotifier]: a search bar sets [query] and [caseSensitive],
+/// calls [nextMatch] and [previousMatch], and listens to show [matches] and
+/// [activeMatchIndex]. The search bar is written by the app, or by a design
+/// system library. The highlight colors are constructor parameters.
 class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   /// Creates a [SearchInPagePlugin].
   SearchInPagePlugin({
