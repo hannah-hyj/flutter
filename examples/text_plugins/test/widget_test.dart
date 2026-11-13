@@ -3,10 +3,42 @@
 // found in the LICENSE file.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:text_plugins/main.dart';
 import 'package:text_plugins/plugins/search_in_page_plugin.dart';
+
+/// Pumps the demo app, pauses its two continuous animations so that
+/// `pumpAndSettle` can be used, and opens the search bar.
+Future<void> _pumpDemoWithSearch(WidgetTester tester) async {
+  await tester.pumpWidget(const TextPluginsDemoApp());
+  await tester.pump();
+  for (final key in <Key>[
+    const Key('moving_card_toggle_button'),
+    const Key('changing_text_toggle_button'),
+  ]) {
+    await Scrollable.ensureVisible(
+      tester.element(find.byKey(key)),
+      alignment: 0.85,
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(key));
+    await tester.pump();
+  }
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('chip_search_plugin')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _scrollIntoView(WidgetTester tester, Finder finder) async {
+  await Scrollable.ensureVisible(tester.element(finder), alignment: 0.5);
+  await tester.pumpAndSettle();
+}
+
+String _matchCount(WidgetTester tester) {
+  return tester.widget<Text>(find.byKey(const Key('search_match_count'))).data!;
+}
 
 void main() {
   testWidgets(
@@ -349,6 +381,94 @@ void main() {
       expect(middleDelegate.foregroundPainter, isNull);
       expect(topDelegate.backgroundPainter, same(initialTopPainter));
       expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
+    },
+  );
+
+  testWidgets('Search does not count a match in a covered route', (
+    WidgetTester tester,
+  ) async {
+    await _pumpDemoWithSearch(tester);
+    final Finder searchInput = find.byKey(const Key('search_input'));
+    final Finder lowerText = find.byKey(const Key('stacked_lower_page_text'));
+
+    await tester.enterText(searchInput, 'zeppelin');
+    await tester.pumpAndSettle();
+    expect(_matchCount(tester), '1 / 1');
+
+    // Cover the lower page with an opaque route.
+    final Finder openButton = find.byKey(
+      const Key('stacked_pages_open_button'),
+    );
+    await _scrollIntoView(tester, openButton);
+    await tester.tap(openButton);
+    await tester.pumpAndSettle();
+
+    // The lower page is still mounted, but its match is gone.
+    expect(find.byKey(const Key('stacked_upper_page_text')), findsOneWidget);
+    expect(lowerText, findsNothing);
+    expect(
+      find.byKey(const Key('stacked_lower_page_text'), skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(_matchCount(tester), '0 / 0');
+
+    // The text of the covering page is searched.
+    await tester.enterText(searchInput, 'dirigible');
+    await tester.pumpAndSettle();
+    expect(_matchCount(tester), '1 / 1');
+
+    // Uncover the lower page: its match comes back, the upper one is gone.
+    await tester.enterText(searchInput, 'zeppelin');
+    await tester.pumpAndSettle();
+    expect(_matchCount(tester), '0 / 0');
+    await tester.tap(find.byKey(const Key('stacked_pages_back_button')));
+    await tester.pumpAndSettle();
+    expect(lowerText, findsOneWidget);
+    expect(_matchCount(tester), '1 / 1');
+  });
+
+  // Review thread T53 on the RFC, design doc section 7.15.
+  //
+  // This test pins a known gap: `TextDelegate.ensureVisible` scrolls the scroll
+  // views around a text field, but not the content of the field itself. When
+  // the gap is fixed, the last three expectations flip: the offset becomes
+  // greater than zero and the match is inside the visible lines.
+  testWidgets(
+    'Known gap: search does not scroll a multi-line text field to a match '
+    'that is out of view',
+    (WidgetTester tester) async {
+      await _pumpDemoWithSearch(tester);
+      final Finder field = find.byKey(const Key('scrolled_note_input'));
+      final EditableTextState editable = tester.state<EditableTextState>(
+        find.descendant(of: field, matching: find.byType(EditableText)),
+      );
+      final RenderEditable renderEditable = editable.renderEditable;
+
+      await tester.enterText(
+        find.byKey(const Key('search_input')),
+        'xylophone',
+      );
+      await tester.pumpAndSettle();
+      // The match is found, on the last line of a field that shows its first
+      // lines.
+      expect(_matchCount(tester), '1 / 1');
+      expect(renderEditable.offset.pixels, 0.0);
+      expect(renderEditable.maxScrollExtent, greaterThan(0.0));
+
+      await tester.tap(find.byKey(const Key('search_next_button')));
+      await tester.pumpAndSettle();
+
+      final int start = editable.textEditingValue.text.indexOf('xylophone');
+      final Rect matchRect = renderEditable
+          .getBoxesForSelection(
+            TextSelection(baseOffset: start, extentOffset: start + 9),
+          )
+          .first
+          .toRect();
+      // The field did not scroll, and the match is still below its last
+      // visible line.
+      expect(renderEditable.offset.pixels, 0.0);
+      expect(matchRect.top, greaterThanOrEqualTo(renderEditable.size.height));
     },
   );
 }

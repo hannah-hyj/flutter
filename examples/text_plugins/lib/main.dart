@@ -112,6 +112,19 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     text: 'Flutter',
   );
   final TextEditingController _customNoteController = TextEditingController();
+
+  // The last line holds a word that is scrolled out of view inside the field.
+  final TextEditingController _longNoteController = TextEditingController(
+    text:
+        'Line 1: this field shows three lines at a time.\n'
+        'Line 2: the rest is scrolled inside the field.\n'
+        'Line 3: nothing to find here.\n'
+        'Line 4: nothing to find here.\n'
+        'Line 5: nothing to find here.\n'
+        'Line 6: nothing to find here.\n'
+        'Line 7: nothing to find here.\n'
+        'Line 8: the word xylophone is on the last line.',
+  );
   final FocusNode _searchFocusNode = FocusNode();
 
   bool _enableSearchPlugin = false;
@@ -218,6 +231,7 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
     _readAloudPlugin.dispose();
     _searchController.dispose();
     _customNoteController.dispose();
+    _longNoteController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
   }
@@ -1090,6 +1104,10 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                   const SizedBox(height: 20),
                   _buildSelectionAreaSection(),
                   const SizedBox(height: 20),
+                  _buildStackedPagesSection(),
+                  const SizedBox(height: 20),
+                  _buildScrolledTextFieldSection(),
+                  const SizedBox(height: 20),
                   TextPluginScope.none(
                     child: Card(
                       key: const Key('lazy_list_header_card'),
@@ -1203,6 +1221,112 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
                     style: TextStyle(fontSize: 15, height: 1.5),
                   ),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDemoCardTitle(IconData icon, String title) {
+    return TextPluginScope.none(
+      child: Row(
+        children: <Widget>[
+          Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A small stack of pages below the plugin scope. The upper page is opaque,
+  /// so the lower page stays mounted but is covered, and its text is taken
+  /// away from the plugins until it is uncovered.
+  Widget _buildStackedPagesSection() {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      key: const Key('stacked_pages_card'),
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            _buildDemoCardTitle(
+              Icons.layers_outlined,
+              '7. Stacked Pages (Covered Route)',
+            ),
+            const SizedBox(height: 6),
+            const TextPluginScope.none(
+              child: Text(
+                'Search for "zeppelin", then open the upper page. The lower '
+                'page stays mounted, but its match is no longer counted.',
+                style: TextStyle(fontSize: 14, color: Colors.black87),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 200,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Navigator(
+                  key: const Key('stacked_pages_navigator'),
+                  onGenerateRoute: (RouteSettings settings) {
+                    return MaterialPageRoute<void>(
+                      builder: (BuildContext context) =>
+                          const _StackedLowerPage(),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A multi-line text field whose content is longer than the field. The
+  /// match is on the last line, which is scrolled out of view inside the field.
+  Widget _buildScrolledTextFieldSection() {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      key: const Key('scrolled_text_field_card'),
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            _buildDemoCardTitle(
+              Icons.notes,
+              '8. Multi-line Text Field (Match Scrolled Out of View)',
+            ),
+            const SizedBox(height: 6),
+            const TextPluginScope.none(
+              child: Text(
+                'Search for "xylophone" and press next. The match is on the '
+                'last line of the field, below the three visible lines.',
+                style: TextStyle(fontSize: 14, color: Colors.black87),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('scrolled_note_input'),
+              controller: _longNoteController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                isDense: true,
               ),
             ),
           ],
@@ -1477,6 +1601,77 @@ class _TextPluginsHomePageState extends State<TextPluginsHomePage>
           ),
         );
       },
+    );
+  }
+}
+
+class _StackedLowerPage extends StatelessWidget {
+  const _StackedLowerPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text(
+              'Lower page: the word zeppelin is only on this page.',
+              key: Key('stacked_lower_page_text'),
+              style: TextStyle(fontSize: 15),
+            ),
+            const Spacer(),
+            TextPluginScope.none(
+              child: FilledButton(
+                key: const Key('stacked_pages_open_button'),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (BuildContext context) =>
+                          const _StackedUpperPage(),
+                    ),
+                  );
+                },
+                child: const Text('Open upper page'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StackedUpperPage extends StatelessWidget {
+  const _StackedUpperPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Theme.of(context).colorScheme.tertiaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text(
+              'Upper page: the word dirigible is only on this page.',
+              key: Key('stacked_upper_page_text'),
+              style: TextStyle(fontSize: 15),
+            ),
+            const Spacer(),
+            TextPluginScope.none(
+              child: OutlinedButton(
+                key: const Key('stacked_pages_back_button'),
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Back to lower page'),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

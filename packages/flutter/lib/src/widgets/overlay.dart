@@ -27,6 +27,7 @@ import 'framework.dart';
 import 'layout_builder.dart';
 import 'lookup_boundary.dart';
 import 'media_query.dart';
+import 'text_plugin.dart';
 import 'ticker_provider.dart';
 
 /// The signature of the widget builder callback used in
@@ -420,12 +421,17 @@ class _OverlayEntryWidgetState extends State<_OverlayEntryWidget> {
   Widget build(BuildContext context) {
     return TickerMode(
       enabled: widget.tickerEnabled,
-      child: _RenderTheaterMarker(
-        theater: _theater,
-        overlayEntryWidgetState: this,
-        // Use a Builder so that the `widget.entry.builder` can have access to
-        // _RenderTheaterMarker.of
-        child: Builder(builder: widget.entry.builder),
+      // An entry below an opaque entry is kept mounted but is not laid out or
+      // painted. Its text is not given to text plugins while it is covered.
+      child: TextPluginSuspension(
+        suspended: !widget.tickerEnabled,
+        child: _RenderTheaterMarker(
+          theater: _theater,
+          overlayEntryWidgetState: this,
+          // Use a Builder so that the `widget.entry.builder` can have access to
+          // _RenderTheaterMarker.of
+          child: Builder(builder: widget.entry.builder),
+        ),
       ),
     );
   }

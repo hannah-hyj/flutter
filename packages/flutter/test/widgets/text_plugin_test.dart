@@ -35,6 +35,8 @@ class _RecordingTextPlugin extends TextPlugin {
   }
 }
 
+class _InnerRecordingTextPlugin extends _RecordingTextPlugin {}
+
 class _CallbackCustomPainter extends CustomPainter {
   _CallbackCustomPainter(this.onPaint, {super.repaint});
 
@@ -867,6 +869,137 @@ void main() {
       );
     },
   );
+
+  // A minimal stack of pages: a Navigator below the scope, so that the scope
+  // sees the texts of every route.
+  Widget buildNavigatorUnderScope({
+    required GlobalKey<NavigatorState> navigatorKey,
+    required TextPlugin plugin,
+    required Widget firstPage,
+  }) {
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: TextPluginScope(
+        plugin: plugin,
+        child: Navigator(
+          key: navigatorKey,
+          onGenerateRoute: (RouteSettings settings) {
+            return PageRouteBuilder<void>(
+              pageBuilder: (BuildContext context, Animation<double> a, Animation<double> b) {
+                return firstPage;
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  List<String> textsOf(_RecordingTextPlugin plugin) {
+    return plugin.activeDelegates.map((TextDelegate delegate) => delegate.text).toList()..sort();
+  }
+
+  testWidgets('Text in a route covered by an opaque route is not given to plugins', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _RecordingTextPlugin();
+    final navigatorKey = GlobalKey<NavigatorState>();
+
+    await tester.pumpWidget(
+      buildNavigatorUnderScope(
+        navigatorKey: navigatorKey,
+        plugin: plugin,
+        firstPage: const Text('First page'),
+      ),
+    );
+    expect(textsOf(plugin), <String>['First page']);
+
+    navigatorKey.currentState!.push(
+      PageRouteBuilder<void>(
+        pageBuilder: (BuildContext context, Animation<double> a, Animation<double> b) {
+          return const Text('Second page');
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    // During the transition both routes are on stage.
+    expect(textsOf(plugin), <String>['First page', 'Second page']);
+
+    await tester.pumpAndSettle();
+    // The first route is still mounted, and its text is taken from the plugin.
+    expect(find.text('First page', skipOffstage: false), findsOneWidget);
+    expect(textsOf(plugin), <String>['Second page']);
+    expect(plugin.log, contains('plugin:remove:First page'));
+
+    navigatorKey.currentState!.pop();
+    await tester.pumpAndSettle();
+    // Uncovered again: the text is given back, with a valid layout.
+    expect(textsOf(plugin), <String>['First page']);
+    expect(plugin.activeDelegates.single.hasLayout, isTrue);
+  });
+
+  testWidgets('Text in a route below a non-opaque route stays with its plugins', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _RecordingTextPlugin();
+    final navigatorKey = GlobalKey<NavigatorState>();
+
+    await tester.pumpWidget(
+      buildNavigatorUnderScope(
+        navigatorKey: navigatorKey,
+        plugin: plugin,
+        firstPage: const Text('First page'),
+      ),
+    );
+
+    navigatorKey.currentState!.push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        pageBuilder: (BuildContext context, Animation<double> a, Animation<double> b) {
+          return const Text('Dialog');
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(textsOf(plugin), <String>['Dialog', 'First page']);
+    expect(plugin.log, isNot(contains('plugin:remove:First page')));
+  });
+
+  testWidgets('A TextPluginScope inside a covered route does not install its plugins', (
+    WidgetTester tester,
+  ) async {
+    final outer = _RecordingTextPlugin();
+    final inner = _InnerRecordingTextPlugin();
+    final navigatorKey = GlobalKey<NavigatorState>();
+
+    await tester.pumpWidget(
+      buildNavigatorUnderScope(
+        navigatorKey: navigatorKey,
+        plugin: outer,
+        firstPage: TextPluginScope(plugin: inner, child: const Text('First page')),
+      ),
+    );
+    expect(textsOf(outer), <String>['First page']);
+    expect(textsOf(inner), <String>['First page']);
+
+    navigatorKey.currentState!.push(
+      PageRouteBuilder<void>(
+        pageBuilder: (BuildContext context, Animation<double> a, Animation<double> b) {
+          return const Text('Second page');
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(textsOf(outer), <String>['Second page']);
+    expect(textsOf(inner), isEmpty);
+
+    navigatorKey.currentState!.pop();
+    await tester.pumpAndSettle();
+    expect(textsOf(outer), <String>['First page']);
+    expect(textsOf(inner), <String>['First page']);
+  });
 }
 
 class CustomBadgeText extends LeafRenderObjectWidget {

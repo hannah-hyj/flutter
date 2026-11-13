@@ -4,6 +4,7 @@
 
 /// @docImport 'basic.dart';
 /// @docImport 'editable_text.dart';
+/// @docImport 'overlay.dart';
 /// @docImport 'scroll_view.dart';
 /// @docImport 'text.dart';
 library;
@@ -24,6 +25,12 @@ import 'viewport.dart';
 ///
 /// To exclude a subtree from any ancestor [TextPluginScope]s, wrap the subtree
 /// in [TextPluginScope.none].
+///
+/// Text in a route that is covered by an opaque route is not given to any
+/// plugin, even though the route is still mounted. The [Overlay] suspends
+/// plugins for an [OverlayEntry] below an [OverlayEntry.opaque] entry, and
+/// gives the text back when the entry is uncovered. A plugin gets
+/// [TextPlugin.didRemoveText] and [TextPlugin.didAddText] for it.
 ///
 /// If any installed [TextPlugin] has [TextPlugin.needsOffscreenContent] set to
 /// `true`, [TextPluginScope] configures descendant
@@ -199,18 +206,23 @@ class _TextPluginScopeState extends State<TextPluginScope> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget._disabled) {
+    final _InheritedTextPluginScope? ancestorScope = context
+        .dependOnInheritedWidgetOfExactType<_InheritedTextPluginScope>();
+    // While an ancestor suspends plugins, this scope does not install its own
+    // either. The widgets built here stay the same, so that the subtree keeps
+    // its state when the suspension starts and ends.
+    final bool suspended = ancestorScope?.suspended ?? false;
+    if (widget._disabled || suspended) {
       return OffscreenContentRenderingStrategy(
         policy: const OffscreenRenderingPolicy.lazy(),
         child: _InheritedTextPluginScope(
           pluginMap: const <Type, TextPlugin>{},
           plugins: const <TextPlugin>[],
+          suspended: suspended,
           child: widget.child,
         ),
       );
     }
-    final _InheritedTextPluginScope? ancestorScope = context
-        .dependOnInheritedWidgetOfExactType<_InheritedTextPluginScope>();
     final OffscreenRenderingPolicy inheritedPolicy = OffscreenContentRenderingStrategy.of(context);
     final Set<Type>? excludedTypes = widget.types;
     final pluginMap = <Type, TextPlugin>{};
@@ -250,18 +262,77 @@ class _TextPluginScopeState extends State<TextPluginScope> {
   }
 }
 
+/// Withholds every [TextPlugin] from [child] while [suspended] is true.
+///
+/// This is for text that is still mounted but cannot be seen, such as a route
+/// that is covered by an opaque route. Unlike [TextPluginScope.none], a
+/// [TextPluginScope] inside [child] does not install its plugins either, so
+/// the text is left out no matter where the scope is.
+///
+/// The widget builds the same subtree in both states. Toggling [suspended]
+/// keeps the state of [child]; the plugins get [TextPlugin.didRemoveText] when
+/// it becomes true and [TextPlugin.didAddText] when it becomes false.
+///
+/// Plugins passed directly to [RichText.textPlugins] or
+/// [EditableText.textPlugins] are not affected.
+///
+/// The [Overlay] uses this for an [OverlayEntry] below an opaque entry.
+@internal
+class TextPluginSuspension extends StatelessWidget {
+  /// Creates a widget that withholds text plugins from [child] while
+  /// [suspended] is true.
+  const TextPluginSuspension({super.key, required this.suspended, required this.child});
+
+  /// Whether the text in [child] is withheld from plugins.
+  final bool suspended;
+
+  /// The widget below this widget in the tree.
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final _InheritedTextPluginScope? ancestorScope = context
+        .dependOnInheritedWidgetOfExactType<_InheritedTextPluginScope>();
+    final bool effectiveSuspended = suspended || (ancestorScope?.suspended ?? false);
+    if (effectiveSuspended || ancestorScope == null) {
+      return _InheritedTextPluginScope(
+        pluginMap: const <Type, TextPlugin>{},
+        plugins: const <TextPlugin>[],
+        suspended: effectiveSuspended,
+        child: child,
+      );
+    }
+    return _InheritedTextPluginScope(
+      pluginMap: ancestorScope.pluginMap,
+      plugins: ancestorScope.plugins,
+      child: child,
+    );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(FlagProperty('suspended', value: suspended, ifTrue: 'suspended'));
+  }
+}
+
 class _InheritedTextPluginScope extends InheritedWidget {
   const _InheritedTextPluginScope({
     required this.pluginMap,
     required this.plugins,
+    this.suspended = false,
     required super.child,
   });
 
   final Map<Type, TextPlugin> pluginMap;
   final List<TextPlugin> plugins;
 
+  /// Whether an ancestor [TextPluginSuspension] withholds plugins. A
+  /// [TextPluginScope] below does not install plugins while this is true.
+  final bool suspended;
+
   @override
   bool updateShouldNotify(_InheritedTextPluginScope oldWidget) {
-    return !listEquals(plugins, oldWidget.plugins);
+    return suspended != oldWidget.suspended || !listEquals(plugins, oldWidget.plugins);
   }
 }
