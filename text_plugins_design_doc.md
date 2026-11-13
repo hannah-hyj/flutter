@@ -313,7 +313,8 @@ class _ArticlePageState extends State<ArticlePage> {
 | **Rendering** | [packages/flutter/lib/src/rendering/object.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/object.dart) | `PipelineOwner.schedulePostLayoutCallback` (new, `@internal`) | Flushes post-layout callbacks at the end of `PipelineOwner.flushLayout()` after all dirty `RenderObject`s have completed layout and before `flushPaint()`. |
 | **Rendering** | [packages/flutter/lib/src/rendering/paragraph.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/paragraph.dart) | `RenderParagraph.textPlugins` | Reconciles delegates, schedules post-layout lifecycle callbacks, and executes painters for static text. |
 | **Rendering** | [packages/flutter/lib/src/rendering/editable.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/rendering/editable.dart) | `RenderEditable.textPlugins` | Reconciles delegates, schedules post-layout lifecycle callbacks during typing and layout, and executes painters for editable text fields. |
-| **Widgets** | `packages/flutter/lib/src/widgets/text_plugin.dart` | `TextPluginScope` | Scopes, deduplicates by `Type`, and sorts `TextPlugin`s by `paintOrder` down the widget tree, and configures `OffscreenContentRenderingStrategy` when any active plugin has `needsOffscreenContent == true`. |
+| **Widgets** | `packages/flutter/lib/src/widgets/text_plugin.dart` | `TextPluginScope`, `TextPluginSuspension` (new, `@internal`) | Scopes, deduplicates by `Type`, and sorts `TextPlugin`s by `paintOrder` down the widget tree, and configures `OffscreenContentRenderingStrategy` when any active plugin has `needsOffscreenContent == true`. `TextPluginSuspension` withholds plugins from text that is mounted but covered ([Section 7.14](#714-text-that-is-mounted-but-not-visible)). |
+| **Widgets** | [packages/flutter/lib/src/widgets/overlay.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/overlay.dart) | None | Suspends plugins for an `OverlayEntry` that is below an opaque entry, so that text in a covered route is not given to plugins. |
 | **Widgets** | [packages/flutter/lib/src/widgets/viewport.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/viewport.dart) | `OffscreenRenderingPolicy`, `OffscreenContentRenderingStrategy` | Inherited strategy controlling whether descendant `Viewport` and `ShrinkWrappingViewport` widgets render offscreen sliver content lazily or eagerly with a configurable `ScrollCacheExtent`. |
 | **Widgets** | [packages/flutter/lib/src/widgets/basic.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/basic.dart) | `RichText.textPlugins` | Resolves `textPlugins ?? TextPluginScope.maybeOf(context)` and forwards to `RenderParagraph`. |
 | **Widgets** | [packages/flutter/lib/src/widgets/editable_text.dart](https://github.com/flutter/flutter/blob/master/packages/flutter/lib/src/widgets/editable_text.dart) | `EditableText.textPlugins` | Resolves `textPlugins ?? TextPluginScope.maybeOf(context)` and forwards to `_Editable` and `RenderEditable`. Passes no plugins when `obscureText` is set. |
@@ -1269,11 +1270,21 @@ When `obscureText` changes while the field is mounted, the plugins get `didRemov
 
 ### 7.14 Text that is mounted but not visible
 
-A text that is mounted and laid out is given to the plugins of its scope, also when it is not visible: a route covered by another route, an inactive tab that is kept alive, a child of `Offstage`. A search scope placed above a `Navigator` therefore counts matches in covered routes.
+**Covered routes.** A route that is covered by an opaque route stays mounted. Its text is not given to any plugin while it is covered. A search scope placed above a `Navigator` therefore counts only the matches in the routes that can be seen.
 
-Today the answer is placement. Put the scope inside the page or the tab body, not around the navigator.
+The `Overlay` does this. It keeps an `OverlayEntry` below an opaque entry mounted, but does not lay it out or paint it. It now also wraps every entry in a `TextPluginSuspension` (new, `@internal`), which withholds plugins while the entry is covered.
 
-For search, the better default is probably to leave out text that cannot be seen. That is open ([Section 11](#11-open-questions)). This behavior was read from the code and has not been tested.
+- When a route becomes covered, the plugins get `didRemoveText` for its texts. When it is uncovered, they get `didAddText` again. The route keeps its state.
+- During the transition both routes are on stage, and both are given to plugins.
+- A route below a non-opaque route, such as a dialog, can still be seen and stays with its plugins.
+- A `TextPluginScope` inside the covered route does not install its plugins either. The result does not depend on where the scope is.
+- Plugins passed directly in `RichText.textPlugins` or `EditableText.textPlugins` are not affected.
+
+The cost is two small widgets per overlay entry, also in an app that uses no plugins.
+
+This is tested in `text_plugin_test.dart` and in the example app (the "Stacked Pages" card).
+
+**Other text that is mounted but not visible.** An inactive tab that is kept alive, a hidden child of `IndexedStack` and a child of `Offstage` are not handled. Their text is still given to plugins. For these the answer is still placement: put the scope inside the tab body. Whether they should be left out in the same way is open ([Section 11](#11-open-questions)). This part was read from the code and has not been tested.
 
 ---
 
@@ -1283,7 +1294,9 @@ For search, the better default is probably to leave out text that cannot be seen
 
 So when the active match is inside a text field and scrolled out of view inside the field, the page scrolls to the field but the field does not scroll to the match.
 
-This is a known gap of the prototype. The fix belongs in the delegate, as review suggested: for an editable text, first bring the range into view inside the field, then scroll the ancestors. This was read from the code and has not been confirmed with a test.
+This is a known gap of the prototype. A test in the example app confirms it (the "Multi-line Text Field" card): after moving to the match, the scroll offset of the field has not changed and the match is still below the last visible line.
+
+The fix belongs in the delegate, as review suggested: for an editable text, first bring the range into view inside the field, then scroll the ancestors.
 
 ---
 
@@ -1514,7 +1527,7 @@ For stage 1:
 | 2 | Should the framework publish reference values for `paintOrder`? | [3.4](#34-textpluginscope-and-hierarchical-merging) |
 | 3 | Should the post-layout callback assert that a plugin does not dirty layout? | [7.16](#716-what-a-plugin-may-do-in-a-lifecycle-callback) |
 | 4 | Per-owner `schedulePostLayoutCallback`, or a binding-level callback once per frame? | [7.16](#716-what-a-plugin-may-do-in-a-lifecycle-callback) |
-| 5 | Should text that is mounted but not visible be left out by default? | [7.14](#714-text-that-is-mounted-but-not-visible) |
+| 5 | Covered routes are left out. Should a kept-alive tab, a hidden `IndexedStack` child and an `Offstage` child be left out too? | [7.14](#714-text-that-is-mounted-but-not-visible) |
 | 6 | `ensureVisible` for a range inside a scrolled text field | [7.15](#715-a-match-inside-a-scrolled-text-field) |
 | 7 | The benchmarks that are owed | [3.8](#38-performance) |
 | 8 | Where `SearchInPagePlugin` lives in the framework | [3.6](#36-first-party-searchinpageplugin-implementation) |
@@ -1530,15 +1543,16 @@ For the later stages, see [Section 8.5](#85-what-is-still-open), [Section 9.4](#
 
 | Claim | Branch | How |
 | :--- | :--- | :--- |
-| The stage 1 framework tests pass (17 tests in `text_plugin_test.dart`) | `text-plugin-mvp` | Ran |
+| The stage 1 framework tests pass (20 tests in `text_plugin_test.dart`) | `text-plugin-mvp` | Ran |
 | An obscured `EditableText` is not registered with any plugin | `text-plugin-mvp` | Ran |
 | The order of the lifecycle callbacks ([Section 3.2](#32-textplugin-lifecycle-contract)) | `text-plugin-mvp` | Read, in all three hosts. The lifecycle tests ran |
 | Painting order and clipping ([Section 3.5](#35-renderparagraph-and-rendereditable-painting-and-z-order-pipeline)) | `text-plugin-mvp` | Read. The paint-order tests ran |
 | `SearchInPagePlugin` defaults, and that it builds no widgets | `text-plugin-mvp` | Read |
-| The example app has five paint-only plugins | `text-plugin-mvp` | Read. Its tests were not run |
+| The example app has five paint-only plugins | `text-plugin-mvp` | Read. Its tests ran (4 tests) |
 | The cost model ([Section 3.8](#38-performance)) | `text-plugin-mvp` | Read. Nothing was measured |
-| Text that is mounted but not visible ([Section 7.14](#714-text-that-is-mounted-but-not-visible)) | `text-plugin-mvp` | Read. Not tested |
-| A match inside a scrolled text field ([Section 7.15](#715-a-match-inside-a-scrolled-text-field)) | `text-plugin-mvp` | Read. Not tested |
+| Text in a covered route is not given to plugins ([Section 7.14](#714-text-that-is-mounted-but-not-visible)) | `text-plugin-mvp` | Ran, and checked by hand in the example app |
+| Kept-alive tabs, `IndexedStack` and `Offstage` are still given to plugins ([Section 7.14](#714-text-that-is-mounted-but-not-visible)) | `text-plugin-mvp` | Read. Not tested |
+| A match inside a scrolled text field is not scrolled into view ([Section 7.15](#715-a-match-inside-a-scrolled-text-field)) | `text-plugin-mvp` | Ran, and checked by hand in the example app |
 | Stage 2 behavior ([Section 8](#8-stage-2-annotations)) | `text-plugin-annotations` | From the design notes and test names on the branch. Tests not run |
 | What stages 2 and 3 touch in stage 1 code | Both | Read from the diff against stage 1 |
 | The stage 3 framework tests pass, together with the unchanged stage 1 tests (50 tests) | `text-plugin-with-widget` | Ran, before the last stage 1 commit |
