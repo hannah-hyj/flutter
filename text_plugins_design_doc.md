@@ -639,55 +639,74 @@ Flutter is already slow with very large amounts of text, and this design must no
 | A text that was laid out, changed, or got a new plugin | One post-layout callback for that text, which makes one or two calls per plugin on it |
 | Painting a text | One call per painter that is set, each wrapped in a save and restore |
 | Building a scope | Merging the plugin map of the ancestor and sorting it. This is per scope, not per text |
-| Comparing two delegates for document order | Both ancestor chains to the root, then the children of the common parent until one of the two branches is found. For two items of one long list, the second part grows with the list ([Section 5.1.2](#512-document-order-sorting-textdelegate-implements-comparabletextdelegate)) |
+| Comparing two delegates for document order | Both ancestor chains to the root, then the siblings between the two branches under the common parent. Ordering many delegates at once uses one walk of the tree instead ([Section 5.1.2](#512-document-order-sorting-textdelegate-implements-comparabletextdelegate)) |
 
 So the cost follows the amount of text that **changed** in a frame, not the amount of text on the page. What a plugin does inside its callbacks is the plugin's own cost. `SearchInPagePlugin` keeps matches per text for that reason ([Section 3.6.2](#362-incremental-per-delegate-match-indexing-and-active-match-preservation)).
 
 #### 3.8.1 First measurements
 
-These numbers are from one run on one machine: macOS desktop, profile mode, `examples/text_plugins/lib/benchmark.dart`. They show the shape of the cost, not exact values.
+These numbers are from one machine: macOS desktop, profile mode, `examples/text_plugins/lib/benchmark.dart`. The benchmark was run several times while two problems were found and fixed. The tables are from the last run. A single number at the larger page size varies by a few milliseconds from run to run, so they show the shape of the cost, not exact values.
 
-The page is a column of N paragraphs that are all mounted and laid out, each in its own repaint boundary. It is measured with no `TextPluginScope`, with a plugin that does nothing, and with `SearchInPagePlugin` and an active query that matches one paragraph in ten. A frame time is the time in `drawFrame` (build, layout, plugin callbacks, paint), averaged over 20 frames. Raster time is not included.
+The page is a column of N paragraphs that are all mounted and laid out, each in its own repaint boundary. It is measured four ways: with no `TextPluginScope`, with a scope that installs no plugin, with a plugin that does nothing, and with `SearchInPagePlugin` and an active query that matches one paragraph in ten. A frame time is the time in `drawFrame` (build, layout, plugin callbacks, paint), averaged over 20 frames. The benchmark runs the frames itself and does not wait for vsync. Raster time is not included.
+
+**Two problems were found and fixed.**
+
+1. *The first search took 1.0 s on 10,000 paragraphs.* The cause was sorting the matches into document order: each comparison visited every child of the column. `TextDelegate.sortInDocumentOrder` now orders many delegates with one walk of the tree, and `compareTo` walks only the siblings between the two texts ([Section 5.1.2](#512-document-order-sorting-textdelegate-implements-comparabletextdelegate)).
+2. *A frame that rebuilds every text was several milliseconds slower with a plugin installed.* When a `Text` is rebuilt, `RenderParagraph` gets its span again. With a plugin on the text, the setter built the old plain text first and only then checked whether the span had changed. On a rebuild of 10,000 unchanged texts that was 10,000 strings that were thrown away. The setter now checks first. A scope that installs no plugin never had this cost, which is how the cause was found.
+
+In milliseconds, at 10,000 paragraphs:
+
+| | Before | After |
+| :--- | ---: | ---: |
+| First search, 1,000 matches | 1,023 | 10 to 15 |
+| Frame in which 100 matching paragraphs change, search plugin against a plugin that does nothing | 45.0 against 12.8 | 10.0 against 9.3 |
+| Frame that rebuilds every paragraph, plugin that does nothing against no scope | 35.4 against 27.6 | 27.3 against 25.7 |
+| Frame that appends one paragraph, plugin that does nothing against no scope | 45.4 against 36.7 | 34.3 against 32.6 |
+
+Each pair is from one run. The runs before and after used different ways to drive the frames, so compare the gap inside a pair, not the numbers across the two columns.
 
 With 10,000 paragraphs, in milliseconds:
 
-| | No scope | Plugin that does nothing | Search plugin |
-| :--- | ---: | ---: | ---: |
-| Idle frame | 0.01 | 0.01 | 0.01 |
-| Frame in which 1 paragraph changes | 5.6 | 5.5 | 6.2 |
-| Frame in which 10 paragraphs change | 6.3 | 6.2 | 9.6 |
-| Frame in which 100 paragraphs change | 12.3 | 12.8 | 45.0 |
-| Frame that appends one paragraph | 38.1 | 43.9 | 45.6 |
-| First search, 1,000 matches | | | 1,023 |
+| | No scope | Scope without plugins | Plugin that does nothing | Search plugin |
+| :--- | ---: | ---: | ---: | ---: |
+| Idle frame | < 0.01 | < 0.01 | < 0.01 | < 0.01 |
+| Frame in which 1 paragraph changes | 2.7 | 2.8 | 2.7 | 2.8 |
+| Frame in which 10 paragraphs change | 3.4 | 3.4 | 3.3 | 3.6 |
+| Frame in which 100 paragraphs change | 9.1 | 9.7 | 9.3 | 10.0 |
+| Frame that rebuilds every paragraph | 25.7 | 28.5 | 27.3 | 25.2 |
+| Frame that appends one paragraph | 32.6 | 39.6 | 34.3 | 33.0 |
+| First search, 1,000 matches | | | | 14.0 |
 
 With 1,000 paragraphs, in milliseconds:
 
-| | No scope | Plugin that does nothing | Search plugin |
-| :--- | ---: | ---: | ---: |
-| Idle frame | 0.02 | 0.01 | 0.01 |
-| Frame in which 1 paragraph changes | 0.7 | 1.8 | 1.4 |
-| Frame in which 10 paragraphs change | 1.4 | 1.7 | 1.7 |
-| Frame in which 100 paragraphs change | 7.0 | 6.6 | 9.5 |
-| Frame that appends one paragraph | 2.8 | 3.0 | 3.2 |
-| First search, 100 matches | | | 3.6 |
+| | No scope | Scope without plugins | Plugin that does nothing | Search plugin |
+| :--- | ---: | ---: | ---: | ---: |
+| Idle frame | < 0.01 | < 0.01 | < 0.01 | < 0.01 |
+| Frame in which 1 paragraph changes | 0.4 | 0.3 | 0.3 | 0.3 |
+| Frame in which 10 paragraphs change | 0.8 | 0.9 | 1.0 | 0.9 |
+| Frame in which 100 paragraphs change | 5.8 | 5.4 | 6.2 | 5.8 |
+| Frame that rebuilds every paragraph | 1.4 | 1.3 | 1.7 | 1.3 |
+| Frame that appends one paragraph | 1.9 | 2.0 | 2.2 | 1.8 |
+| First search, 100 matches | | | | 1.0 |
 
 What they show:
 
-- **The lifecycle is not visible.** With a plugin that does nothing, a frame costs about the same as with no scope. The differences go both ways and are within the noise of one run. The one larger gap is the append at 10,000 paragraphs (43.9 against 38.1), and one run cannot tell whether that is real.
-- **An idle frame costs nothing** in all three.
-- **The page itself grows with N.** A frame costs more on the larger page also with no scope, because the column has N children. That is not a plugin cost.
-- **Appending does not rescan the page.** With the search active, the append costs about 2 ms more than with a plugin that does nothing.
-- **The first search is slow, and grows much faster than the page.** Ten times the text took almost 300 times as long. The text scan is linear, so the scan does not explain this. The likely cause is sorting the matches into document order: every comparison walks the children of the common parent, and here all 1,000 matching texts are children of one column ([Section 5.1.2](#512-document-order-sorting-textdelegate-implements-comparabletextdelegate)). The sort has not been measured on its own.
-- **A changed text that has matches costs about 0.3 ms extra at 10,000 siblings** (45.0 against 12.8 for 100 changes). In these runs every changed paragraph had a match, which is the worst case. The plugin checks whether the text is still in order, and that calls the same comparison.
+- **The lifecycle is not visible.** With a plugin installed, a frame in which text changes costs about the same as with no scope. The differences are under 1 ms and go both ways.
+- **An idle frame costs nothing** in all four.
+- **The page itself grows with N.** A frame costs more on the larger page also with no scope, because the column has N children. Appending a paragraph rebuilds the whole column, which is why it is the most expensive frame in every column. That is not a plugin cost.
+- **Appending does not rescan the page.** With the search active, the append costs about the same as with a plugin that does nothing.
+- **The first search grows with the page.** Ten times the text takes about ten times as long.
+- **A changed text that has matches is cheap.** In these runs every changed paragraph had a match, which is the worst case for the search plugin. 100 of them cost under 1 ms more than with a plugin that does nothing.
+- **One number stands out and is probably noise.** The append under a scope without plugins is 39.6 ms. In the run before, the same case was 37.4 ms against 36.7 ms with no scope.
 
-So the cost model holds for the framework: the lifecycle follows the text that changed. The real cost is `compareTo` among many siblings. It has to become cheaper before the implementation PR.
+So the cost model holds: the cost follows the text that changed.
 
 Benchmarks owed:
 
-1. **Document order.** Measure the sort on its own, and a cheaper comparison for siblings of one parent.
+1. **Noise.** Repeat each measurement over several runs, so that a difference of a few milliseconds can be told from noise.
 2. **Idle cost while scrolling.** The same page scrolling with a scope and no plugin activity, against the page with no scope.
 3. **Eager offscreen content.** The frame in which eager rendering is turned on, for several cache extents.
-4. **Repeat the measurements above** on more than one run and on a mobile device.
+4. **Other shapes and devices.** A lazy list instead of a column, and a mobile device.
 
 ### 3.9 What stage 1 cannot do
 
@@ -807,7 +826,18 @@ We solve this with Lowest Common Ancestor (LCA) render-tree traversal:
 
 #### Performance characteristics of LCA sorting
 
-For $N$ mounted `TextDelegate`s in a render tree of depth $D$ (typically $D \le 30$) and branching factor $B$ at the common container, a single `compareTo` call takes $O(D + B)$ pointer hops without allocating any geometric transforms, and sorting $N$ delegates takes $O((D + B) \cdot N \log N)$ time. In addition, because `RenderSliverList` and `RenderFlex` store doubly-linked sibling pointers (`SliverMultiBoxAdaptorParentData` / `ContainerBoxParentData`), when two delegates share the same sliver or flex parent, sibling order can be resolved or cached in $O(1)$ per item during a single linear pass over the container's children. Finally, as shown in [Section 3.6.2](#362-incremental-per-delegate-match-indexing-and-active-match-preservation), `SearchInPagePlugin` only maintains sorted order for the $K$ delegates that actually contain matches (binary-inserting a newly matching delegate in $O((D + B) \log K)$ comparisons and splicing matches in place on `didUpdateText` without re-sorting). None of this has been measured yet. [Section 3.8](#38-performance) lists the benchmark that is owed.
+One `compareTo` call walks both ancestor chains to the root. What it does next depends on the common parent:
+
+- If the parent keeps a sibling list, as `RenderFlex` and `RenderSliverList` do, it walks that list forward from both branches at once and stops when one reaches the other. The cost is the distance between the two siblings.
+- For any other parent it calls `visitChildren` on the common parent. The cost is the number of its children.
+
+Sorting many delegates by comparing pairs is slow when they share one long parent. In the first measurement, sorting 1,000 matching texts among 10,000 siblings took 1.0 s, because every comparison visited all 10,000 children.
+
+`TextDelegate.sortInDocumentOrder(List<TextDelegate>)` (new) avoids this. It marks the ancestors of every delegate, then walks the tree once from the root and visits only the marked nodes, in the order of `visitChildren`. Its cost is the number of children of the marked nodes, however many delegates there are. With it the same search takes about 10 ms ([Section 3.8.1](#381-first-measurements)).
+
+`SearchInPagePlugin` uses `sortInDocumentOrder` for a new query and whenever it has to sort again. It uses `compareTo` only for small jobs: to check a changed text against its two neighbors, and to insert a newly matching text by binary search ([Section 3.6.2](#362-incremental-per-delegate-match-indexing-and-active-match-preservation)). It keeps order only for the texts that have matches.
+
+A test checks that `sortInDocumentOrder` and `compareTo` give the same order, for parents with and without a sibling list.
 
 `SelectableRegion` has the same ordering problem and orders its selectables by position today. The comparison above only needs two render objects, so it could be shared. That is a follow-up outside this proposal.
 
@@ -1583,13 +1613,13 @@ For the later stages, see [Section 8.5](#85-what-is-still-open), [Section 9.4](#
 
 | Claim | Branch | How |
 | :--- | :--- | :--- |
-| The stage 1 framework tests pass (20 tests in `text_plugin_test.dart`) | `text-plugin-mvp` | Ran |
+| The stage 1 framework tests pass (21 tests in `text_plugin_test.dart`) | `text-plugin-mvp` | Ran |
 | An obscured `EditableText` is not registered with any plugin | `text-plugin-mvp` | Ran |
 | The order of the lifecycle callbacks ([Section 3.2](#32-textplugin-lifecycle-contract)) | `text-plugin-mvp` | Read, in all three hosts. The lifecycle tests ran |
 | Painting order and clipping ([Section 3.5](#35-renderparagraph-and-rendereditable-painting-and-z-order-pipeline)) | `text-plugin-mvp` | Read. The paint-order tests ran |
 | `SearchInPagePlugin` defaults, and that it builds no widgets | `text-plugin-mvp` | Read |
 | The example app has five paint-only plugins | `text-plugin-mvp` | Read. Its tests ran (4 tests) |
-| The cost model ([Section 3.8](#38-performance)) | `text-plugin-mvp` | Read. First measurements ran once, on macOS in profile mode ([Section 3.8.1](#381-first-measurements)) |
+| The cost model ([Section 3.8](#38-performance)) | `text-plugin-mvp` | Read. Measured on macOS in profile mode, several runs ([Section 3.8.1](#381-first-measurements)) |
 | Text in a covered route is not given to plugins ([Section 7.14](#714-text-that-is-mounted-but-not-visible)) | `text-plugin-mvp` | Ran, and checked by hand in the example app |
 | Kept-alive tabs, `IndexedStack` and `Offstage` are still given to plugins ([Section 7.14](#714-text-that-is-mounted-but-not-visible)) | `text-plugin-mvp` | Read. Not tested |
 | A match inside a scrolled text field is not scrolled into view ([Section 7.15](#715-a-match-inside-a-scrolled-text-field)) | `text-plugin-mvp` | Ran, and checked by hand in the example app |
