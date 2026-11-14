@@ -421,10 +421,17 @@ class RenderParagraph extends RenderBox
   InlineSpan get text => _textPainter.text!;
 
   set text(InlineSpan value) {
+    final RenderComparison comparison = _textPainter.text!.compareTo(value);
+    if (comparison == RenderComparison.identical) {
+      return;
+    }
+    // Only read the old plain text when the span changed. A rebuild with an
+    // equal span is the common case, and building the string for every text
+    // on the page is not free.
     final String? oldPlainText = (_textPluginDelegates?.isNotEmpty ?? false)
         ? _textPainter.text!.toPlainText(includeSemanticsLabels: false)
         : null;
-    switch (_textPainter.text!.compareTo(value)) {
+    switch (comparison) {
       case RenderComparison.identical:
         return;
       case RenderComparison.metadata:
