@@ -55,6 +55,7 @@ Moving text selection into a plugin was also tried. It is not one of the three s
   - [3.6 First-party `SearchInPagePlugin` implementation](#36-first-party-searchinpageplugin-implementation)
   - [3.7 Who owns a plugin](#37-who-owns-a-plugin)
   - [3.8 Performance](#38-performance)
+    - [3.8.1 First measurements](#381-first-measurements)
   - [3.9 What stage 1 cannot do](#39-what-stage-1-cannot-do)
 - [4. Community package use cases](#4-community-package-use-cases)
   - [4.1 Use cases implemented in the demo app](#41-use-cases-implemented-in-the-demo-app)
@@ -629,7 +630,7 @@ Instances are proposed because a stateful plugin is a controller. The app has to
 
 ### 3.8 Performance
 
-Flutter is already slow with very large amounts of text, and this design must not make that worse. This section states where the cost is. **Nothing in it has been measured yet.** The benchmarks at the end are owed before the implementation PR.
+Flutter is already slow with very large amounts of text, and this design must not make that worse. This section states where the cost is. The first measurements are in [Section 3.8.1](#381-first-measurements). The rest of the benchmarks at the end are owed before the implementation PR.
 
 | Situation | Cost |
 | :--- | :--- |
@@ -642,12 +643,51 @@ Flutter is already slow with very large amounts of text, and this design must no
 
 So the cost follows the amount of text that **changed** in a frame, not the amount of text on the page. What a plugin does inside its callbacks is the plugin's own cost. `SearchInPagePlugin` keeps matches per text for that reason ([Section 3.6.2](#362-incremental-per-delegate-match-indexing-and-active-match-preservation)).
 
+#### 3.8.1 First measurements
+
+These numbers are from one run on one machine: macOS desktop, profile mode, `examples/text_plugins/lib/benchmark.dart`. They show the shape of the cost, not exact values.
+
+The page is a column of N paragraphs that are all mounted and laid out, each in its own repaint boundary. It is measured with no `TextPluginScope`, with a plugin that does nothing, and with `SearchInPagePlugin` and an active query that matches one paragraph in ten. A frame time is the time in `drawFrame` (build, layout, plugin callbacks, paint), averaged over 20 frames. Raster time is not included.
+
+With 10,000 paragraphs, in milliseconds:
+
+| | No scope | Plugin that does nothing | Search plugin |
+| :--- | ---: | ---: | ---: |
+| Idle frame | 0.01 | 0.01 | 0.01 |
+| Frame in which 1 paragraph changes | 5.6 | 5.5 | 6.2 |
+| Frame in which 10 paragraphs change | 6.3 | 6.2 | 9.6 |
+| Frame in which 100 paragraphs change | 12.3 | 12.8 | 45.0 |
+| Frame that appends one paragraph | 38.1 | 43.9 | 45.6 |
+| First search, 1,000 matches | | | 1,023 |
+
+With 1,000 paragraphs, in milliseconds:
+
+| | No scope | Plugin that does nothing | Search plugin |
+| :--- | ---: | ---: | ---: |
+| Idle frame | 0.02 | 0.01 | 0.01 |
+| Frame in which 1 paragraph changes | 0.7 | 1.8 | 1.4 |
+| Frame in which 10 paragraphs change | 1.4 | 1.7 | 1.7 |
+| Frame in which 100 paragraphs change | 7.0 | 6.6 | 9.5 |
+| Frame that appends one paragraph | 2.8 | 3.0 | 3.2 |
+| First search, 100 matches | | | 3.6 |
+
+What they show:
+
+- **The lifecycle is not visible.** With a plugin that does nothing, a frame costs about the same as with no scope. The differences go both ways and are within the noise of one run. The one larger gap is the append at 10,000 paragraphs (43.9 against 38.1), and one run cannot tell whether that is real.
+- **An idle frame costs nothing** in all three.
+- **The page itself grows with N.** A frame costs more on the larger page also with no scope, because the column has N children. That is not a plugin cost.
+- **Appending does not rescan the page.** With the search active, the append costs about 2 ms more than with a plugin that does nothing.
+- **The first search is slow, and grows much faster than the page.** Ten times the text took almost 300 times as long. The text scan is linear, so the scan does not explain this. The likely cause is sorting the matches into document order: every comparison walks the children of the common parent, and here all 1,000 matching texts are children of one column ([Section 5.1.2](#512-document-order-sorting-textdelegate-implements-comparabletextdelegate)). The sort has not been measured on its own.
+- **A changed text that has matches costs about 0.3 ms extra at 10,000 siblings** (45.0 against 12.8 for 100 changes). In these runs every changed paragraph had a match, which is the worst case. The plugin checks whether the text is still in order, and that calls the same comparison.
+
+So the cost model holds for the framework: the lifecycle follows the text that changed. The real cost is `compareTo` among many siblings. It has to become cheaper before the implementation PR.
+
 Benchmarks owed:
 
-1. **Large page, small change.** A page with a very large amount of text. Search it, then append a little text. The append must be fast even if the first search is slow.
-2. **Idle cost.** The same page scrolling with a scope and no plugin activity, against the page with no scope.
-3. **Document order.** Sorting matches in a long list, to check the cost of `compareTo`.
-4. **Eager offscreen content.** The frame in which eager rendering is turned on, for several cache extents.
+1. **Document order.** Measure the sort on its own, and a cheaper comparison for siblings of one parent.
+2. **Idle cost while scrolling.** The same page scrolling with a scope and no plugin activity, against the page with no scope.
+3. **Eager offscreen content.** The frame in which eager rendering is turned on, for several cache extents.
+4. **Repeat the measurements above** on more than one run and on a mobile device.
 
 ### 3.9 What stage 1 cannot do
 
@@ -1549,7 +1589,7 @@ For the later stages, see [Section 8.5](#85-what-is-still-open), [Section 9.4](#
 | Painting order and clipping ([Section 3.5](#35-renderparagraph-and-rendereditable-painting-and-z-order-pipeline)) | `text-plugin-mvp` | Read. The paint-order tests ran |
 | `SearchInPagePlugin` defaults, and that it builds no widgets | `text-plugin-mvp` | Read |
 | The example app has five paint-only plugins | `text-plugin-mvp` | Read. Its tests ran (4 tests) |
-| The cost model ([Section 3.8](#38-performance)) | `text-plugin-mvp` | Read. Nothing was measured |
+| The cost model ([Section 3.8](#38-performance)) | `text-plugin-mvp` | Read. First measurements ran once, on macOS in profile mode ([Section 3.8.1](#381-first-measurements)) |
 | Text in a covered route is not given to plugins ([Section 7.14](#714-text-that-is-mounted-but-not-visible)) | `text-plugin-mvp` | Ran, and checked by hand in the example app |
 | Kept-alive tabs, `IndexedStack` and `Offstage` are still given to plugins ([Section 7.14](#714-text-that-is-mounted-but-not-visible)) | `text-plugin-mvp` | Read. Not tested |
 | A match inside a scrolled text field is not scrolled into view ([Section 7.15](#715-a-match-inside-a-scrolled-text-field)) | `text-plugin-mvp` | Ran, and checked by hand in the example app |
