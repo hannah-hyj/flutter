@@ -64,6 +64,7 @@ class _NoopPlugin extends TextPlugin {}
 
 enum _Mode {
   noScope('no scope'),
+  emptyScope('scope without plugins'),
   noopPlugin('no-op plugin'),
   searchPlugin('search plugin');
 
@@ -79,10 +80,19 @@ String _paragraph(int index, int version) {
 }
 
 class _Page extends StatefulWidget {
-  const _Page({super.key, required this.count, required this.plugin});
+  const _Page({
+    super.key,
+    required this.count,
+    required this.plugin,
+    this.emptyScope = false,
+  });
 
   final int count;
   final TextPlugin? plugin;
+
+  /// Whether to wrap the page in a scope that installs no plugin. Every text
+  /// then looks up and depends on the scope, but gets no delegate.
+  final bool emptyScope;
 
   @override
   State<_Page> createState() => _PageState();
@@ -104,6 +114,11 @@ class _PageState extends State<_Page> {
       final int index = i * step;
       texts[index].value = _paragraph(index, version);
     }
+  }
+
+  /// Rebuilds the page, and with it every paragraph, without a change.
+  void rebuild() {
+    setState(() {});
   }
 
   /// Appends one paragraph that contains the query.
@@ -142,6 +157,8 @@ class _PageState extends State<_Page> {
     final TextPlugin? plugin = widget.plugin;
     if (plugin != null) {
       body = TextPluginScope(plugin: plugin, child: body);
+    } else if (widget.emptyScope) {
+      body = TextPluginScope.none(child: body);
     }
     return Directionality(
       textDirection: TextDirection.ltr,
@@ -153,23 +170,38 @@ class _PageState extends State<_Page> {
   }
 }
 
-Future<void> _settle() async {
-  while (_binding.hasScheduledFrame) {
-    await _binding.endOfFrame;
+/// Runs one frame now, without waiting for the engine to ask for it.
+///
+/// The engine only asks for frames while the window can be seen. Driving the
+/// frames from here lets the benchmark finish when the window is covered or
+/// the display is asleep, and keeps vsync waits out of the timings.
+void _pumpFrame() {
+  _binding.handleBeginFrame(null);
+  _binding.handleDrawFrame();
+}
+
+/// Runs the frames that the last frame asked for, such as the one that
+/// follows a notification that a plugin postponed to after the frame.
+void _settle() {
+  for (var i = 0; i < 10 && _binding.hasScheduledFrame; i++) {
+    _pumpFrame();
   }
 }
 
 /// Returns the average time in milliseconds of a frame that follows [change].
 Future<double> _measureFrames(int runs, void Function(int run) change) async {
-  await _settle();
+  _settle();
   final int before = _binding.frameWatch.elapsedMicroseconds;
   for (var run = 0; run < runs; run++) {
     change(run);
-    _binding.scheduleFrame();
-    await _binding.endOfFrame;
-    await _settle();
+    _pumpFrame();
+    _settle();
   }
-  return (_binding.frameWatch.elapsedMicroseconds - before) / runs / 1000.0;
+  final double result =
+      (_binding.frameWatch.elapsedMicroseconds - before) / runs / 1000.0;
+  // Let the event loop run, so that the window stays responsive.
+  await Future<void>.delayed(Duration.zero);
+  return result;
 }
 
 String _ms(double value) => '${value.toStringAsFixed(3)} ms';
@@ -186,7 +218,7 @@ Future<void> _runScenario(int count, _Mode mode) async {
       ? SearchInPagePlugin()
       : null;
   final TextPlugin? plugin = switch (mode) {
-    _Mode.noScope => null,
+    _Mode.noScope || _Mode.emptyScope => null,
     _Mode.noopPlugin => _NoopPlugin(),
     _Mode.searchPlugin => search,
   };
@@ -195,10 +227,18 @@ Future<void> _runScenario(int count, _Mode mode) async {
 
   // Mount the page.
   final int beforeMount = _binding.frameWatch.elapsedMicroseconds;
-  runApp(_Page(key: pageKey, count: count, plugin: plugin));
+  runApp(
+    _Page(
+      key: pageKey,
+      count: count,
+      plugin: plugin,
+      emptyScope: mode == _Mode.emptyScope,
+    ),
+  );
+  // The first frame of a new root widget is a warm-up frame that runs from
+  // timers. Wait for it, then run whatever it asked for.
   await Future<void>.delayed(const Duration(milliseconds: 100));
-  await _binding.endOfFrame;
-  await _settle();
+  _settle();
   final double mount =
       (_binding.frameWatch.elapsedMicroseconds - beforeMount) / 1000.0;
   _report('$label: mount the page: ${_ms(mount)}');
@@ -225,6 +265,12 @@ Future<void> _runScenario(int count, _Mode mode) async {
     _report('$label: frame with $changed changed paragraphs: ${_ms(frame)}');
   }
 
+  // A frame that rebuilds every paragraph, with no change.
+  final double rebuild = await _measureFrames(_runs, (int run) {
+    page.rebuild();
+  });
+  _report('$label: frame that rebuilds all paragraphs: ${_ms(rebuild)}');
+
   // A frame in which one paragraph is appended.
   final double append = await _measureFrames(_runs, (int run) {
     page.append();
@@ -236,9 +282,10 @@ Future<void> _runScenario(int count, _Mode mode) async {
 
   // Unmount the page before the plugin is disposed.
   runApp(const SizedBox.shrink());
+  // The first frame of a new root widget is a warm-up frame that runs from
+  // timers. Wait for it, then run whatever it asked for.
   await Future<void>.delayed(const Duration(milliseconds: 100));
-  await _binding.endOfFrame;
-  await _settle();
+  _settle();
   search?.dispose();
 }
 
