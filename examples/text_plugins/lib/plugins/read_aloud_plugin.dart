@@ -12,7 +12,11 @@ import 'package:flutter/scheduler.dart';
 @immutable
 class ReadAloudWord {
   /// Creates a [ReadAloudWord].
-  const ReadAloudWord({required this.delegate, required this.range, required this.word});
+  const ReadAloudWord({
+    required this.delegate,
+    required this.range,
+    required this.word,
+  });
 
   /// The [TextDelegate] containing this word.
   final TextDelegate delegate;
@@ -28,7 +32,9 @@ class ReadAloudWord {
     if (identical(this, other)) {
       return true;
     }
-    return other is ReadAloudWord && other.delegate == delegate && other.range == range;
+    return other is ReadAloudWord &&
+        other.delegate == delegate &&
+        other.range == range;
   }
 
   @override
@@ -81,7 +87,8 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
   int get currentWordIndex => _currentWordIndex;
 
   /// The currently spoken [ReadAloudWord], or `null` if inactive.
-  ReadAloudWord? get currentWord => (_currentWordIndex >= 0 && _currentWordIndex < _words.length)
+  ReadAloudWord? get currentWord =>
+      (_currentWordIndex >= 0 && _currentWordIndex < _words.length)
       ? _words[_currentWordIndex]
       : null;
 
@@ -92,7 +99,8 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
     if (_disposed) {
       return;
     }
-    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
       if (!_notificationScheduled) {
         _notificationScheduled = true;
         SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -177,7 +185,9 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
     if (_words.isEmpty) {
       return;
     }
-    _currentWordIndex = (_currentWordIndex <= 0) ? _words.length - 1 : _currentWordIndex - 1;
+    _currentWordIndex = (_currentWordIndex <= 0)
+        ? _words.length - 1
+        : _currentWordIndex - 1;
     _updatePainters();
     _ensureCurrentWordVisible();
     _notifyListenersSafely();
@@ -224,7 +234,8 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
   void _rebuildWords() {
     final ReadAloudWord? previousWord = currentWord;
     _words.clear();
-    final List<TextDelegate> sortedDelegates = _delegates.toList()..sort();
+    final List<TextDelegate> sortedDelegates = _delegates.toList();
+    TextDelegate.sortInDocumentOrder(sortedDelegates);
     for (final delegate in sortedDelegates) {
       final String plainText = delegate.text;
       for (final RegExpMatch match in _wordPattern.allMatches(plainText)) {
@@ -306,7 +317,10 @@ class _ReadAloudBackgroundPainter extends CustomPainter {
       ..color = paragraphTintColor
       ..style = PaintingStyle.fill;
     canvas.drawRRect(
-      RRect.fromRectAndRadius((Offset.zero & size).inflate(4.0), const Radius.circular(6.0)),
+      RRect.fromRectAndRadius(
+        (Offset.zero & size).inflate(4.0),
+        const Radius.circular(6.0),
+      ),
       paragraphPaint,
     );
 
@@ -319,7 +333,10 @@ class _ReadAloudBackgroundPainter extends CustomPainter {
     );
     for (final box in boxes) {
       canvas.drawRRect(
-        RRect.fromRectAndRadius(box.toRect().inflate(2.0), const Radius.circular(4.0)),
+        RRect.fromRectAndRadius(
+          box.toRect().inflate(2.0),
+          const Radius.circular(4.0),
+        ),
         wordPaint,
       );
     }
@@ -371,6 +388,7 @@ class _ReadAloudForegroundPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ReadAloudForegroundPainter oldDelegate) {
-    return oldDelegate.wordRange != wordRange || oldDelegate.underlineColor != underlineColor;
+    return oldDelegate.wordRange != wordRange ||
+        oldDelegate.underlineColor != underlineColor;
   }
 }

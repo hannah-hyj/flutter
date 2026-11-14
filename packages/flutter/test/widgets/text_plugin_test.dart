@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:math' as math;
 import 'dart:ui' as ui show BoxHeightStyle, BoxWidthStyle;
 
 import 'package:flutter/material.dart';
@@ -402,6 +403,89 @@ void main() {
       }
     },
   );
+
+  testWidgets('TextDelegate.sortInDocumentOrder and compareTo agree on document order', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _RecordingTextPlugin();
+
+    // The texts are numbered in document order. The tree mixes parents that
+    // keep a sibling list (Column, Row, Stack) with one that does not (Table),
+    // and nests them at different depths.
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: TextPluginScope(
+          plugin: plugin,
+          child: Column(
+            children: <Widget>[
+              const Text('T00'),
+              const Row(
+                children: <Widget>[
+                  Text('T01'),
+                  Padding(padding: EdgeInsets.all(1), child: Text('T02')),
+                  Text('T03'),
+                ],
+              ),
+              Table(
+                children: const <TableRow>[
+                  TableRow(children: <Widget>[Text('T04'), Text('T05')]),
+                  TableRow(
+                    children: <Widget>[
+                      Column(children: <Widget>[Text('T06'), Text('T07')]),
+                      Text('T08'),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(
+                height: 40,
+                child: Stack(
+                  children: <Widget>[
+                    Text('T09'),
+                    Positioned(top: 0, left: 0, child: Text('T10')),
+                  ],
+                ),
+              ),
+              for (int i = 11; i < 40; i += 1) Text('T$i'),
+            ],
+          ),
+        ),
+      ),
+    );
+    // The column overflows the test surface; only the order matters here.
+    tester.takeException();
+
+    final expected = <String>[for (int i = 0; i < 40; i += 1) 'T${i.toString().padLeft(2, '0')}'];
+    List<String> textsOf(List<TextDelegate> delegates) {
+      return delegates.map((TextDelegate delegate) => delegate.text).toList();
+    }
+
+    expect(plugin.activeDelegates, hasLength(40));
+    for (final seed in <int>[1, 2, 3]) {
+      final List<TextDelegate> shuffled = plugin.activeDelegates.toList()
+        ..shuffle(math.Random(seed));
+
+      final List<TextDelegate> walked = shuffled.toList();
+      TextDelegate.sortInDocumentOrder(walked);
+      expect(textsOf(walked), expected);
+
+      final List<TextDelegate> compared = shuffled.toList()..sort();
+      expect(textsOf(compared), expected);
+    }
+
+    // A subset is ordered the same way, and short lists are left alone.
+    final subset = <TextDelegate>[
+      for (final String text in <String>['T30', 'T07', 'T02', 'T10', 'T05'])
+        plugin.activeDelegates.firstWhere((TextDelegate delegate) => delegate.text == text),
+    ];
+    TextDelegate.sortInDocumentOrder(subset);
+    expect(textsOf(subset), <String>['T02', 'T05', 'T07', 'T10', 'T30']);
+
+    final single = <TextDelegate>[plugin.activeDelegates.first];
+    TextDelegate.sortInDocumentOrder(single);
+    expect(single, hasLength(1));
+  });
 
   testWidgets(
     'TextPlugin.needsOffscreenContent configures OffscreenContentRenderingStrategy in ListView.builder',

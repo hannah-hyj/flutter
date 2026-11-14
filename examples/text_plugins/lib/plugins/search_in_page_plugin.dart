@@ -354,7 +354,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
           newMatches,
         );
       } else {
-        _orderedMatchingDelegates.sort();
+        TextDelegate.sortInDocumentOrder(_orderedMatchingDelegates);
         _matches
           ..clear()
           ..addAll(
@@ -409,7 +409,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
           _orderedMatchingDelegates.add(delegate);
         }
       }
-      _orderedMatchingDelegates.sort();
+      TextDelegate.sortInDocumentOrder(_orderedMatchingDelegates);
       for (final TextDelegate delegate in _orderedMatchingDelegates) {
         _matches.addAll(_matchesByDelegate[delegate]!);
       }

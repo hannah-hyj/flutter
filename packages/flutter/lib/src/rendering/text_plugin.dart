@@ -517,6 +517,15 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   ///
   /// This is useful when scrollable lists mount items out of document order
   /// (for example, when scrolling upward in a lazy [ListView]).
+  ///
+  /// One comparison walks both ancestor chains to the root. When the two
+  /// branches are children of a parent that keeps a sibling list, such as a
+  /// [RenderFlex] or a [RenderSliverList], it then walks that list from both
+  /// children at once, so the cost grows with the distance between them. For
+  /// other parents it visits all children of the common parent.
+  ///
+  /// To order many delegates, use [sortInDocumentOrder], which walks the tree
+  /// once instead of comparing pairs.
   @override
   int compareTo(TextDelegate other) {
     if (identical(this, other) || identical(renderObject, other.renderObject)) {
@@ -559,6 +568,11 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     final RenderObject thisBranch = thisAncestors[thisIndex];
     final RenderObject otherBranch = otherAncestors[otherIndex];
 
+    final int? siblingOrder = _compareSiblings(thisBranch, otherBranch);
+    if (siblingOrder != null) {
+      return siblingOrder;
+    }
+
     var comparisonResult = 0;
     void findFirstChild(RenderObject child) {
       if (comparisonResult != 0) {
@@ -573,6 +587,95 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
 
     commonParent.visitChildren(findFirstChild);
     return comparisonResult;
+  }
+
+  static RenderObject? _nextSibling(RenderObject? node) {
+    final ParentData? parentData = node?.parentData;
+    return parentData is ContainerParentDataMixin<RenderObject> ? parentData.nextSibling : null;
+  }
+
+  /// Orders two children of one parent by walking the sibling list forward
+  /// from both at once. The walk ends when one reaches the other, so its cost
+  /// is the distance between the two.
+  ///
+  /// Returns null if the two are not in one sibling list, for example when
+  /// the parent does not use [ContainerRenderObjectMixin].
+  static int? _compareSiblings(RenderObject a, RenderObject b) {
+    if (a.parentData is! ContainerParentDataMixin<RenderObject> ||
+        b.parentData is! ContainerParentDataMixin<RenderObject>) {
+      return null;
+    }
+    RenderObject? afterA = _nextSibling(a);
+    RenderObject? afterB = _nextSibling(b);
+    while (afterA != null || afterB != null) {
+      if (identical(afterA, b)) {
+        return -1;
+      }
+      if (identical(afterB, a)) {
+        return 1;
+      }
+      afterA = _nextSibling(afterA);
+      afterB = _nextSibling(afterB);
+    }
+    return null;
+  }
+
+  /// Sorts [delegates] in place into logical document order, the order that
+  /// [compareTo] defines.
+  ///
+  /// Sorting with [compareTo] compares pairs, and each comparison walks part
+  /// of the tree. This method walks the tree once instead: it marks the
+  /// ancestors of every delegate, then visits only the marked nodes from the
+  /// root, in the order of [RenderObject.visitChildren]. The cost is the
+  /// number of children of the marked nodes, however many delegates there
+  /// are. Use it to order many delegates at once, for example every text
+  /// that matches a search.
+  static void sortInDocumentOrder(List<TextDelegate> delegates) {
+    if (delegates.length < 2) {
+      return;
+    }
+    final delegatesByRenderObject = <RenderObject, List<TextDelegate>>{};
+    final marked = <RenderObject>{};
+    RenderObject? root;
+    for (final delegate in delegates) {
+      (delegatesByRenderObject[delegate.renderObject] ??= <TextDelegate>[]).add(delegate);
+      RenderObject? node = delegate.renderObject;
+      RenderObject? top;
+      while (node != null && marked.add(node)) {
+        top = node;
+        node = node.parent;
+      }
+      if (node == null && top != null) {
+        // The walk ended at a node without a parent, so `top` is a root.
+        if (root != null && !identical(root, top)) {
+          // The delegates are not in one tree, for example because one is
+          // detached. Fall back to comparing pairs.
+          delegates.sort();
+          return;
+        }
+        root = top;
+      }
+    }
+    if (root == null) {
+      return;
+    }
+
+    final sorted = <TextDelegate>[];
+    void visit(RenderObject node) {
+      final List<TextDelegate>? atNode = delegatesByRenderObject[node];
+      if (atNode != null) {
+        sorted.addAll(atNode);
+      }
+      node.visitChildren((RenderObject child) {
+        if (marked.contains(child)) {
+          visit(child);
+        }
+      });
+    }
+
+    visit(root);
+    assert(sorted.length == delegates.length);
+    delegates.setAll(0, sorted);
   }
 
   /// Marks the underlying render object as needing to repaint.
