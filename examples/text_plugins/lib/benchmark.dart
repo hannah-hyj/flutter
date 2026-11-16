@@ -289,6 +289,108 @@ Future<void> _runScenario(int count, _Mode mode) async {
   search?.dispose();
 }
 
+/// A page whose content never changes, under a scope that is rebuilt.
+///
+/// This is the case of an ancestor that rebuilds for an unrelated reason. The
+/// content is one cached widget, so a rebuild reaches the scope and nothing
+/// below it. The scope either keeps one plugin, as a `State` field would, or
+/// creates a new plugin in every build, which is the mistake of writing
+/// `TextPluginScope(plugin: MyPlugin(), ...)` in a build method.
+class _ScopeHost extends StatefulWidget {
+  const _ScopeHost({
+    super.key,
+    required this.count,
+    required this.createPlugin,
+    required this.newInstanceEveryBuild,
+  });
+
+  final int count;
+  final TextPlugin Function() createPlugin;
+  final bool newInstanceEveryBuild;
+
+  @override
+  State<_ScopeHost> createState() => _ScopeHostState();
+}
+
+class _ScopeHostState extends State<_ScopeHost> {
+  late final TextPlugin _held = widget.createPlugin();
+
+  late final Widget _body = SingleChildScrollView(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (var i = 0; i < widget.count; i++)
+          RepaintBoundary(child: Text(_paragraph(i, 0))),
+      ],
+    ),
+  );
+
+  void rebuild() {
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    if (_held case final ChangeNotifier notifier) {
+      notifier.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: DefaultTextStyle(
+        style: const TextStyle(fontSize: 14, color: Color(0xFF000000)),
+        child: ColoredBox(
+          color: const Color(0xFFFFFFFF),
+          child: TextPluginScope(
+            plugin: widget.newInstanceEveryBuild
+                ? widget.createPlugin()
+                : _held,
+            child: _body,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Measures a rebuild of the scope alone, with one plugin instance and with a
+/// new instance in every build.
+Future<void> _runNewInstanceScenario(
+  int count,
+  String pluginLabel,
+  TextPlugin Function() createPlugin,
+) async {
+  for (final newInstanceEveryBuild in <bool>[false, true]) {
+    final hostKey = GlobalKey<_ScopeHostState>();
+    runApp(
+      _ScopeHost(
+        key: hostKey,
+        count: count,
+        createPlugin: createPlugin,
+        newInstanceEveryBuild: newInstanceEveryBuild,
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    _settle();
+    final _ScopeHostState host = hostKey.currentState!;
+    final double frame = await _measureFrames(_runs, (int run) {
+      host.rebuild();
+    });
+    _report(
+      'N=$count, $pluginLabel: frame that rebuilds only the scope, '
+      '${newInstanceEveryBuild ? 'new plugin in every build' : 'one plugin instance'}: '
+      '${_ms(frame)}',
+    );
+    runApp(const SizedBox.shrink());
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    _settle();
+  }
+}
+
 Future<void> _runAll() async {
   _report(
     kDebugMode
@@ -301,6 +403,14 @@ Future<void> _runAll() async {
     for (final _Mode mode in _Mode.values) {
       await _runScenario(count, mode);
     }
+  }
+  for (final int count in _pageSizes) {
+    await _runNewInstanceScenario(count, 'no-op plugin', _NoopPlugin.new);
+    await _runNewInstanceScenario(
+      count,
+      'search plugin',
+      () => SearchInPagePlugin()..query = _query,
+    );
   }
   _report('done');
   runApp(
