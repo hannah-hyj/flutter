@@ -1139,50 +1139,6 @@ base class PipelineOwner with DiagnosticableTreeMixin {
   bool _debugDoingLayout = false;
   bool _debugDoingChildLayout = false;
 
-  final List<VoidCallback> _postLayoutCallbacks = <VoidCallback>[];
-
-  /// Schedules a [callback] to run at the end of [flushLayout], after all dirty
-  /// [RenderObject]s have completed layout and cleared their `_needsLayout`
-  /// flags, and before [flushPaint] runs.
-  ///
-  /// The [callback] may read layout information and may mark render objects as
-  /// needing paint. It must not mark a render object of this owner as needing
-  /// layout: layout has finished for this frame, so the object would be
-  /// painted with a layout that is out of date. In debug mode, doing so throws.
-  @internal
-  void schedulePostLayoutCallback(VoidCallback callback) {
-    _postLayoutCallbacks.add(callback);
-    requestVisualUpdate();
-  }
-
-  // Whether this owner is running its post-layout callbacks. Only set when
-  // asserts are enabled. See [RenderObject._debugCanPerformMutations].
-  bool _debugDoingPostLayoutCallbacks = false;
-
-  void _flushPostLayoutCallbacks() {
-    assert(() {
-      _debugDoingPostLayoutCallbacks = true;
-      return true;
-    }());
-    try {
-      while (_postLayoutCallbacks.isNotEmpty) {
-        final callbacks = List<VoidCallback>.of(_postLayoutCallbacks, growable: false);
-        _postLayoutCallbacks.clear();
-        for (final callback in callbacks) {
-          callback();
-        }
-      }
-    } finally {
-      assert(() {
-        _debugDoingPostLayoutCallbacks = false;
-        return true;
-      }());
-    }
-    for (final PipelineOwner child in _children) {
-      child._flushPostLayoutCallbacks();
-    }
-  }
-
   /// Update the layout information for all dirty render objects.
   ///
   /// This function is one of the core stages of the rendering pipeline. Layout
@@ -1257,7 +1213,6 @@ base class PipelineOwner with DiagnosticableTreeMixin {
         FlutterTimeline.finishSync();
       }
     }
-    _flushPostLayoutCallbacks();
   }
 
   // This flag is used to allow the kinds of mutations performed by GlobalKey
@@ -2439,7 +2394,7 @@ abstract class RenderObject with DiagnosticableTreeMixin implements HitTestTarge
       // Layout has finished for this frame when the post-layout callbacks run,
       // and painting comes next. A node that is dirtied now would stay dirty
       // while it is painted.
-      if (owner != null && owner._debugDoingPostLayoutCallbacks) {
+      if (owner != null && RendererBinding.debugDoingPostLayoutCallbacks) {
         throw FlutterError.fromParts(<DiagnosticsNode>[
           ErrorSummary('A $runtimeType was mutated during a post-layout callback.'),
           ErrorDescription(

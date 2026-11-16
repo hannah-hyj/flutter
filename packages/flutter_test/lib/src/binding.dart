@@ -2440,6 +2440,7 @@ class AutomatedTestWidgetsFlutterBinding extends TestWidgetsFlutterBinding {
       buildOwner!.buildScope(rootElement!);
       if (_phase != EnginePhase.build) {
         rootPipelineOwner.flushLayout();
+        flushPostLayoutCallbacks();
         if (_phase != EnginePhase.layout) {
           rootPipelineOwner.flushCompositingBits();
           if (_phase != EnginePhase.compositingBits) {

@@ -25,6 +25,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
+import 'binding.dart';
 import 'box.dart';
 import 'custom_paint.dart';
 import 'debug.dart';
@@ -592,7 +593,7 @@ class RenderParagraph extends RenderBox
       return;
     }
     _textPluginFlushScheduled = true;
-    owner!.schedulePostLayoutCallback(_flushTextPluginNotifications);
+    RendererBinding.instance.addPostLayoutCallback(_flushTextPluginNotifications);
   }
 
   void _flushTextPluginNotifications() {

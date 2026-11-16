@@ -12,7 +12,9 @@ import 'dart:ui'
 import 'package:flutter/animation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/scheduler.dart';
 
+import 'binding.dart';
 import 'box.dart';
 import 'custom_paint.dart';
 import 'editable.dart';
@@ -466,9 +468,38 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     return renderObject.globalToLocal(point, ancestor: ancestor);
   }
 
+  /// Runs [scroll] after the current frame if a frame is being produced, and
+  /// returns whether it did so.
+  ///
+  /// Scrolling can mark a viewport as needing layout. That is not allowed
+  /// while a frame is being built, laid out and painted, which is when the
+  /// lifecycle callbacks of a [TextPlugin] run. So a scroll that is requested
+  /// during a frame waits for the end of that frame. The scroll is dropped if
+  /// the text is gone by then.
+  bool _deferScrollToEndOfFrame(VoidCallback scroll) {
+    if (SchedulerBinding.instance.schedulerPhase != SchedulerPhase.persistentCallbacks) {
+      return false;
+    }
+    SchedulerBinding.instance.addPostFrameCallback((Duration timeStamp) {
+      if (!isDisposed && attached && hasLayout) {
+        scroll();
+      }
+    }, debugLabel: 'TextDelegate.showOnScreen');
+    return true;
+  }
+
   /// Scrolls any enclosing scrollable viewports so that this text widget (or
   /// the specified local [rect] within it) is visible on screen.
+  ///
+  /// This is safe to call from a lifecycle callback of a [TextPlugin]. When it
+  /// is called while a frame is being produced, the scroll happens at the end
+  /// of that frame and shows in the next one. Otherwise it happens right away.
   void showOnScreen({Rect? rect, Duration duration = Duration.zero, Curve curve = Curves.ease}) {
+    if (_deferScrollToEndOfFrame(
+      () => showOnScreen(rect: rect, duration: duration, curve: curve),
+    )) {
+      return;
+    }
     renderObject.showOnScreen(
       descendant: renderObject,
       rect: rect,
@@ -484,12 +515,20 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// rect if [range] is collapsed) and delegates to [showOnScreen].
   ///
   /// Valid only after layout (see [hasLayout]).
+  ///
+  /// Like [showOnScreen], this is safe to call from a lifecycle callback of a
+  /// [TextPlugin]: during a frame, the scroll waits for the end of the frame.
   void ensureVisible(
     ui.TextRange range, {
     Duration duration = Duration.zero,
     Curve curve = Curves.ease,
   }) {
     assert(hasLayout);
+    // Defer here and not only in showOnScreen, so that the rectangle of the
+    // range is computed when the scroll runs.
+    if (_deferScrollToEndOfFrame(() => ensureVisible(range, duration: duration, curve: curve))) {
+      return;
+    }
     final List<ui.TextBox> boxes = getBoxesForSelection(
       TextSelection(baseOffset: range.start, extentOffset: range.end),
       boxHeightStyle: ui.BoxHeightStyle.max,
@@ -801,7 +840,7 @@ mixin TextDelegateHostMixin on RenderBox {
       return;
     }
     _textPluginFlushScheduled = true;
-    owner!.schedulePostLayoutCallback(_flushTextPluginNotifications);
+    RendererBinding.instance.addPostLayoutCallback(_flushTextPluginNotifications);
   }
 
   void _flushTextPluginNotifications() {

@@ -1098,6 +1098,59 @@ void main() {
     expect(textsOf(inner), <String>['First page']);
   });
 
+  testWidgets('RendererBinding.addPostLayoutCallback runs once, after layout and before paint', (
+    WidgetTester tester,
+  ) async {
+    final log = <String>[];
+    final width = ValueNotifier<double>(100);
+    addTearDown(width.dispose);
+
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Center(
+          child: ValueListenableBuilder<double>(
+            valueListenable: width,
+            builder: (BuildContext context, double value, Widget? child) {
+              return SizedBox(
+                width: value,
+                height: 100,
+                child: LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    log.add('layout');
+                    return CustomPaint(
+                      painter: _CallbackCustomPainter((Canvas canvas, Size size) {
+                        log.add('paint');
+                      }),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    log.clear();
+
+    // Registered outside a frame: it asks for a frame and runs in it.
+    RendererBinding.instance.addPostLayoutCallback(() {
+      log.add('post-layout');
+      // A callback that is registered by a callback runs in the same frame.
+      RendererBinding.instance.addPostLayoutCallback(() => log.add('nested post-layout'));
+    });
+    expect(tester.binding.hasScheduledFrame, isTrue);
+    width.value = 120;
+    await tester.pump();
+    expect(log, <String>['layout', 'post-layout', 'nested post-layout', 'paint']);
+
+    // It ran once. The next frame does not run it again.
+    log.clear();
+    width.value = 140;
+    await tester.pump();
+    expect(log, <String>['layout', 'paint']);
+  });
+
   testWidgets('A plugin that dirties layout in a lifecycle callback gets a clear error', (
     WidgetTester tester,
   ) async {
@@ -1163,12 +1216,11 @@ void main() {
     expect(error, isNull);
   });
 
-  testWidgets('A jump scroll from a lifecycle callback is an error when it changes layout', (
+  testWidgets('A scroll requested in a lifecycle callback runs after the frame', (
     WidgetTester tester,
   ) async {
-    // Scrolls to the text from inside didLayoutText, with no animation, and
-    // returns the error of that frame.
-    Future<Object?> errorForJumpScroll({required bool lazyList}) async {
+    // Scrolls to the text from inside didLayoutText, with no animation.
+    Future<void> scrollFromCallback({required bool lazyList}) async {
       final plugin = _CallbackActionTextPlugin();
       final text = ValueNotifier<String>('before');
       addTearDown(text.dispose);
@@ -1188,6 +1240,8 @@ void main() {
           child: TextPluginScope(
             plugin: plugin,
             child: lazyList
+                // A sliver viewport lays out again when its offset changes, so
+                // scrolling it in the callback itself would be an error.
                 ? ListView(controller: scrollController, cacheExtent: 5000, children: children)
                 : SingleChildScrollView(
                     controller: scrollController,
@@ -1198,30 +1252,56 @@ void main() {
       );
       expect(scrollController.offset, 0.0);
 
+      double? offsetInCallback;
       plugin.onLayout = (TextDelegate delegate) {
         delegate.ensureVisible(const TextRange(start: 0, end: 1));
+        offsetInCallback = scrollController.offset;
       };
       text.value = 'jump now';
       await tester.pump();
       expect(plugin.onLayout, isNull, reason: 'the callback should have run');
-      final Object? error = tester.takeException();
+      expect(tester.takeException(), isNull);
+      // Nothing moved inside the callback. The scroll ran at the end of the
+      // frame and asked for another frame.
+      expect(offsetInCallback, 0.0);
+      expect(scrollController.offset, greaterThan(0.0));
+      expect(tester.binding.hasScheduledFrame, isTrue);
+
+      // The next frame shows the text.
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      final Rect textRect = tester.getRect(find.text('jump now'));
+      expect(textRect.top, greaterThanOrEqualTo(0.0));
+      expect(textRect.bottom, lessThanOrEqualTo(600.0));
 
       await tester.pumpWidget(const SizedBox());
-      tester.takeException();
-      return error;
     }
 
-    // A sliver viewport lays out again when its offset changes.
-    final Object? listError = await errorForJumpScroll(lazyList: true);
-    expect(listError, isFlutterError);
-    expect(
-      (listError! as FlutterError).message,
-      contains('was mutated during a post-layout callback'),
-    );
+    await scrollFromCallback(lazyList: true);
+    await scrollFromCallback(lazyList: false);
+  });
 
-    // A SingleChildScrollView only repaints when its offset changes, and a
-    // callback may ask for a repaint.
-    expect(await errorForJumpScroll(lazyList: false), isNull);
+  testWidgets('A scroll requested outside a frame happens right away', (WidgetTester tester) async {
+    final plugin = _RecordingTextPlugin();
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: TextPluginScope(
+          plugin: plugin,
+          child: ListView(
+            controller: scrollController,
+            cacheExtent: 5000,
+            children: const <Widget>[SizedBox(height: 2000), Text('target')],
+          ),
+        ),
+      ),
+    );
+    expect(scrollController.offset, 0.0);
+
+    plugin.activeDelegates.single.ensureVisible(const TextRange(start: 0, end: 1));
+    expect(scrollController.offset, greaterThan(0.0));
   });
 
   testWidgets('Layout can be dirtied after the frame that ran the lifecycle callback', (
