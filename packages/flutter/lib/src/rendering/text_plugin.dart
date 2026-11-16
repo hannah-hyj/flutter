@@ -146,6 +146,11 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
 
   /// The render box ([RenderParagraph], [RenderEditable], or custom
   /// [TextDelegateHostMixin]) represented by this delegate.
+  ///
+  /// This is for the framework only. A plugin reads the text and its geometry
+  /// through the other members of this class, and must not change the text
+  /// through the render object.
+  @internal
   final RenderBox renderObject;
 
   RenderParagraph? get _paragraph =>
