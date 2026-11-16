@@ -7,6 +7,7 @@ import 'dart:ui' as ui show BoxHeightStyle, BoxWidthStyle;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _RecordingTextPlugin extends TextPlugin {
@@ -37,6 +38,18 @@ class _RecordingTextPlugin extends TextPlugin {
 }
 
 class _InnerRecordingTextPlugin extends _RecordingTextPlugin {}
+
+/// Runs [onLayout] once, in the next [didLayoutText].
+class _CallbackActionTextPlugin extends TextPlugin {
+  void Function(TextDelegate delegate)? onLayout;
+
+  @override
+  void didLayoutText(TextDelegate delegate) {
+    final void Function(TextDelegate delegate)? action = onLayout;
+    onLayout = null;
+    action?.call(delegate);
+  }
+}
 
 class _CallbackCustomPainter extends CustomPainter {
   _CallbackCustomPainter(this.onPaint, {super.repaint});
@@ -1083,6 +1096,170 @@ void main() {
     await tester.pumpAndSettle();
     expect(textsOf(outer), <String>['First page']);
     expect(textsOf(inner), <String>['First page']);
+  });
+
+  testWidgets('A plugin that dirties layout in a lifecycle callback gets a clear error', (
+    WidgetTester tester,
+  ) async {
+    Future<Object?> errorFor(void Function(TextDelegate delegate) action) async {
+      final plugin = _CallbackActionTextPlugin();
+      final text = ValueNotifier<String>('before');
+      addTearDown(text.dispose);
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Column(
+            children: <Widget>[
+              const SizedBox(key: Key('sibling'), height: 10),
+              TextPluginScope(
+                plugin: plugin,
+                child: ValueListenableBuilder<String>(
+                  valueListenable: text,
+                  builder: (BuildContext context, String value, Widget? child) => Text(value),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+
+      // The next time the text is laid out, run the action in the callback.
+      plugin.onLayout = action;
+      text.value = 'after';
+      await tester.pump();
+      expect(plugin.onLayout, isNull, reason: 'the callback should have run');
+      final Object? error = tester.takeException();
+
+      // Leave a clean tree for the next case.
+      await tester.pumpWidget(const SizedBox());
+      tester.takeException();
+      return error;
+    }
+
+    // Marking the text itself as needing layout.
+    Object? error = await errorFor((TextDelegate delegate) {
+      delegate.renderObject.markNeedsLayout();
+    });
+    expect(error, isFlutterError);
+    expect((error! as FlutterError).message, contains('was mutated during a post-layout callback'));
+    expect(error.toString(), contains('RenderParagraph'));
+    expect(error.toString(), contains('didLayoutText'));
+
+    // Marking another render object of the same tree as needing layout.
+    error = await errorFor((TextDelegate delegate) {
+      tester.renderObject(find.byKey(const Key('sibling'))).markNeedsLayout();
+    });
+    expect(error, isFlutterError);
+    expect((error! as FlutterError).message, contains('was mutated during a post-layout callback'));
+
+    // What a plugin is allowed to do: read geometry, set a painter, repaint.
+    error = await errorFor((TextDelegate delegate) {
+      expect(delegate.hasLayout, isTrue);
+      delegate.getBoxesForSelection(const TextSelection(baseOffset: 0, extentOffset: 1));
+      delegate.backgroundPainter = _CallbackCustomPainter((Canvas canvas, Size size) {});
+      delegate.markNeedsPaint();
+    });
+    expect(error, isNull);
+  });
+
+  testWidgets('A jump scroll from a lifecycle callback is an error when it changes layout', (
+    WidgetTester tester,
+  ) async {
+    // Scrolls to the text from inside didLayoutText, with no animation, and
+    // returns the error of that frame.
+    Future<Object?> errorForJumpScroll({required bool lazyList}) async {
+      final plugin = _CallbackActionTextPlugin();
+      final text = ValueNotifier<String>('before');
+      addTearDown(text.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      final children = <Widget>[
+        const SizedBox(height: 2000),
+        ValueListenableBuilder<String>(
+          valueListenable: text,
+          builder: (BuildContext context, String value, Widget? child) => Text(value),
+        ),
+      ];
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: TextPluginScope(
+            plugin: plugin,
+            child: lazyList
+                ? ListView(controller: scrollController, cacheExtent: 5000, children: children)
+                : SingleChildScrollView(
+                    controller: scrollController,
+                    child: Column(children: children),
+                  ),
+          ),
+        ),
+      );
+      expect(scrollController.offset, 0.0);
+
+      plugin.onLayout = (TextDelegate delegate) {
+        delegate.ensureVisible(const TextRange(start: 0, end: 1));
+      };
+      text.value = 'jump now';
+      await tester.pump();
+      expect(plugin.onLayout, isNull, reason: 'the callback should have run');
+      final Object? error = tester.takeException();
+
+      await tester.pumpWidget(const SizedBox());
+      tester.takeException();
+      return error;
+    }
+
+    // A sliver viewport lays out again when its offset changes.
+    final Object? listError = await errorForJumpScroll(lazyList: true);
+    expect(listError, isFlutterError);
+    expect(
+      (listError! as FlutterError).message,
+      contains('was mutated during a post-layout callback'),
+    );
+
+    // A SingleChildScrollView only repaints when its offset changes, and a
+    // callback may ask for a repaint.
+    expect(await errorForJumpScroll(lazyList: false), isNull);
+  });
+
+  testWidgets('Layout can be dirtied after the frame that ran the lifecycle callback', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _CallbackActionTextPlugin();
+    final text = ValueNotifier<String>('before');
+    addTearDown(text.dispose);
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: TextPluginScope(
+          plugin: plugin,
+          child: ValueListenableBuilder<String>(
+            valueListenable: text,
+            builder: (BuildContext context, String value, Widget? child) => Text(value),
+          ),
+        ),
+      ),
+    );
+
+    var ranAfterFrame = false;
+    plugin.onLayout = (TextDelegate delegate) {
+      // The pattern a plugin uses when it has to change layout.
+      SchedulerBinding.instance.addPostFrameCallback((Duration timeStamp) {
+        delegate.renderObject.markNeedsLayout();
+        ranAfterFrame = true;
+      });
+    };
+    text.value = 'after';
+    await tester.pump();
+    expect(ranAfterFrame, isTrue);
+    expect(tester.takeException(), isNull);
+
+    // The next frame lays the text out again without an error.
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(tester.renderObject(find.text('after')).debugNeedsLayout, isFalse);
   });
 }
 

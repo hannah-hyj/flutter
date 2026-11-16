@@ -1144,19 +1144,39 @@ base class PipelineOwner with DiagnosticableTreeMixin {
   /// Schedules a [callback] to run at the end of [flushLayout], after all dirty
   /// [RenderObject]s have completed layout and cleared their `_needsLayout`
   /// flags, and before [flushPaint] runs.
+  ///
+  /// The [callback] may read layout information and may mark render objects as
+  /// needing paint. It must not mark a render object of this owner as needing
+  /// layout: layout has finished for this frame, so the object would be
+  /// painted with a layout that is out of date. In debug mode, doing so throws.
   @internal
   void schedulePostLayoutCallback(VoidCallback callback) {
     _postLayoutCallbacks.add(callback);
     requestVisualUpdate();
   }
 
+  // Whether this owner is running its post-layout callbacks. Only set when
+  // asserts are enabled. See [RenderObject._debugCanPerformMutations].
+  bool _debugDoingPostLayoutCallbacks = false;
+
   void _flushPostLayoutCallbacks() {
-    while (_postLayoutCallbacks.isNotEmpty) {
-      final callbacks = List<VoidCallback>.of(_postLayoutCallbacks, growable: false);
-      _postLayoutCallbacks.clear();
-      for (final callback in callbacks) {
-        callback();
+    assert(() {
+      _debugDoingPostLayoutCallbacks = true;
+      return true;
+    }());
+    try {
+      while (_postLayoutCallbacks.isNotEmpty) {
+        final callbacks = List<VoidCallback>.of(_postLayoutCallbacks, growable: false);
+        _postLayoutCallbacks.clear();
+        for (final callback in callbacks) {
+          callback();
+        }
       }
+    } finally {
+      assert(() {
+        _debugDoingPostLayoutCallbacks = false;
+        return true;
+      }());
     }
     for (final PipelineOwner child in _children) {
       child._flushPostLayoutCallbacks();
@@ -2416,6 +2436,33 @@ abstract class RenderObject with DiagnosticableTreeMixin implements HitTestTarge
       }
 
       final PipelineOwner? owner = this.owner;
+      // Layout has finished for this frame when the post-layout callbacks run,
+      // and painting comes next. A node that is dirtied now would stay dirty
+      // while it is painted.
+      if (owner != null && owner._debugDoingPostLayoutCallbacks) {
+        throw FlutterError.fromParts(<DiagnosticsNode>[
+          ErrorSummary('A $runtimeType was mutated during a post-layout callback.'),
+          ErrorDescription(
+            'Post-layout callbacks run after layout has finished for the frame '
+            'and before painting starts. Marking a RenderObject as needing '
+            'layout at that point leaves it with an out-of-date layout for the '
+            'frame that is about to be painted.',
+          ),
+          DiagnosticsProperty<RenderObject>(
+            'The RenderObject being mutated was',
+            this,
+            style: DiagnosticsTreeStyle.errorProperty,
+          ),
+          ErrorHint(
+            'The lifecycle callbacks of a TextPlugin (didAddText, '
+            'didUpdateText and didLayoutText) are post-layout callbacks. In '
+            'them a plugin may read the text and its geometry, set its '
+            'painters and ask for a repaint. To change layout or to scroll, '
+            'wait until after the frame, for example with '
+            'SchedulerBinding.addPostFrameCallback.',
+          ),
+        ]);
+      }
       // Detached nodes are allowed to mutate and the "can perform mutations"
       // check will be performed when they re-attach. This assert is only useful
       // during layout.
