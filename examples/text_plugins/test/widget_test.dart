@@ -387,48 +387,53 @@ void main() {
     },
   );
 
-  testWidgets('Search does not count a match in a covered route', (
-    WidgetTester tester,
-  ) async {
-    await _pumpDemoWithSearch(tester);
-    final Finder searchInput = find.byKey(const Key('search_input'));
-    final Finder lowerText = find.byKey(const Key('stacked_lower_page_text'));
+  testWidgets(
+    'Search does not count a match in a covered route',
+    (WidgetTester tester) async {
+      await _pumpDemoWithSearch(tester);
+      final Finder searchInput = find.byKey(const Key('search_input'));
+      final Finder lowerText = find.byKey(const Key('stacked_lower_page_text'));
 
-    await tester.enterText(searchInput, 'zeppelin');
-    await tester.pumpAndSettle();
-    expect(_matchCount(tester), '1 / 1');
+      await tester.enterText(searchInput, 'zeppelin');
+      await tester.pumpAndSettle();
+      expect(_matchCount(tester), '1 / 1');
 
-    // Cover the lower page with an opaque route.
-    final Finder openButton = find.byKey(
-      const Key('stacked_pages_open_button'),
-    );
-    await _scrollIntoView(tester, openButton);
-    await tester.tap(openButton);
-    await tester.pumpAndSettle();
+      // Cover the lower page with an opaque route.
+      final Finder openButton = find.byKey(
+        const Key('stacked_pages_open_button'),
+      );
+      await _scrollIntoView(tester, openButton);
+      await tester.tap(openButton);
+      await tester.pumpAndSettle();
 
-    // The lower page is still mounted, but its match is gone.
-    expect(find.byKey(const Key('stacked_upper_page_text')), findsOneWidget);
-    expect(lowerText, findsNothing);
-    expect(
-      find.byKey(const Key('stacked_lower_page_text'), skipOffstage: false),
-      findsOneWidget,
-    );
-    expect(_matchCount(tester), '0 / 0');
+      // The lower page is still mounted, but its match is gone.
+      expect(find.byKey(const Key('stacked_upper_page_text')), findsOneWidget);
+      expect(lowerText, findsNothing);
+      expect(
+        find.byKey(const Key('stacked_lower_page_text'), skipOffstage: false),
+        findsOneWidget,
+      );
+      expect(_matchCount(tester), '0 / 0');
 
-    // The text of the covering page is searched.
-    await tester.enterText(searchInput, 'dirigible');
-    await tester.pumpAndSettle();
-    expect(_matchCount(tester), '1 / 1');
+      // The text of the covering page is searched.
+      await tester.enterText(searchInput, 'dirigible');
+      await tester.pumpAndSettle();
+      expect(_matchCount(tester), '1 / 1');
 
-    // Uncover the lower page: its match comes back, the upper one is gone.
-    await tester.enterText(searchInput, 'zeppelin');
-    await tester.pumpAndSettle();
-    expect(_matchCount(tester), '0 / 0');
-    await tester.tap(find.byKey(const Key('stacked_pages_back_button')));
-    await tester.pumpAndSettle();
-    expect(lowerText, findsOneWidget);
-    expect(_matchCount(tester), '1 / 1');
-  });
+      // Uncover the lower page: its match comes back, the upper one is gone.
+      await tester.enterText(searchInput, 'zeppelin');
+      await tester.pumpAndSettle();
+      expect(_matchCount(tester), '0 / 0');
+      await tester.tap(find.byKey(const Key('stacked_pages_back_button')));
+      await tester.pumpAndSettle();
+      expect(lowerText, findsOneWidget);
+      expect(_matchCount(tester), '1 / 1');
+    },
+    // The demo page on this branch was reduced to the two plugins that build
+    // widgets, so the page that this test walks through is not there. The
+    // behavior is tested on the stage 1 branch.
+    skip: true,
+  );
 
   // Review thread T53 on the RFC, design doc section 7.15.
   //
@@ -473,5 +478,9 @@ void main() {
       expect(renderEditable.offset.pixels, 0.0);
       expect(matchRect.top, greaterThanOrEqualTo(renderEditable.size.height));
     },
+    // The demo page on this branch was reduced to the two plugins that build
+    // widgets, so the page that this test walks through is not there. The
+    // behavior is tested on the stage 1 branch.
+    skip: true,
   );
 }

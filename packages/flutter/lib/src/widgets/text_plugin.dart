@@ -1092,7 +1092,7 @@ class _TextWidgetHostController {
     // callback, which notifies its plugins and delegates, no later than when
     // it is laid out. That is before any layer is built from that layout, so
     // this callback runs after the text has sent its notifications.
-    layer.owner!.schedulePostLayoutCallback(() {
+    RendererBinding.instance.addPostLayoutCallback(() {
       _passEndScheduled = false;
       _buildCountAtPassStart = buildCount;
     });

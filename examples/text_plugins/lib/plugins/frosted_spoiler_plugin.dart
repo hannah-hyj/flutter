@@ -162,6 +162,10 @@ class FrostedSpoilerPlugin extends TextPlugin with TextWidgetPlugin {
     TextDelegate delegate,
     TextWidgetLayer layer,
   ) {
+    // Stage 1 has no public way to ask whether a text is editable. Stage 2
+    // adds TextDelegate.isEditable. Until then this experiment reads the
+    // internal render object.
+    // ignore: invalid_use_of_internal_member
     final bool isEditable = delegate.renderObject is RenderEditable;
     final List<TextSelection> selections = delegate.selections;
     final covers = <Widget>[];

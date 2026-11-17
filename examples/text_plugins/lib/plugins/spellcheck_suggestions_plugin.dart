@@ -174,6 +174,10 @@ class SpellcheckSuggestionsPlugin extends SpellcheckLinterPlugin
     TextWidgetLayer layer,
   ) {
     final List<SpellcheckIssue> issues = _issuesIn(delegate);
+    // Stage 1 has no public way to ask whether a text is editable. Stage 2
+    // adds TextDelegate.isEditable. Until then this experiment reads the
+    // internal render object.
+    // ignore: invalid_use_of_internal_member
     final bool isEditable = delegate.renderObject is RenderEditable;
     switch (layer) {
       case TextWidgetLayer.background:
