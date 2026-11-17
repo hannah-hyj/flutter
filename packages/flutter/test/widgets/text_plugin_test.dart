@@ -741,9 +741,11 @@ void main() {
     expect(explicitPlugin.activeDelegates, isEmpty);
     expect(explicitPlugin.log, isEmpty);
 
-    // No longer obscured: the plugin of the scope is told about the field.
+    // No longer obscured: the plugin of the scope is told about the field
+    // (next to the scope's internal focus plugin).
     await tester.pumpWidget(build(obscureText: false));
-    expect(findRenderEditable().textPlugins, <TextPlugin>[scopePlugin]);
+    expect(findRenderEditable().textPlugins, hasLength(2));
+    expect(findRenderEditable().textPlugins, contains(scopePlugin));
     expect(scopePlugin.activeDelegates, hasLength(1));
     expect(scopePlugin.log, contains('plugin:add:hunter2'));
 
