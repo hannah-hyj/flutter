@@ -43,77 +43,25 @@ The line counts are rough estimates.
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | **A** | Semantics merge-flag / sibling-conflict fix (unrelated) | semantics | 25 / 150 | | a11y, chunhtai |
 | **B** | Web engine semantics tree hardening (unrelated) | web engine | 90 / 60 | | web (yjbanov, mdebbar) |
-| **1** | `RendererBinding.addPostLayoutCallback` and the layout assertion | rendering | 100 / 150 | | goderbauer, chunhtai, loic-sharma |
-| **2** | `TextPlugin`, `TextDelegate`, `TextDelegateHost` interface | rendering | 400 / 200 | 1 | goderbauer, chunhtai, LongCatIsLooong |
-| **3** | `TextDelegateHostMixin` (lifecycle plumbing, painting) | rendering | 250 / 300 | 2 | goderbauer, chunhtai |
+| **1** | `RendererBinding.addPostLayoutCallback` and the layout assertion | rendering | 100 / 150 | | chunhtai, loic-sharma |
+| **2** | `TextPlugin`, `TextDelegate`, `TextDelegateHost` interface | rendering | 400 / 200 | 1 | chunhtai, LongCatIsLooong |
+| **3** | `TextDelegateHostMixin` (lifecycle plumbing, painting) | rendering | 250 / 300 | 2 | chunhtai |
 | **4** | Document order: `compareTo` and `sortInDocumentOrder` | rendering | 150 / 150 | 2 | chunhtai, Renzo |
 | **5** | `TextDelegate.showOnScreen` / `ensureVisible` | rendering | 80 / 120 | 3 | Piinks, chunhtai, loic-sharma |
 | **6** | `RenderEditable` local geometry helpers (prep) | rendering | 45 / 80 | | justinmc, Renzo, LongCatIsLooong |
 | **7** | `RenderParagraph` adopts the host mixin | rendering | 100 / 200 | 3 | LongCatIsLooong, chunhtai, Renzo |
 | **8** | `RenderEditable` adopts the host mixin | rendering | 120 / 180 | 3, 6 | justinmc, Renzo |
-| **9** | `TextPluginScope` + `RichText.textPlugins` + sample | widgets | 300 / 350 | 7 | goderbauer, chunhtai |
+| **9** | `TextPluginScope` + `RichText.textPlugins` + sample | widgets | 300 / 350 | 7 | chunhtai |
 | **10** | `EditableText.textPlugins` and the obscured-text rule | widgets | 25 / 120 | 8, 9 | justinmc, Renzo |
-| **11** | `Icon` opts out of ambient plugins | widgets | 5 / 30 | 9 | goderbauer |
-| **12** | Covered routes: `TextPluginSuspension` in `Overlay` | widgets | 80 / 130 | 9 | loic-sharma, chunhtai, goderbauer |
-| **13** | `OffscreenRenderingPolicy` / `OffscreenContentRenderingStrategy` / `Viewport` | widgets (scrolling) | 110 / 150 | *(parallel track)* | Piinks, goderbauer |
-| **14** | `TextPlugin.needsOffscreenContent` wiring in `TextPluginScope` | widgets | 70 / 120 | 9, 13 | goderbauer, Piinks |
-| **15** | `SearchInPagePlugin` + `SearchMatch` (first-party) + sample | widgets | 500 / 350 | 4, 5, 10, 14 | goderbauer, chunhtai, justinmc |
+| **11** | `Icon` opts out of ambient plugins | widgets | 5 / 30 | 9 | chunhtai |
+| **12** | Covered routes: `TextPluginSuspension` in `Overlay` | widgets | 80 / 130 | 9 | loic-sharma, chunhtai |
+| **13** | `OffscreenRenderingPolicy` / `OffscreenContentRenderingStrategy` / `Viewport` | widgets (scrolling) | 110 / 150 | *(parallel track)* | Piinks |
+| **14** | `TextPlugin.needsOffscreenContent` wiring in `TextPluginScope` | widgets | 70 / 120 | 9, 13 | Piinks |
+| **15** | `SearchInPagePlugin` + `SearchMatch` (first-party) + sample | widgets | 500 / 350 | 4, 5, 10, 14 | chunhtai, justinmc |
 | **16** | API samples; demo app and benchmark decision | examples | | 15 | |
 
 > [!IMPORTANT]
 > PR 13 does not depend on text plugins and can be opened on day one, in parallel with PR 1. PR 6 is independent too. PRs A and B are unrelated bug fixes that are tangled into the branch and have to be separated out first ([Section 2.2](#22-things-that-must-not-land-in-this-series)).
-
-```mermaid
-graph LR
-    subgraph P0["Pre-flight (independent)"]
-        A["PR A: semantics fix"]
-        B["PR B: web semantics"]
-    end
-    subgraph P1["Rendering foundation"]
-        PR1["PR 1: addPostLayoutCallback"]
-        PR2["PR 2: TextPlugin / TextDelegate / host interface"]
-        PR3["PR 3: TextDelegateHostMixin"]
-        PR4["PR 4: document order"]
-        PR5["PR 5: ensureVisible"]
-    end
-    subgraph P2["Render objects"]
-        PR6["PR 6: RenderEditable geometry prep"]
-        PR7["PR 7: RenderParagraph adopts mixin"]
-        PR8["PR 8: RenderEditable adopts mixin"]
-    end
-    subgraph P3["Widgets"]
-        PR9["PR 9: TextPluginScope + RichText"]
-        PR10["PR 10: EditableText + obscured rule"]
-        PR11["PR 11: Icon opt-out"]
-        PR12["PR 12: covered routes"]
-    end
-    subgraph P4["Offscreen"]
-        PR13["PR 13: OffscreenRenderingPolicy + Viewport"]
-        PR14["PR 14: needsOffscreenContent wiring"]
-    end
-    subgraph P5["Search and samples"]
-        PR15["PR 15: SearchInPagePlugin"]
-        PR16["PR 16: samples / demo / benchmark"]
-    end
-    PR1 --> PR2 --> PR3
-    PR2 --> PR4
-    PR3 --> PR5
-    PR3 --> PR7
-    PR3 --> PR8
-    PR6 --> PR8
-    PR7 --> PR9
-    PR8 --> PR10
-    PR9 --> PR10
-    PR9 --> PR11
-    PR9 --> PR12
-    PR9 --> PR14
-    PR13 --> PR14
-    PR4 --> PR15
-    PR5 --> PR15
-    PR10 --> PR15
-    PR14 --> PR15
-    PR15 --> PR16
-```
 
 ---
 
