@@ -3750,9 +3750,8 @@ class _SelectionHighlightTextPlugin extends TextPlugin {
 
   @override
   void didAddText(TextDelegate delegate) {
-    if (delegate.renderObject is! RenderParagraph) {
-      return;
-    }
+    // A text field reports no selections through its delegate, because it
+    // paints its own selection. So this painter draws nothing for it.
     delegate.backgroundPainter = _SelectionHighlightPainter(delegate: delegate);
   }
 

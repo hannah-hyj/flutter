@@ -140,15 +140,12 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     }
   }
 
-  /// The render box ([RenderParagraph], [RenderEditable], or custom
-  /// [TextDelegateHostMixin]) represented by this delegate.
-  ///
-  /// This is for the framework only. A plugin reads the text and its geometry
-  /// through the other members of this class, and must not change the text
-  /// through the render object.
-  @internal
-  RenderBox get renderObject => _host;
-
+  // The render object ([RenderParagraph], [RenderEditable], or a custom
+  // [TextDelegateHostMixin]) that this delegate represents.
+  //
+  // It is private on purpose. A plugin reads the text and its geometry through
+  // the members of this class. With the render object it could change the
+  // text, or reach the painters of another plugin.
   final TextDelegateHostMixin _host;
 
   /// The [TextPlugin] that owns this delegate.
@@ -209,6 +206,9 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// For a [RenderParagraph] with embedded [PlaceholderSpan]s (such as
   /// [WidgetSpan]s), each selectable text fragment may have its own
   /// [TextSelection].
+  ///
+  /// This is empty for a text field ([RenderEditable]). A text field paints
+  /// its own selection, and a plugin has nothing to add to it.
   List<TextSelection> get selections => _host.selections;
 
   /// The color used to paint selection highlights on the text widget
@@ -220,27 +220,27 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
 
   /// Whether the underlying render object is currently attached to the
   /// render tree.
-  bool get attached => renderObject.attached;
+  bool get attached => _host.attached;
 
   /// Whether the underlying render object has undergone layout and has a
   /// size.
-  bool get hasSize => renderObject.hasSize;
+  bool get hasSize => _host.hasSize;
 
   /// Whether the underlying render object has a valid, up-to-date layout.
   ///
   /// Guaranteed to be `true` during [TextPlugin.didAddText],
   /// [TextPlugin.didUpdateText], [TextPlugin.didLayoutText], and
   /// [CustomPainter.paint].
-  bool get hasLayout => _hasValidLayout && renderObject.hasSize && !renderObject.debugNeedsLayout;
+  bool get hasLayout => _hasValidLayout && _host.hasSize && !_host.debugNeedsLayout;
 
   /// The size of the underlying render object.
   ///
   /// Valid only after layout.
-  Size get size => renderObject.size;
+  Size get size => _host.size;
 
   /// An estimate of the bounds of the underlying render object in its
   /// local coordinate system.
-  Rect get paintBounds => renderObject.paintBounds;
+  Rect get paintBounds => _host.paintBounds;
 
   /// A [CustomPainter] to be painted in front of the text widget.
   CustomPainter? get foregroundPainter => _foregroundPainter;
@@ -269,15 +269,15 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   void _didUpdatePainter(CustomPainter? newPainter, CustomPainter? oldPainter) {
     if (newPainter == null) {
       assert(oldPainter != null);
-      renderObject.markNeedsPaint();
+      _host.markNeedsPaint();
     } else if (oldPainter == null ||
         newPainter.runtimeType != oldPainter.runtimeType ||
         newPainter.shouldRepaint(oldPainter)) {
-      renderObject.markNeedsPaint();
+      _host.markNeedsPaint();
     }
-    if (renderObject.attached) {
-      oldPainter?.removeListener(renderObject.markNeedsPaint);
-      newPainter?.addListener(renderObject.markNeedsPaint);
+    if (_host.attached) {
+      oldPainter?.removeListener(_host.markNeedsPaint);
+      newPainter?.addListener(_host.markNeedsPaint);
     }
   }
 
@@ -366,21 +366,21 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// Applies the paint transform from the underlying render object up to
   /// [ancestor] (or the root of the render tree if [ancestor] is null).
   Matrix4 getTransformTo(RenderObject? ancestor) {
-    return renderObject.getTransformTo(ancestor);
+    return _host.getTransformTo(ancestor);
   }
 
   /// Converts the given [point] from the local coordinate system of the text
   /// widget to the global coordinate system (or the coordinate system of
   /// [ancestor]).
   Offset localToGlobal(Offset point, {RenderObject? ancestor}) {
-    return renderObject.localToGlobal(point, ancestor: ancestor);
+    return _host.localToGlobal(point, ancestor: ancestor);
   }
 
   /// Converts the given [point] from the global coordinate system (or the
   /// coordinate system of [ancestor]) to the local coordinate system of the
   /// text widget.
   Offset globalToLocal(Offset point, {RenderObject? ancestor}) {
-    return renderObject.globalToLocal(point, ancestor: ancestor);
+    return _host.globalToLocal(point, ancestor: ancestor);
   }
 
   /// Runs [scroll] after the current frame if a frame is being produced, and
@@ -415,12 +415,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     )) {
       return;
     }
-    renderObject.showOnScreen(
-      descendant: renderObject,
-      rect: rect,
-      duration: duration,
-      curve: curve,
-    );
+    _host.showOnScreen(descendant: _host, rect: rect, duration: duration, curve: curve);
   }
 
   /// Scrolls any enclosing scrollable viewports so that the given character
@@ -487,17 +482,17 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// once instead of comparing pairs.
   @override
   int compareTo(TextDelegate other) {
-    if (identical(this, other) || identical(renderObject, other.renderObject)) {
+    if (identical(this, other) || identical(_host, other._host)) {
       return 0;
     }
 
     final thisAncestors = <RenderObject>[];
-    for (RenderObject? node = renderObject; node != null; node = node.parent) {
+    for (RenderObject? node = _host; node != null; node = node.parent) {
       thisAncestors.add(node);
     }
 
     final otherAncestors = <RenderObject>[];
-    for (RenderObject? node = other.renderObject; node != null; node = node.parent) {
+    for (RenderObject? node = other._host; node != null; node = node.parent) {
       otherAncestors.add(node);
     }
 
@@ -506,7 +501,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
 
     if (!identical(thisAncestors[thisIndex], otherAncestors[otherIndex])) {
       // The two render objects do not share a common root (e.g., one is detached).
-      return identityHashCode(renderObject).compareTo(identityHashCode(other.renderObject));
+      return identityHashCode(_host).compareTo(identityHashCode(other._host));
     }
 
     while (thisIndex >= 0 &&
@@ -597,8 +592,8 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     final marked = <RenderObject>{};
     RenderObject? root;
     for (final delegate in delegates) {
-      (delegatesByRenderObject[delegate.renderObject] ??= <TextDelegate>[]).add(delegate);
-      RenderObject? node = delegate.renderObject;
+      (delegatesByRenderObject[delegate._host] ??= <TextDelegate>[]).add(delegate);
+      RenderObject? node = delegate._host;
       RenderObject? top;
       while (node != null && marked.add(node)) {
         top = node;
@@ -639,21 +634,21 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
 
   /// Marks the underlying render object as needing to repaint.
   void markNeedsPaint() {
-    renderObject.markNeedsPaint();
+    _host.markNeedsPaint();
   }
 
   // Attaches painter listeners when the render object attaches to the
   // pipeline owner.
   void _attachPainters() {
-    _backgroundPainter?.addListener(renderObject.markNeedsPaint);
-    _foregroundPainter?.addListener(renderObject.markNeedsPaint);
+    _backgroundPainter?.addListener(_host.markNeedsPaint);
+    _foregroundPainter?.addListener(_host.markNeedsPaint);
   }
 
   // Detaches painter listeners when the render object detaches from the
   // pipeline owner.
   void _detachPainters() {
-    _backgroundPainter?.removeListener(renderObject.markNeedsPaint);
-    _foregroundPainter?.removeListener(renderObject.markNeedsPaint);
+    _backgroundPainter?.removeListener(_host.markNeedsPaint);
+    _foregroundPainter?.removeListener(_host.markNeedsPaint);
   }
 
   // Notifies listeners registered on this [TextDelegate] that the text, the
@@ -700,7 +695,11 @@ mixin TextDelegateHostMixin on RenderBox {
   /// The directionality of [plainText].
   ui.TextDirection get textDirection;
 
-  /// Active selections on this render object, if any.
+  /// The selections that a plugin with [TextPlugin.handlesSelectionHighlight]
+  /// paints for this render object.
+  ///
+  /// Defaults to none. A render object that paints its own selection, such as
+  /// [RenderEditable], keeps the default.
   List<TextSelection> get selections => const <TextSelection>[];
 
   /// The selection highlight color on this render object, if any.

@@ -403,18 +403,6 @@ class RenderEditable extends RenderBox
   @override
   InlineSpan get textSpan => text ?? TextSpan(text: plainText);
 
-  /// The selection of this editable as a list, for [TextDelegate.selections].
-  ///
-  /// Empty if there is no valid [selection].
-  @override
-  List<TextSelection> get selections {
-    final TextSelection? selection = this.selection;
-    if (selection == null || !selection.isValid) {
-      return const <TextSelection>[];
-    }
-    return <TextSelection>[selection];
-  }
-
   @override
   void dispose() {
     _leaderLayerHandler.layer = null;

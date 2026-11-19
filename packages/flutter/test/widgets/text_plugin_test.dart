@@ -694,6 +694,44 @@ void main() {
     expect(plugin.log, contains('plugin:remove:Updated Editable'));
   });
 
+  testWidgets('A text field reports no selections through its delegate', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _RecordingTextPlugin();
+    final controller = TextEditingController(text: 'Editable text');
+    addTearDown(controller.dispose);
+    final focusNode = FocusNode();
+    addTearDown(focusNode.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TextPluginScope(
+            plugin: plugin,
+            child: EditableText(
+              controller: controller,
+              focusNode: focusNode,
+              style: const TextStyle(),
+              cursorColor: Colors.red,
+              backgroundCursorColor: Colors.black,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    controller.selection = const TextSelection(baseOffset: 0, extentOffset: 8);
+    await tester.pump();
+
+    // The field has a selection and paints it itself.
+    final RenderEditable renderEditable = tester
+        .state<EditableTextState>(find.byType(EditableText))
+        .renderEditable;
+    expect(renderEditable.selection, const TextSelection(baseOffset: 0, extentOffset: 8));
+    // A plugin that paints selection highlights gets nothing to paint here.
+    expect(plugin.activeDelegates.single.selections, isEmpty);
+  });
+
   testWidgets(
     'A plugin painter that leaves the canvas unbalanced throws, for Text and EditableText',
     (WidgetTester tester) async {
@@ -851,7 +889,10 @@ void main() {
       final TextDelegate secondDelegate = plugin.activeDelegates[1];
 
       // Verify _SelectionHighlightTextPlugin is installed on the RenderParagraph alongside our plugin.
-      final firstParagraph = firstDelegate.renderObject as RenderParagraph;
+      final RenderParagraph firstParagraph = tester.renderObject<RenderParagraph>(
+        find.byType(RichText).first,
+      );
+      expect(firstParagraph.plainText, firstDelegate.text);
       expect(firstParagraph.textPlugins, hasLength(2));
       expect(
         firstParagraph.textPlugins!.any((TextPlugin p) => p.handlesSelectionHighlight),
@@ -1249,7 +1290,7 @@ void main() {
 
     // Marking the text itself as needing layout.
     Object? error = await errorFor((TextDelegate delegate) {
-      delegate.renderObject.markNeedsLayout();
+      tester.renderObject(find.byType(RichText)).markNeedsLayout();
     });
     expect(error, isFlutterError);
     expect((error! as FlutterError).message, contains('was mutated during a post-layout callback'));
@@ -1384,7 +1425,7 @@ void main() {
     plugin.onLayout = (TextDelegate delegate) {
       // The pattern a plugin uses when it has to change layout.
       SchedulerBinding.instance.addPostFrameCallback((Duration timeStamp) {
-        delegate.renderObject.markNeedsLayout();
+        tester.renderObject(find.byType(RichText)).markNeedsLayout();
         ranAfterFrame = true;
       });
     };
