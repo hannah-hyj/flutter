@@ -694,6 +694,63 @@ void main() {
     expect(plugin.log, contains('plugin:remove:Updated Editable'));
   });
 
+  testWidgets(
+    'A plugin painter that leaves the canvas unbalanced throws, for Text and EditableText',
+    (WidgetTester tester) async {
+      final controller = TextEditingController(text: 'Editable');
+      addTearDown(controller.dispose);
+      final focusNode = FocusNode();
+      addTearDown(focusNode.dispose);
+
+      Future<Object?> errorFor({
+        required bool editable,
+        required void Function(Canvas canvas) paint,
+      }) async {
+        final plugin = _RecordingTextPlugin();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: TextPluginScope(
+                plugin: plugin,
+                child: editable
+                    ? EditableText(
+                        controller: controller,
+                        focusNode: focusNode,
+                        style: const TextStyle(),
+                        cursorColor: Colors.red,
+                        backgroundCursorColor: Colors.black,
+                      )
+                    : const Text('Paragraph'),
+              ),
+            ),
+          ),
+        );
+        expect(tester.takeException(), isNull);
+        plugin.activeDelegates.single.backgroundPainter = _CallbackCustomPainter((
+          Canvas canvas,
+          Size size,
+        ) {
+          paint(canvas);
+        });
+        await tester.pump();
+        final Object? error = tester.takeException();
+        await tester.pumpWidget(const SizedBox());
+        tester.takeException();
+        return error;
+      }
+
+      // Both kinds of text go through the same check, in TextDelegateHostMixin.
+      for (final editable in <bool>[false, true]) {
+        Object? error = await errorFor(editable: editable, paint: (Canvas canvas) => canvas.save());
+        expect(error, isFlutterError, reason: 'editable: $editable');
+        expect(error.toString(), contains('than it called canvas.restore()'));
+
+        error = await errorFor(editable: editable, paint: (Canvas canvas) {});
+        expect(error, isNull, reason: 'editable: $editable');
+      }
+    },
+  );
+
   testWidgets('An obscured EditableText is not registered with any TextPlugin', (
     WidgetTester tester,
   ) async {

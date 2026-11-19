@@ -14,7 +14,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
-import 'binding.dart';
 import 'box.dart';
 import 'custom_paint.dart';
 import 'layer.dart';
@@ -270,7 +269,8 @@ class RenderEditable extends RenderBox
     with
         RelayoutWhenSystemFontsChangeMixin,
         ContainerRenderObjectMixin<RenderBox, TextParentData>,
-        RenderInlineChildrenContainerDefaults
+        RenderInlineChildrenContainerDefaults,
+        TextDelegateHostMixin
     implements TextLayoutMetrics {
   /// Creates a render object that implements the visual aspects of a text field.
   ///
@@ -351,7 +351,6 @@ class RenderEditable extends RenderBox
        assert(obscuringCharacter.characters.length == 1),
        assert(cursorWidth >= 0.0),
        assert(cursorHeight == null || cursorHeight >= 0.0),
-       _textPlugins = textPlugins != null ? List<TextPlugin>.unmodifiable(textPlugins) : null,
        _textPainter = TextPainter(
          text: text,
          textAlign: textAlign,
@@ -394,185 +393,30 @@ class RenderEditable extends RenderBox
     _updateForegroundPainter(foregroundPainter);
     _updatePainter(painter);
     addAll(children);
+    this.textPlugins = textPlugins;
   }
 
   /// Child render objects
   _RenderEditableCustomPaint? _foregroundRenderObject;
   _RenderEditableCustomPaint? _backgroundRenderObject;
 
-  /// The [TextPlugin]s that this editable is registered with, in installation
-  /// order (outermost to innermost).
-  List<TextPlugin>? get textPlugins => _textPlugins;
-  List<TextPlugin>? _textPlugins;
-  Map<TextPlugin, TextDelegate>? _textPluginDelegates;
-
-  set textPlugins(List<TextPlugin>? value) {
-    if (listEquals(_textPlugins, value)) {
-      return;
-    }
-    final List<TextPlugin> oldPlugins = _textPlugins ?? const <TextPlugin>[];
-    final newPlugins = value != null ? List<TextPlugin>.unmodifiable(value) : const <TextPlugin>[];
-    _textPlugins = value != null ? newPlugins : null;
-
-    if (!attached) {
-      return;
-    }
-    _syncTextPluginDelegates(oldPlugins: oldPlugins);
-  }
-
-  bool _textPluginFlushScheduled = false;
-
-  void _scheduleTextPluginFlush() {
-    if (_textPluginFlushScheduled || !attached || owner == null) {
-      return;
-    }
-    _textPluginFlushScheduled = true;
-    RendererBinding.instance.addPostLayoutCallback(_flushTextPluginNotifications);
-  }
-
-  void _flushTextPluginNotifications() {
-    _textPluginFlushScheduled = false;
-    if (!attached || _textPluginDelegates == null || _textPluginDelegates!.isEmpty) {
-      return;
-    }
-    if (!hasSize || debugNeedsLayout) {
-      return;
-    }
-    for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
-      if (delegate.isDisposed) {
-        continue;
-      }
-      delegate.hasValidLayout = true;
-      if (!delegate.hasDispatchedAdd) {
-        delegate.hasDispatchedAdd = true;
-        delegate.pendingUpdate = false;
-        delegate.pendingLayout = false;
-        delegate.notifyChanged();
-        delegate.plugin.didAddText(delegate);
-        if (!delegate.isDisposed) {
-          delegate.plugin.didLayoutText(delegate);
-        }
-      } else if (delegate.pendingUpdate) {
-        delegate.pendingUpdate = false;
-        delegate.pendingLayout = false;
-        delegate.notifyChanged();
-        delegate.plugin.didUpdateText(delegate);
-        if (!delegate.isDisposed) {
-          delegate.plugin.didLayoutText(delegate);
-        }
-      } else if (delegate.pendingLayout) {
-        delegate.pendingLayout = false;
-        delegate.notifyChanged();
-        delegate.plugin.didLayoutText(delegate);
-      }
-    }
-  }
-
   @override
-  void markNeedsLayout() {
-    if (_textPluginDelegates != null) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        delegate.hasValidLayout = false;
-      }
-    }
-    super.markNeedsLayout();
-  }
+  InlineSpan get textSpan => text ?? TextSpan(text: plainText);
 
-  void _syncTextPluginDelegates({List<TextPlugin>? oldPlugins}) {
-    final List<TextPlugin> rawPlugins = _textPlugins ?? const <TextPlugin>[];
-    final newPlugins = <TextPlugin>[...rawPlugins];
-    mergeSort<TextPlugin>(
-      newPlugins,
-      compare: (TextPlugin a, TextPlugin b) => a.paintOrder.compareTo(b.paintOrder),
-    );
-    if (_textPluginDelegates != null) {
-      final Set<TextPlugin> newPluginSet = newPlugins.toSet();
-      final List<TextPlugin> removedPlugins = _textPluginDelegates!.keys
-          .where((TextPlugin plugin) => !newPluginSet.contains(plugin))
-          .toList(growable: false);
-      var needsRepaint = false;
-      for (final plugin in removedPlugins) {
-        final TextDelegate delegate = _textPluginDelegates!.remove(plugin)!;
-        if (delegate.backgroundPainter != null || delegate.foregroundPainter != null) {
-          needsRepaint = true;
-        }
-        delegate.detachPainters();
-        if (delegate.hasDispatchedAdd) {
-          plugin.didRemoveText(delegate);
-        }
-        delegate.dispose();
-      }
-      if (needsRepaint) {
-        markNeedsPaint();
-      }
+  /// The selection of this editable as a list, for [TextDelegate.selections].
+  ///
+  /// Empty if there is no valid [selection].
+  @override
+  List<TextSelection> get selections {
+    final TextSelection? selection = this.selection;
+    if (selection == null || !selection.isValid) {
+      return const <TextSelection>[];
     }
-
-    if (newPlugins.isEmpty) {
-      _textPluginDelegates = null;
-      return;
-    }
-
-    final Map<TextPlugin, TextDelegate> existingDelegates =
-        _textPluginDelegates ?? <TextPlugin, TextDelegate>{};
-    final orderedDelegates = <TextPlugin, TextDelegate>{};
-    final newlyAddedDelegates = <TextDelegate>[];
-    final bool currentlyHasValidLayout = hasSize && !debugNeedsLayout;
-    for (final plugin in newPlugins) {
-      if (orderedDelegates.containsKey(plugin)) {
-        continue;
-      }
-      final TextDelegate? existing = existingDelegates[plugin];
-      if (existing != null) {
-        orderedDelegates[plugin] = existing;
-      } else {
-        final delegate = TextDelegate(this, plugin)..hasValidLayout = currentlyHasValidLayout;
-        orderedDelegates[plugin] = delegate;
-        newlyAddedDelegates.add(delegate);
-      }
-    }
-    _textPluginDelegates = orderedDelegates;
-
-    if (newlyAddedDelegates.isNotEmpty) {
-      _scheduleTextPluginFlush();
-    }
-    if (oldPlugins != null && !listEquals(oldPlugins, newPlugins)) {
-      markNeedsPaint();
-    }
-  }
-
-  void _notifyTextPluginsDidUpdateText() {
-    if (_textPluginDelegates == null || _textPluginDelegates!.isEmpty) {
-      return;
-    }
-    for (final TextDelegate delegate in _textPluginDelegates!.values) {
-      delegate.pendingUpdate = true;
-    }
-    _scheduleTextPluginFlush();
-  }
-
-  void _removeAllTextPluginDelegates() {
-    if (_textPluginDelegates == null) {
-      return;
-    }
-    final List<TextDelegate> delegates = _textPluginDelegates!.values.toList(growable: false);
-    _textPluginDelegates = null;
-    for (final delegate in delegates) {
-      delegate.detachPainters();
-      if (delegate.hasDispatchedAdd) {
-        delegate.plugin.didRemoveText(delegate);
-      }
-      delegate.dispose();
-    }
-  }
-
-  void _disposeTextPluginDelegates() {
-    _textPlugins = null;
-    _removeAllTextPluginDelegates();
+    return <TextSelection>[selection];
   }
 
   @override
   void dispose() {
-    _disposeTextPluginDelegates();
     _leaderLayerHandler.layer = null;
     _foregroundRenderObject?.dispose();
     _foregroundRenderObject = null;
@@ -938,6 +782,7 @@ class RenderEditable extends RenderBox
   /// If [obscureText] is true, returns the obscured text. See
   /// [obscureText] and [obscuringCharacter].
   /// In order to get the styled text as an [InlineSpan] tree, use [text].
+  @override
   String get plainText => _textPainter.plainText;
 
   /// The text to paint in the form of a tree of [InlineSpan]s.
@@ -955,7 +800,7 @@ class RenderEditable extends RenderBox
     _textPainter.text = value;
     _cachedAttributedValue = null;
     _cachedCombinedSemanticsInfos = null;
-    _notifyTextPluginsDidUpdateText();
+    markNeedsTextDelegateUpdate();
     markNeedsLayout();
     markNeedsSemanticsUpdate();
   }
@@ -999,6 +844,7 @@ class RenderEditable extends RenderBox
   // TextPainter.textDirection is nullable, but it is set to a
   // non-null value in the RenderEditable constructor and we refuse to
   // set it to null here, so _textPainter.textDirection cannot be null.
+  @override
   TextDirection get textDirection => _textPainter.textDirection!;
   set textDirection(TextDirection value) {
     if (_textPainter.textDirection == value) {
@@ -1175,6 +1021,7 @@ class RenderEditable extends RenderBox
   }
 
   /// The color to use when painting the selection.
+  @override
   Color? get selectionColor => _selectionPainter.highlightColor;
   set selectionColor(Color? value) {
     _selectionPainter.highlightColor = value;
@@ -1473,13 +1320,21 @@ class RenderEditable extends RenderBox
   /// the closest position to a given point.
   ///
   /// See [TextPainter.getBoxesForSelection] for more details.
-  List<TextBox> getBoxesForSelection(TextSelection selection) {
+  ///
+  /// The boxes use [selectionHeightStyle] and [selectionWidthStyle], unless
+  /// [boxHeightStyle] or [boxWidthStyle] is given.
+  @override
+  List<TextBox> getBoxesForSelection(
+    TextSelection selection, {
+    ui.BoxHeightStyle? boxHeightStyle,
+    ui.BoxWidthStyle? boxWidthStyle,
+  }) {
     _computeTextMetricsIfNeeded();
     return _textPainter
         .getBoxesForSelection(
           selection,
-          boxHeightStyle: selectionHeightStyle,
-          boxWidthStyle: selectionWidthStyle,
+          boxHeightStyle: boxHeightStyle ?? selectionHeightStyle,
+          boxWidthStyle: boxWidthStyle ?? selectionWidthStyle,
         )
         .map(
           (TextBox textBox) => TextBox.fromLTRBD(
@@ -1817,17 +1672,10 @@ class RenderEditable extends RenderBox
     _offset.addListener(markNeedsPaint);
     _showHideCursor();
     _showCursor.addListener(_showHideCursor);
-    _syncTextPluginDelegates();
-    if (_textPluginDelegates != null) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        delegate.attachPainters();
-      }
-    }
   }
 
   @override
   void detach() {
-    _removeAllTextPluginDelegates();
     _tap.dispose();
     _longPress.dispose();
     _offset.removeListener(markNeedsPaint);
@@ -1978,6 +1826,7 @@ class RenderEditable extends RenderBox
   }
 
   /// Returns the [TextPosition] within the text for the given local pixel [offset].
+  @override
   TextPosition getPositionForOffset(Offset offset) {
     _computeTextMetricsIfNeeded();
     return _textPainter.getPositionForOffset(offset - _paintOffset);
@@ -2043,12 +1892,14 @@ class RenderEditable extends RenderBox
   }
 
   /// Returns the local offset at which to paint the caret for the given [position].
+  @override
   Offset getOffsetForCaret(TextPosition position, Rect caretPrototype) {
     _computeTextMetricsIfNeeded();
     return _textPainter.getOffsetForCaret(position, caretPrototype) + _paintOffset;
   }
 
   /// Returns the full height of the caret at the given [position].
+  @override
   double getFullHeightForCaret(TextPosition position) {
     _computeTextMetricsIfNeeded();
     return _textPainter.getFullHeightForCaret(position, _caretPrototype);
@@ -2627,13 +2478,7 @@ class RenderEditable extends RenderBox
     offset.applyViewportDimension(_viewportExtent);
     offset.applyContentDimensions(0.0, _maxScrollExtent);
 
-    if (_textPluginDelegates != null && _textPluginDelegates!.isNotEmpty) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        delegate.hasValidLayout = true;
-        delegate.pendingLayout = true;
-      }
-      _scheduleTextPluginFlush();
-    }
+    didLayoutTextDelegates();
   }
 
   // The relative origin in relation to the distance the user has theoretically
@@ -2809,16 +2654,7 @@ class RenderEditable extends RenderBox
   }
 
   void _paintContents(PaintingContext context, Offset offset) {
-    if (_textPluginDelegates != null &&
-        _textPluginDelegates!.values.any(
-          (TextDelegate delegate) => delegate.backgroundPainter != null,
-        )) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        if (delegate.backgroundPainter != null) {
-          _paintWithCustomPainter(context, offset, delegate.backgroundPainter!);
-        }
-      }
-    }
+    paintTextPluginBackgrounds(context, offset);
 
     final RenderBox? foregroundChild = _foregroundRenderObject;
     final RenderBox? backgroundChild = _backgroundRenderObject;
@@ -2842,52 +2678,7 @@ class RenderEditable extends RenderBox
       context.paintChild(foregroundChild, offset);
     }
 
-    if (_textPluginDelegates != null &&
-        _textPluginDelegates!.values.any(
-          (TextDelegate delegate) => delegate.foregroundPainter != null,
-        )) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        if (delegate.foregroundPainter != null) {
-          _paintWithCustomPainter(context, offset, delegate.foregroundPainter!);
-        }
-      }
-    }
-  }
-
-  void _paintWithCustomPainter(PaintingContext context, Offset offset, CustomPainter painter) {
-    var debugSaveCount = 0;
-    if (kDebugMode) {
-      debugSaveCount = context.canvas.getSaveCount();
-    }
-    context.canvas.save();
-    context.canvas.translate(offset.dx, offset.dy);
-    FlutterError? saveCountError;
-    try {
-      painter.paint(context.canvas, size);
-    } finally {
-      context.canvas.restore();
-      if (kDebugMode) {
-        if (context.canvas.getSaveCount() != debugSaveCount) {
-          saveCountError = FlutterError.fromParts(<DiagnosticsNode>[
-            ErrorSummary(
-              'The CustomPainter "${painter.runtimeType}" used as a text plugin painter '
-              'did not balance its save/restore calls.',
-            ),
-            ErrorDescription(
-              'The canvas save count before painting was $debugSaveCount, but after painting '
-              'it was ${context.canvas.getSaveCount()}.',
-            ),
-            ErrorHint(
-              'Ensure every call to canvas.save() or canvas.saveLayer() is matched by a '
-              'corresponding call to canvas.restore().',
-            ),
-          ]);
-        }
-      }
-    }
-    if (saveCountError != null) {
-      throw saveCountError;
-    }
+    paintTextPluginForegrounds(context, offset);
   }
 
   final LayerHandle<LeaderLayer> _leaderLayerHandler = LayerHandle<LeaderLayer>();

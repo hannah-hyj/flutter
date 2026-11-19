@@ -132,15 +132,9 @@ abstract class TextPlugin {
 ///    in front of the text.
 ///  * Listen for text or layout updates via [addListener].
 class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
-  /// Creates a [TextDelegate] for the given [RenderObject] ([RenderParagraph],
-  /// [RenderEditable], or [TextDelegateHostMixin]) and [TextPlugin].
-  @internal
-  TextDelegate(this.renderObject, this.plugin)
-    : assert(
-        renderObject is RenderParagraph ||
-            renderObject is RenderEditable ||
-            renderObject is TextDelegateHostMixin,
-      ) {
+  // Only a [TextDelegateHostMixin] creates delegates: one for each pair of a
+  // text render object and a [TextPlugin].
+  TextDelegate._(this._host, this.plugin) {
     if (kFlutterMemoryAllocationsEnabled) {
       ChangeNotifier.maybeDispatchObjectCreation(this);
     }
@@ -153,61 +147,37 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// through the other members of this class, and must not change the text
   /// through the render object.
   @internal
-  final RenderBox renderObject;
+  RenderBox get renderObject => _host;
 
-  RenderParagraph? get _paragraph =>
-      renderObject is RenderParagraph ? renderObject as RenderParagraph : null;
-  RenderEditable? get _editable =>
-      renderObject is RenderEditable ? renderObject as RenderEditable : null;
-  TextDelegateHostMixin? get _host =>
-      renderObject is TextDelegateHostMixin ? renderObject as TextDelegateHostMixin : null;
+  final TextDelegateHostMixin _host;
 
   /// The [TextPlugin] that owns this delegate.
   final TextPlugin plugin;
 
-  /// Tracks whether the underlying render object currently has an up-to-date
-  /// layout in both debug and release builds.
-  @internal
-  bool hasValidLayout = false;
+  // The state below is written by [TextDelegateHostMixin] only.
 
-  /// Whether [TextPlugin.didAddText] has been dispatched for this delegate.
-  @internal
-  bool hasDispatchedAdd = false;
+  // Whether the underlying render object currently has an up-to-date layout,
+  // in both debug and release builds.
+  bool _hasValidLayout = false;
 
-  /// Whether [TextPlugin.didUpdateText] is pending for the next post-layout flush.
-  @internal
-  bool pendingUpdate = false;
+  // Whether [TextPlugin.didAddText] has been dispatched for this delegate.
+  bool _hasDispatchedAdd = false;
 
-  /// Whether [TextPlugin.didLayoutText] is pending for the next post-layout flush.
-  @internal
-  bool pendingLayout = false;
+  // Whether [TextPlugin.didUpdateText] is pending for the next post-layout flush.
+  bool _pendingUpdate = false;
 
-  /// Whether this delegate has been disposed.
-  @internal
-  bool isDisposed = false;
+  // Whether [TextPlugin.didLayoutText] is pending for the next post-layout flush.
+  bool _pendingLayout = false;
+
+  // Whether this delegate has been disposed.
+  bool _isDisposed = false;
 
   /// Returns the plain text in the text widget represented by this delegate.
-  String get text {
-    if (_paragraph != null) {
-      return _paragraph!.text.toPlainText(includeSemanticsLabels: false);
-    }
-    if (_editable != null) {
-      return _editable!.text?.toPlainText(includeSemanticsLabels: false) ?? _editable!.plainText;
-    }
-    return _host!.plainText;
-  }
+  String get text => _host.plainText;
 
   /// Returns the [InlineSpan] tree displayed by the text widget represented by
   /// this delegate.
-  InlineSpan get textSpan {
-    if (_paragraph != null) {
-      return _paragraph!.text;
-    }
-    if (_editable != null) {
-      return _editable!.text ?? TextSpan(text: _editable!.plainText);
-    }
-    return _host!.textSpan;
-  }
+  InlineSpan get textSpan => _host.textSpan;
 
   /// Returns the character ranges occupied by [PlaceholderSpan]s (such as
   /// [WidgetSpan]s) within [text].
@@ -239,35 +209,14 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// For a [RenderParagraph] with embedded [PlaceholderSpan]s (such as
   /// [WidgetSpan]s), each selectable text fragment may have its own
   /// [TextSelection].
-  List<TextSelection> get selections {
-    if (_paragraph != null) {
-      return _paragraph!.selections;
-    }
-    if (_editable != null) {
-      final TextSelection? editableSelection = _editable!.selection;
-      if (editableSelection == null || !editableSelection.isValid) {
-        return const <TextSelection>[];
-      }
-      return <TextSelection>[editableSelection];
-    }
-    return _host!.selections;
-  }
+  List<TextSelection> get selections => _host.selections;
 
   /// The color used to paint selection highlights on the text widget
   /// represented by this delegate.
-  Color? get selectionColor {
-    if (_paragraph != null) {
-      return _paragraph!.selectionColor;
-    }
-    if (_editable != null) {
-      return _editable!.selectionColor;
-    }
-    return _host!.selectionColor;
-  }
+  Color? get selectionColor => _host.selectionColor;
 
   /// The directionality of the text.
-  ui.TextDirection get textDirection =>
-      _paragraph?.textDirection ?? _editable?.textDirection ?? _host!.textDirection;
+  ui.TextDirection get textDirection => _host.textDirection;
 
   /// Whether the underlying render object is currently attached to the
   /// render tree.
@@ -282,7 +231,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   /// Guaranteed to be `true` during [TextPlugin.didAddText],
   /// [TextPlugin.didUpdateText], [TextPlugin.didLayoutText], and
   /// [CustomPainter.paint].
-  bool get hasLayout => hasValidLayout && renderObject.hasSize && !renderObject.debugNeedsLayout;
+  bool get hasLayout => _hasValidLayout && renderObject.hasSize && !renderObject.debugNeedsLayout;
 
   /// The size of the underlying render object.
   ///
@@ -346,18 +295,8 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     ui.BoxWidthStyle boxWidthStyle = ui.BoxWidthStyle.tight,
     bool includePlaceholders = false,
   }) {
-    if (_editable != null) {
-      return _editable!.getBoxesForSelection(selection);
-    }
-    if (_host != null) {
-      return _host!.getBoxesForSelection(
-        selection,
-        boxHeightStyle: boxHeightStyle,
-        boxWidthStyle: boxWidthStyle,
-      );
-    }
     if (includePlaceholders || !selection.isValid || selection.isCollapsed) {
-      return _paragraph!.getBoxesForSelection(
+      return _host.getBoxesForSelection(
         selection,
         boxHeightStyle: boxHeightStyle,
         boxWidthStyle: boxWidthStyle,
@@ -372,7 +311,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
       if (plainText.codeUnitAt(i) == PlaceholderSpan.placeholderCodeUnit) {
         if (segmentStart < i) {
           boxes.addAll(
-            _paragraph!.getBoxesForSelection(
+            _host.getBoxesForSelection(
               TextSelection(baseOffset: segmentStart, extentOffset: i),
               boxHeightStyle: boxHeightStyle,
               boxWidthStyle: boxWidthStyle,
@@ -384,7 +323,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     }
     if (segmentStart < end) {
       boxes.addAll(
-        _paragraph!.getBoxesForSelection(
+        _host.getBoxesForSelection(
           TextSelection(baseOffset: segmentStart, extentOffset: end),
           boxHeightStyle: boxHeightStyle,
           boxWidthStyle: boxWidthStyle,
@@ -399,26 +338,14 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   ///
   /// Valid only after layout (see [hasLayout]).
   ui.TextPosition getPositionForOffset(Offset offset) {
-    if (_paragraph != null) {
-      return _paragraph!.getPositionForOffset(offset);
-    }
-    if (_editable != null) {
-      return _editable!.getPositionForOffset(offset);
-    }
-    return _host!.getPositionForOffset(offset);
+    return _host.getPositionForOffset(offset);
   }
 
   /// Returns the [ui.TextRange] of the word at the given [position].
   ///
   /// Valid only after layout (see [hasLayout]).
   ui.TextRange getWordBoundary(ui.TextPosition position) {
-    if (_paragraph != null) {
-      return _paragraph!.getWordBoundary(position);
-    }
-    if (_editable != null) {
-      return _editable!.getWordBoundary(position);
-    }
-    return _host!.getWordBoundary(position);
+    return _host.getWordBoundary(position);
   }
 
   /// Returns the local offset at which to paint the caret for the given
@@ -426,26 +353,14 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   ///
   /// Valid only after layout (see [hasLayout]).
   Offset getOffsetForCaret(ui.TextPosition position, Rect caretPrototype) {
-    if (_paragraph != null) {
-      return _paragraph!.getOffsetForCaret(position, caretPrototype);
-    }
-    if (_editable != null) {
-      return _editable!.getOffsetForCaret(position, caretPrototype);
-    }
-    return _host!.getOffsetForCaret(position, caretPrototype);
+    return _host.getOffsetForCaret(position, caretPrototype);
   }
 
   /// Returns the full height of the caret at the given [position].
   ///
   /// Valid only after layout (see [hasLayout]).
   double getFullHeightForCaret(ui.TextPosition position) {
-    if (_paragraph != null) {
-      return _paragraph!.getFullHeightForCaret(position);
-    }
-    if (_editable != null) {
-      return _editable!.getFullHeightForCaret(position);
-    }
-    return _host!.getFullHeightForCaret(position);
+    return _host.getFullHeightForCaret(position);
   }
 
   /// Applies the paint transform from the underlying render object up to
@@ -481,7 +396,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
       return false;
     }
     SchedulerBinding.instance.addPostFrameCallback((Duration timeStamp) {
-      if (!isDisposed && attached && hasLayout) {
+      if (!_isDisposed && attached && hasLayout) {
         scroll();
       }
     }, debugLabel: 'TextDelegate.showOnScreen');
@@ -727,42 +642,45 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     renderObject.markNeedsPaint();
   }
 
-  /// Attaches painter listeners when the render object attaches to the
-  /// pipeline owner.
-  @internal
-  void attachPainters() {
+  // Attaches painter listeners when the render object attaches to the
+  // pipeline owner.
+  void _attachPainters() {
     _backgroundPainter?.addListener(renderObject.markNeedsPaint);
     _foregroundPainter?.addListener(renderObject.markNeedsPaint);
   }
 
-  /// Detaches painter listeners when the render object detaches from the
-  /// pipeline owner.
-  @internal
-  void detachPainters() {
+  // Detaches painter listeners when the render object detaches from the
+  // pipeline owner.
+  void _detachPainters() {
     _backgroundPainter?.removeListener(renderObject.markNeedsPaint);
     _foregroundPainter?.removeListener(renderObject.markNeedsPaint);
   }
 
-  /// Notifies listeners registered on this [TextDelegate] that the text or
-  /// layout has been updated.
-  @internal
-  void notifyChanged() {
+  // Notifies listeners registered on this [TextDelegate] that the text, the
+  // layout or the selection has been updated.
+  void _notifyChanged() {
     notifyListeners();
   }
 
   @override
   void dispose() {
-    isDisposed = true;
-    detachPainters();
+    _isDisposed = true;
+    _detachPainters();
     _backgroundPainter = null;
     _foregroundPainter = null;
     super.dispose();
   }
 }
 
-/// A mixin for custom [RenderBox] subclasses (such as those that paint text
-/// directly with [TextPainter] or non-text render objects exposing a searchable
-/// label) that participate in a [TextPluginScope].
+/// A mixin for [RenderBox] subclasses that participate in a [TextPluginScope].
+///
+/// [RenderParagraph] and [RenderEditable] use it. A custom [RenderBox] can use
+/// it too, for example one that paints text directly with [TextPainter], or a
+/// non-text render object that exposes a searchable label.
+///
+/// The mixin creates one [TextDelegate] for each [TextPlugin] in
+/// [textPlugins], tells the plugins about the text after layout, and disposes
+/// the delegates when the render object is detached.
 ///
 /// Subclasses using this mixin should:
 ///  1. Implement [plainText], [textDirection], and [getBoxesForSelection].
@@ -852,30 +770,30 @@ mixin TextDelegateHostMixin on RenderBox {
       return;
     }
     for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
-      if (delegate.isDisposed) {
+      if (delegate._isDisposed) {
         continue;
       }
-      delegate.hasValidLayout = true;
-      if (!delegate.hasDispatchedAdd) {
-        delegate.hasDispatchedAdd = true;
-        delegate.pendingUpdate = false;
-        delegate.pendingLayout = false;
-        delegate.notifyChanged();
+      delegate._hasValidLayout = true;
+      if (!delegate._hasDispatchedAdd) {
+        delegate._hasDispatchedAdd = true;
+        delegate._pendingUpdate = false;
+        delegate._pendingLayout = false;
+        delegate._notifyChanged();
         delegate.plugin.didAddText(delegate);
-        if (!delegate.isDisposed) {
+        if (!delegate._isDisposed) {
           delegate.plugin.didLayoutText(delegate);
         }
-      } else if (delegate.pendingUpdate) {
-        delegate.pendingUpdate = false;
-        delegate.pendingLayout = false;
-        delegate.notifyChanged();
+      } else if (delegate._pendingUpdate) {
+        delegate._pendingUpdate = false;
+        delegate._pendingLayout = false;
+        delegate._notifyChanged();
         delegate.plugin.didUpdateText(delegate);
-        if (!delegate.isDisposed) {
+        if (!delegate._isDisposed) {
           delegate.plugin.didLayoutText(delegate);
         }
-      } else if (delegate.pendingLayout) {
-        delegate.pendingLayout = false;
-        delegate.notifyChanged();
+      } else if (delegate._pendingLayout) {
+        delegate._pendingLayout = false;
+        delegate._notifyChanged();
         delegate.plugin.didLayoutText(delegate);
       }
     }
@@ -899,8 +817,8 @@ mixin TextDelegateHostMixin on RenderBox {
         if (delegate.backgroundPainter != null || delegate.foregroundPainter != null) {
           needsRepaint = true;
         }
-        delegate.detachPainters();
-        if (delegate.hasDispatchedAdd) {
+        delegate._detachPainters();
+        if (delegate._hasDispatchedAdd) {
           plugin.didRemoveText(delegate);
         }
         delegate.dispose();
@@ -928,7 +846,7 @@ mixin TextDelegateHostMixin on RenderBox {
       if (existing != null) {
         orderedDelegates[plugin] = existing;
       } else {
-        final delegate = TextDelegate(this, plugin)..hasValidLayout = currentlyHasValidLayout;
+        final delegate = TextDelegate._(this, plugin).._hasValidLayout = currentlyHasValidLayout;
         orderedDelegates[plugin] = delegate;
         newlyAddedDelegates.add(delegate);
       }
@@ -943,6 +861,28 @@ mixin TextDelegateHostMixin on RenderBox {
     }
   }
 
+  /// Whether this render object currently has a [TextDelegate], which is the
+  /// case while it is attached and [textPlugins] is not empty.
+  ///
+  /// A subclass can use this to skip work that only plugins need.
+  @protected
+  bool get hasTextDelegates => _textPluginDelegates != null && _textPluginDelegates!.isNotEmpty;
+
+  /// Notifies the listeners of every [TextDelegate] of this render object,
+  /// without a [TextPlugin] callback.
+  ///
+  /// Call this when something that a delegate exposes changed and the text
+  /// did not, for example [selections] or [selectionColor].
+  @protected
+  void notifyTextDelegateListeners() {
+    if (!hasTextDelegates) {
+      return;
+    }
+    for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
+      delegate._notifyChanged();
+    }
+  }
+
   /// Marks attached [TextDelegate]s as having updated [plainText] so that
   /// [TextPlugin.didUpdateText] is dispatched after the next layout flush.
   @protected
@@ -951,7 +891,7 @@ mixin TextDelegateHostMixin on RenderBox {
       return;
     }
     for (final TextDelegate delegate in _textPluginDelegates!.values) {
-      delegate.pendingUpdate = true;
+      delegate._pendingUpdate = true;
     }
     _scheduleTextPluginFlush();
   }
@@ -965,29 +905,90 @@ mixin TextDelegateHostMixin on RenderBox {
   void didLayoutTextDelegates() {
     if (_textPluginDelegates != null && _textPluginDelegates!.isNotEmpty) {
       for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        delegate.hasValidLayout = true;
-        delegate.pendingLayout = true;
+        delegate._hasValidLayout = true;
+        delegate._pendingLayout = true;
       }
       _scheduleTextPluginFlush();
     }
   }
 
   void _paintWithCustomPainter(Canvas canvas, Offset offset, CustomPainter painter) {
+    late int debugPreviousCanvasSaveCount;
     canvas.save();
+    assert(() {
+      debugPreviousCanvasSaveCount = canvas.getSaveCount();
+      return true;
+    }());
     if (offset != Offset.zero) {
       canvas.translate(offset.dx, offset.dy);
     }
     painter.paint(canvas, size);
+    assert(() {
+      final int debugNewCanvasSaveCount = canvas.getSaveCount();
+      if (debugNewCanvasSaveCount > debugPreviousCanvasSaveCount) {
+        throw FlutterError.fromParts(<DiagnosticsNode>[
+          ErrorSummary(
+            'The $painter custom painter called canvas.save() or canvas.saveLayer() at least '
+            '${debugNewCanvasSaveCount - debugPreviousCanvasSaveCount} more '
+            'time${debugNewCanvasSaveCount - debugPreviousCanvasSaveCount == 1 ? '' : 's'} '
+            'than it called canvas.restore().',
+          ),
+          ErrorDescription(
+            'This leaves the canvas in an inconsistent state and will probably result in a broken display.',
+          ),
+          ErrorHint(
+            'You must pair each call to save()/saveLayer() with a later matching call to restore().',
+          ),
+        ]);
+      }
+      if (debugNewCanvasSaveCount < debugPreviousCanvasSaveCount) {
+        throw FlutterError.fromParts(<DiagnosticsNode>[
+          ErrorSummary(
+            'The $painter custom painter called canvas.restore() '
+            '${debugPreviousCanvasSaveCount - debugNewCanvasSaveCount} more '
+            'time${debugPreviousCanvasSaveCount - debugNewCanvasSaveCount == 1 ? '' : 's'} '
+            'than it called canvas.save() or canvas.saveLayer().',
+          ),
+          ErrorDescription(
+            'This leaves the canvas in an inconsistent state and will result in a broken display.',
+          ),
+          ErrorHint('You should only call restore() if you first called save() or saveLayer().'),
+        ]);
+      }
+      return debugNewCanvasSaveCount == debugPreviousCanvasSaveCount;
+    }());
     canvas.restore();
   }
 
   /// Paints the [TextDelegate.backgroundPainter]s of all active [TextPlugin]s.
+  ///
+  /// The painter of a plugin with [TextPlugin.handlesSelectionHighlight] is
+  /// painted after the others, so that it is right behind the text.
+  ///
+  /// This method does not clip. Clipping is the decision of the render object.
   @protected
   void paintTextPluginBackgrounds(PaintingContext context, Offset offset) {
     if (_textPluginDelegates == null) {
       return;
     }
+    var hasSelectionHighlightPlugin = false;
     for (final TextDelegate delegate in _textPluginDelegates!.values) {
+      if (delegate.plugin.handlesSelectionHighlight) {
+        hasSelectionHighlightPlugin = true;
+        continue;
+      }
+      final CustomPainter? painter = delegate.backgroundPainter;
+      if (painter != null) {
+        _paintWithCustomPainter(context.canvas, offset, painter);
+      }
+    }
+    if (!hasSelectionHighlightPlugin) {
+      return;
+    }
+    for (final TextDelegate delegate in _textPluginDelegates!.values) {
+      if (!delegate.plugin.handlesSelectionHighlight) {
+        continue;
+      }
       final CustomPainter? painter = delegate.backgroundPainter;
       if (painter != null) {
         _paintWithCustomPainter(context.canvas, offset, painter);
@@ -996,6 +997,8 @@ mixin TextDelegateHostMixin on RenderBox {
   }
 
   /// Paints the [TextDelegate.foregroundPainter]s of all active [TextPlugin]s.
+  ///
+  /// This method does not clip. Clipping is the decision of the render object.
   @protected
   void paintTextPluginForegrounds(PaintingContext context, Offset offset) {
     if (_textPluginDelegates == null) {
@@ -1016,8 +1019,8 @@ mixin TextDelegateHostMixin on RenderBox {
     final List<TextDelegate> delegates = _textPluginDelegates!.values.toList(growable: false);
     _textPluginDelegates = null;
     for (final delegate in delegates) {
-      delegate.detachPainters();
-      if (delegate.hasDispatchedAdd) {
+      delegate._detachPainters();
+      if (delegate._hasDispatchedAdd) {
         delegate.plugin.didRemoveText(delegate);
       }
       delegate.dispose();
@@ -1030,7 +1033,7 @@ mixin TextDelegateHostMixin on RenderBox {
     _syncTextPluginDelegates();
     if (_textPluginDelegates != null) {
       for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        delegate.attachPainters();
+        delegate._attachPainters();
       }
     }
   }
@@ -1045,7 +1048,7 @@ mixin TextDelegateHostMixin on RenderBox {
   void markNeedsLayout() {
     if (_textPluginDelegates != null) {
       for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        delegate.hasValidLayout = false;
+        delegate._hasValidLayout = false;
       }
     }
     super.markNeedsLayout();
