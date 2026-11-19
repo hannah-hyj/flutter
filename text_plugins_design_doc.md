@@ -237,7 +237,7 @@ Domain-specific or third-party-dependent features belong in standalone community
 
 The `TextPlugin` API follows four design rules so it can support both first-party plugins and community packages:
 
-1. `TextDelegate` exposes an opinionated plain-text getter (`text`) and low-level geometry and painting primitives (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`, `getOffsetForCaret`, `backgroundPainter`, and `foregroundPainter`) rather than feature-specific methods.
+1. `TextDelegate` exposes a plain-text getter (`text`) and low-level geometry and painting primitives (`getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`, `getOffsetForCaret`, `backgroundPainter`, and `foregroundPainter`) rather than feature-specific methods. The framework decides how a text becomes that one string, so that a plugin does not have to: one string per text widget, a `WidgetSpan` is one U+FFFC character, semantics labels are left out, and offsets are UTF-16 offsets, the same ones the geometry queries take ([Section 7.3](#73-embedded-widgetspans-and-utf-16-offset-alignment)).
 
 2. `TextPluginScope` stacks plugins across the widget tree, deduplicating by plugin `Type` (so inner scopes can override outer scopes of the same `Type`, matching `Actions` and `Shortcuts`) and sorting by `TextPlugin.paintOrder`. `TextPluginScope.exclude(types: {...})` lets app developers filter out specific plugin types on UI chrome without disabling the others.
 
