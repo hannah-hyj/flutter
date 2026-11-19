@@ -3761,16 +3761,13 @@ class _SelectionHighlightTextPlugin extends TextPlugin {
   }
 }
 
-class _SelectionHighlightPainter extends CustomPainter {
+class _SelectionHighlightPainter extends TextPluginPainter {
   _SelectionHighlightPainter({required this.delegate}) : super(repaint: delegate);
 
   final TextDelegate delegate;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    if (!delegate.hasLayout) {
-      return;
-    }
+  void paint(Canvas canvas, TextLayout layout) {
     final Color? selectionColor = delegate.selectionColor;
     if (selectionColor == null) {
       return;
@@ -3783,10 +3780,7 @@ class _SelectionHighlightPainter extends CustomPainter {
       ..style = PaintingStyle.fill
       ..color = selectionColor;
     for (final selection in selections) {
-      for (final TextBox textBox in delegate.getBoxesForSelection(
-        selection,
-        includePlaceholders: false,
-      )) {
+      for (final TextBox textBox in layout.getBoxesForSelection(selection)) {
         canvas.drawRect(textBox.toRect(), selectionPaint);
       }
     }

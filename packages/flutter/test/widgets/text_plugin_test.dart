@@ -26,11 +26,6 @@ class _RecordingTextPlugin extends TextPlugin {
   }
 
   @override
-  void didLayoutText(TextDelegate delegate) {
-    log.add('plugin:layout:${delegate.text}');
-  }
-
-  @override
   void didRemoveText(TextDelegate delegate) {
     activeDelegates.remove(delegate);
     log.add('plugin:remove:${delegate.text}');
@@ -39,20 +34,34 @@ class _RecordingTextPlugin extends TextPlugin {
 
 class _InnerRecordingTextPlugin extends _RecordingTextPlugin {}
 
-/// Runs [onLayout] once, in the next [didLayoutText].
+/// Runs [onUpdate] once, in the next [didUpdateText].
 class _CallbackActionTextPlugin extends TextPlugin {
-  void Function(TextDelegate delegate)? onLayout;
+  void Function(TextDelegate delegate)? onUpdate;
 
   @override
-  void didLayoutText(TextDelegate delegate) {
-    final void Function(TextDelegate delegate)? action = onLayout;
-    onLayout = null;
+  void didUpdateText(TextDelegate delegate) {
+    final void Function(TextDelegate delegate)? action = onUpdate;
+    onUpdate = null;
     action?.call(delegate);
   }
 }
 
+class _CallbackTextPainter extends TextPluginPainter {
+  _CallbackTextPainter(this.onPaint, {super.repaint});
+
+  final void Function(Canvas canvas, TextLayout layout) onPaint;
+
+  @override
+  void paint(Canvas canvas, TextLayout layout) {
+    onPaint(canvas, layout);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CallbackTextPainter oldPainter) => true;
+}
+
 class _CallbackCustomPainter extends CustomPainter {
-  _CallbackCustomPainter(this.onPaint, {super.repaint});
+  _CallbackCustomPainter(this.onPaint);
 
   final void Function(Canvas canvas, Size size) onPaint;
 
@@ -83,11 +92,11 @@ class _HighlightPlugin extends TextPlugin {
   @override
   void didAddText(TextDelegate delegate) {
     delegates.add(delegate);
-    delegate.backgroundPainter = _CallbackCustomPainter((Canvas canvas, Size size) {
+    delegate.backgroundPainter = _CallbackTextPainter((Canvas canvas, TextLayout layout) {
       paintLog.add('$name:bg:${delegate.text}');
     });
     if (paintForeground) {
-      delegate.foregroundPainter = _CallbackCustomPainter((Canvas canvas, Size size) {
+      delegate.foregroundPainter = _CallbackTextPainter((Canvas canvas, TextLayout layout) {
         paintLog.add('$name:fg:${delegate.text}');
       });
     }
@@ -146,15 +155,7 @@ void main() {
     expect(plugin.activeDelegates, hasLength(2));
     expect(plugin.activeDelegates[0].text, 'Hello');
     expect(plugin.activeDelegates[1].text, 'Rich World');
-    expect(
-      plugin.log,
-      containsAllInOrder(<String>[
-        'plugin:add:Hello',
-        'plugin:layout:Hello',
-        'plugin:add:Rich World',
-        'plugin:layout:Rich World',
-      ]),
-    );
+    expect(plugin.log, containsAllInOrder(<String>['plugin:add:Hello', 'plugin:add:Rich World']));
 
     plugin.log.clear();
 
@@ -172,7 +173,6 @@ void main() {
     expect(plugin.activeDelegates, hasLength(1));
     expect(plugin.activeDelegates.single.text, 'Hello Flutter');
     expect(plugin.log, contains('plugin:update:Hello Flutter'));
-    expect(plugin.log, contains('plugin:layout:Hello Flutter'));
     expect(plugin.log, contains('plugin:remove:Rich World'));
 
     plugin.log.clear();
@@ -183,7 +183,7 @@ void main() {
     expect(plugin.log, <String>['plugin:remove:Hello Flutter']);
   });
 
-  testWidgets('TextDelegate queries layout boxes and positions accurately', (
+  testWidgets('TextLayout gives a painter the boxes and positions of the text', (
     WidgetTester tester,
   ) async {
     final plugin = _RecordingTextPlugin();
@@ -199,23 +199,159 @@ void main() {
     );
 
     final TextDelegate delegate = plugin.activeDelegates.single;
-    expect(delegate.hasLayout, isTrue);
-    expect(delegate.hasSize, isTrue);
-    expect(delegate.size.width, greaterThan(0));
-    expect(delegate.size.height, greaterThan(0));
-
     final int googStart = delegate.text.indexOf('GOOG');
-    final List<TextBox> googBoxes = delegate.getBoxesForSelection(
-      TextSelection(baseOffset: googStart, extentOffset: googStart + 4),
-    );
-    expect(googBoxes, isNotEmpty);
-    final Rect googRect = googBoxes.first.toRect();
-    expect(googRect.width, greaterThan(0));
-    expect(googRect.height, greaterThan(0));
+    final googSelection = TextSelection(baseOffset: googStart, extentOffset: googStart + 4);
+    final googPosition = TextPosition(offset: googStart);
+    Size? size;
+    List<TextBox>? googBoxes;
+    TextRange? wordRange;
+    Offset? caretOffset;
+    double? caretHeight;
+    delegate.backgroundPainter = _CallbackTextPainter((Canvas canvas, TextLayout layout) {
+      size = layout.size;
+      googBoxes = layout.getBoxesForSelection(googSelection);
+      final TextPosition centerPos = layout.getPositionForOffset(googBoxes!.first.toRect().center);
+      wordRange = layout.getWordBoundary(centerPos);
+      caretOffset = layout.getOffsetForCaret(googPosition, Rect.zero);
+      caretHeight = layout.getFullHeightForCaret(googPosition);
+    });
+    await tester.pump();
 
-    final TextPosition centerPos = delegate.getPositionForOffset(googRect.center);
-    final TextRange wordRange = delegate.getWordBoundary(centerPos);
-    expect(delegate.text.substring(wordRange.start, wordRange.end), 'GOOG');
+    // The painter saw the same geometry as the render object.
+    final RenderParagraph paragraph = tester.renderObject<RenderParagraph>(find.byType(RichText));
+    expect(size, paragraph.size);
+    expect(googBoxes, isNotEmpty);
+    expect(googBoxes, paragraph.getBoxesForSelection(googSelection));
+    expect(googBoxes!.first.toRect().width, greaterThan(0));
+    expect(googBoxes!.first.toRect().height, greaterThan(0));
+    expect(delegate.text.substring(wordRange!.start, wordRange!.end), 'GOOG');
+    expect(caretOffset, paragraph.getOffsetForCaret(googPosition, Rect.zero));
+    expect(caretHeight, paragraph.getFullHeightForCaret(googPosition));
+  });
+
+  testWidgets('A TextLayout is only valid during the paint call that received it', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _RecordingTextPlugin();
+
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: TextPluginScope(plugin: plugin, child: const Text('Short lived')),
+      ),
+    );
+
+    TextLayout? leaked;
+    plugin.activeDelegates.single.backgroundPainter = _CallbackTextPainter((
+      Canvas canvas,
+      TextLayout layout,
+    ) {
+      leaked = layout;
+      expect(layout.size.width, greaterThan(0));
+    });
+    await tester.pump();
+
+    expect(leaked, isNotNull);
+    const position = TextPosition(offset: 0);
+    expect(() => leaked!.size, throwsAssertionError);
+    expect(
+      () => leaked!.getBoxesForSelection(const TextSelection(baseOffset: 0, extentOffset: 1)),
+      throwsAssertionError,
+    );
+    expect(() => leaked!.getPositionForOffset(Offset.zero), throwsAssertionError);
+    expect(() => leaked!.getWordBoundary(position), throwsAssertionError);
+    expect(() => leaked!.getOffsetForCaret(position, Rect.zero), throwsAssertionError);
+    expect(() => leaked!.getFullHeightForCaret(position), throwsAssertionError);
+  });
+
+  testWidgets(
+    'A text that is only laid out again repaints with the new layout, without a plugin callback',
+    (WidgetTester tester) async {
+      final plugin = _RecordingTextPlugin();
+      final width = ValueNotifier<double>(800);
+      addTearDown(width.dispose);
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: TextPluginScope(
+            plugin: plugin,
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: ValueListenableBuilder<double>(
+                valueListenable: width,
+                builder: (BuildContext context, double value, Widget? child) {
+                  return SizedBox(width: value, child: child);
+                },
+                child: const Text('one two three four five six seven eight'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final TextDelegate delegate = plugin.activeDelegates.single;
+      final sizes = <Size>[];
+      final boxCounts = <int>[];
+      var notifications = 0;
+      delegate.addListener(() => notifications += 1);
+      delegate.backgroundPainter = _CallbackTextPainter((Canvas canvas, TextLayout layout) {
+        sizes.add(layout.size);
+        boxCounts.add(
+          layout
+              .getBoxesForSelection(
+                TextSelection(baseOffset: 0, extentOffset: delegate.text.length),
+              )
+              .length,
+        );
+      });
+      await tester.pump();
+      expect(sizes, hasLength(1));
+      expect(boxCounts.single, 1);
+
+      // Only the width changes. The text is the same.
+      plugin.log.clear();
+      width.value = 200;
+      await tester.pump();
+
+      // The plugin and the listeners of the delegate heard nothing.
+      expect(plugin.log, isEmpty);
+      expect(notifications, 0);
+      // The painter ran again, with the new layout.
+      expect(sizes, hasLength(2));
+      expect(sizes.last.width, lessThanOrEqualTo(200));
+      expect(sizes.last.height, greaterThan(sizes.first.height));
+      expect(boxCounts.last, greaterThan(1));
+    },
+  );
+
+  testWidgets('Document order is valid in didAddText for a text inserted between its siblings', (
+    WidgetTester tester,
+  ) async {
+    final plugin = _OrderRecordingTextPlugin();
+    Widget build(List<String> labels) {
+      return Directionality(
+        textDirection: TextDirection.ltr,
+        child: TextPluginScope(
+          plugin: plugin,
+          // The texts are direct children of the Column.
+          child: Column(
+            children: <Widget>[
+              for (final String label in labels) Text(label, key: ValueKey<String>(label)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    await tester.pumpWidget(build(<String>['A', 'B', 'C', 'D']));
+    expect(plugin.orderByCompareTo, <String>['A', 'B', 'C', 'D']);
+    expect(plugin.orderBySort, <String>['A', 'B', 'C', 'D']);
+
+    await tester.pumpWidget(build(<String>['A', 'X', 'B', 'C', 'D']));
+    expect(plugin.addedTexts.last, 'X');
+    expect(plugin.orderByCompareTo, <String>['A', 'X', 'B', 'C', 'D']);
+    expect(plugin.orderBySort, <String>['A', 'X', 'B', 'C', 'D']);
   });
 
   testWidgets('Multiple TextPlugins compose and paint in installation order (root first)', (
@@ -251,7 +387,7 @@ void main() {
     ]);
   });
 
-  testWidgets('CustomPainter repaint listenable triggers paragraph repaint', (
+  testWidgets('TextPluginPainter repaint listenable triggers paragraph repaint', (
     WidgetTester tester,
   ) async {
     final plugin = _RecordingTextPlugin();
@@ -267,7 +403,7 @@ void main() {
     );
 
     final TextDelegate delegate = plugin.activeDelegates.single;
-    delegate.backgroundPainter = _CallbackCustomPainter((Canvas canvas, Size size) {
+    delegate.backgroundPainter = _CallbackTextPainter((Canvas canvas, TextLayout layout) {
       paintCount += 1;
     }, repaint: repaintNotifier);
 
@@ -542,7 +678,7 @@ void main() {
       final TextDelegate lastItem = plugin.activeDelegates.firstWhere(
         (TextDelegate d) => d.text == 'Lazy Item 29',
       );
-      expect(lastItem.hasLayout, isTrue);
+      expect(lastItem.attached, isTrue);
 
       // And we can scroll directly to the previously offscreen item 29 via ensureVisible!
       lastItem.ensureVisible(const TextRange(start: 0, end: 12));
@@ -674,7 +810,6 @@ void main() {
     final TextDelegate delegate = plugin.activeDelegates.single;
     expect(delegate.text, 'Initial Editable');
     expect(plugin.log, contains('plugin:add:Initial Editable'));
-    expect(plugin.log, contains('plugin:layout:Initial Editable'));
 
     plugin.log.clear();
 
@@ -684,7 +819,6 @@ void main() {
 
     expect(delegate.text, 'Updated Editable');
     expect(plugin.log, contains('plugin:update:Updated Editable'));
-    expect(plugin.log, contains('plugin:layout:Updated Editable'));
 
     plugin.log.clear();
 
@@ -764,9 +898,9 @@ void main() {
           ),
         );
         expect(tester.takeException(), isNull);
-        plugin.activeDelegates.single.backgroundPainter = _CallbackCustomPainter((
+        plugin.activeDelegates.single.backgroundPainter = _CallbackTextPainter((
           Canvas canvas,
-          Size size,
+          TextLayout layout,
         ) {
           paint(canvas);
         });
@@ -959,10 +1093,13 @@ void main() {
     },
   );
 
-  testWidgets('Lifecycle callbacks (didAddText, didUpdateText, didLayoutText) have valid layout', (
+  testWidgets('Lifecycle callbacks run after layout, and a painter they set paints in that frame', (
     WidgetTester tester,
   ) async {
-    final plugin = _GeometryCheckingTextPlugin();
+    final plugin = _PaintOnCallbackTextPlugin(() {
+      final RenderBox text = tester.renderObject<RenderBox>(find.byType(RichText));
+      return text.hasSize && !text.debugNeedsLayout;
+    });
 
     await tester.pumpWidget(
       Directionality(
@@ -971,7 +1108,9 @@ void main() {
       ),
     );
 
-    expect(plugin.events, containsAll(<String>['add:boxes=1', 'layout:boxes=1']));
+    // One frame: the callback ran after the text was laid out, and the painter
+    // that it set painted with the layout.
+    expect(plugin.events, <String>['add:laidOut=true', 'paint:Hello Geometry:boxes=1']);
     plugin.events.clear();
 
     await tester.pumpWidget(
@@ -981,7 +1120,7 @@ void main() {
       ),
     );
 
-    expect(plugin.events, containsAll(<String>['update:boxes=1', 'layout:boxes=1']));
+    expect(plugin.events, <String>['update:laidOut=true', 'paint:Updated Geometry:boxes=1']);
   });
 
   testWidgets(
@@ -1027,16 +1166,29 @@ void main() {
       expect(boxRenderObject.color, const Color(0xFF2196F3));
       expect(boxRenderObject.boxSize, const Size(80, 40));
 
-      final List<TextBox> badgeBoxes = plugin.activeDelegates[0].getBoxesForSelection(
-        const TextSelection(baseOffset: 0, extentOffset: 5),
-      );
+      // A painter gets the geometry that the host render object reports.
+      List<TextBox>? badgeBoxes;
+      List<TextBox>? boxWidgetBoxes;
+      plugin.activeDelegates[0].backgroundPainter = _CallbackTextPainter((
+        Canvas canvas,
+        TextLayout layout,
+      ) {
+        badgeBoxes = layout.getBoxesForSelection(
+          const TextSelection(baseOffset: 0, extentOffset: 5),
+        );
+      });
+      plugin.activeDelegates[1].backgroundPainter = _CallbackTextPainter((
+        Canvas canvas,
+        TextLayout layout,
+      ) {
+        boxWidgetBoxes = layout.getBoxesForSelection(
+          const TextSelection(baseOffset: 0, extentOffset: 5),
+        );
+      });
+      await tester.pump();
       expect(badgeBoxes, isNotEmpty);
-
-      final List<TextBox> boxWidgetBoxes = plugin.activeDelegates[1].getBoxesForSelection(
-        const TextSelection(baseOffset: 0, extentOffset: 5),
-      );
-      expect(boxWidgetBoxes.length, 1);
-      expect(boxWidgetBoxes.single.toRect(), const Rect.fromLTWH(0, 0, 80, 40));
+      expect(boxWidgetBoxes!.length, 1);
+      expect(boxWidgetBoxes!.single.toRect(), const Rect.fromLTWH(0, 0, 80, 40));
 
       plugin.log.clear();
       await tester.pumpWidget(
@@ -1131,7 +1283,7 @@ void main() {
     await tester.pumpAndSettle();
     // Uncovered again: the text is given back, with a valid layout.
     expect(textsOf(plugin), <String>['First page']);
-    expect(plugin.activeDelegates.single.hasLayout, isTrue);
+    expect(tester.renderObject<RenderBox>(find.text('First page')).hasSize, isTrue);
   });
 
   testWidgets('Text in a route below a non-opaque route stays with its plugins', (
@@ -1275,11 +1427,11 @@ void main() {
       );
       expect(tester.takeException(), isNull);
 
-      // The next time the text is laid out, run the action in the callback.
-      plugin.onLayout = action;
+      // The next time the text changes, run the action in the callback.
+      plugin.onUpdate = action;
       text.value = 'after';
       await tester.pump();
-      expect(plugin.onLayout, isNull, reason: 'the callback should have run');
+      expect(plugin.onUpdate, isNull, reason: 'the callback should have run');
       final Object? error = tester.takeException();
 
       // Leave a clean tree for the next case.
@@ -1295,7 +1447,7 @@ void main() {
     expect(error, isFlutterError);
     expect((error! as FlutterError).message, contains('was mutated during a post-layout callback'));
     expect(error.toString(), contains('RenderParagraph'));
-    expect(error.toString(), contains('didLayoutText'));
+    expect(error.toString(), contains('didUpdateText'));
 
     // Marking another render object of the same tree as needing layout.
     error = await errorFor((TextDelegate delegate) {
@@ -1304,11 +1456,9 @@ void main() {
     expect(error, isFlutterError);
     expect((error! as FlutterError).message, contains('was mutated during a post-layout callback'));
 
-    // What a plugin is allowed to do: read geometry, set a painter, repaint.
+    // What a plugin is allowed to do: set a painter, repaint.
     error = await errorFor((TextDelegate delegate) {
-      expect(delegate.hasLayout, isTrue);
-      delegate.getBoxesForSelection(const TextSelection(baseOffset: 0, extentOffset: 1));
-      delegate.backgroundPainter = _CallbackCustomPainter((Canvas canvas, Size size) {});
+      delegate.backgroundPainter = _CallbackTextPainter((Canvas canvas, TextLayout layout) {});
       delegate.markNeedsPaint();
     });
     expect(error, isNull);
@@ -1317,7 +1467,7 @@ void main() {
   testWidgets('A scroll requested in a lifecycle callback runs after the frame', (
     WidgetTester tester,
   ) async {
-    // Scrolls to the text from inside didLayoutText, with no animation.
+    // Scrolls to the text from inside didUpdateText, with no animation.
     Future<void> scrollFromCallback({required bool lazyList}) async {
       final plugin = _CallbackActionTextPlugin();
       final text = ValueNotifier<String>('before');
@@ -1351,13 +1501,13 @@ void main() {
       expect(scrollController.offset, 0.0);
 
       double? offsetInCallback;
-      plugin.onLayout = (TextDelegate delegate) {
+      plugin.onUpdate = (TextDelegate delegate) {
         delegate.ensureVisible(const TextRange(start: 0, end: 1));
         offsetInCallback = scrollController.offset;
       };
       text.value = 'jump now';
       await tester.pump();
-      expect(plugin.onLayout, isNull, reason: 'the callback should have run');
+      expect(plugin.onUpdate, isNull, reason: 'the callback should have run');
       expect(tester.takeException(), isNull);
       // Nothing moved inside the callback. The scroll ran at the end of the
       // frame and asked for another frame.
@@ -1422,7 +1572,7 @@ void main() {
     );
 
     var ranAfterFrame = false;
-    plugin.onLayout = (TextDelegate delegate) {
+    plugin.onUpdate = (TextDelegate delegate) {
       // The pattern a plugin uses when it has to change layout.
       SchedulerBinding.instance.addPostFrameCallback((Duration timeStamp) {
         tester.renderObject(find.byType(RichText)).markNeedsLayout();
@@ -1713,26 +1863,54 @@ class _BoundedListTestWidget extends StatelessWidget {
   }
 }
 
-class _GeometryCheckingTextPlugin extends TextPlugin {
+/// Sets a painter in its callbacks, and records when they and the painter run.
+class _PaintOnCallbackTextPlugin extends TextPlugin {
+  _PaintOnCallbackTextPlugin(this.isTextLaidOut);
+
+  /// Whether the text has a layout. The delegate does not say, so the test
+  /// looks at the render object.
+  final bool Function() isTextLaidOut;
   final List<String> events = <String>[];
 
-  void _checkGeometry(String hook, TextDelegate delegate) {
-    expect(delegate.hasLayout, isTrue, reason: '$hook should have valid layout');
-    expect(delegate.size.width, greaterThan(0), reason: '$hook should have non-zero width');
-    final List<TextBox> boxes = delegate.getBoxesForSelection(
-      TextSelection(baseOffset: 0, extentOffset: delegate.text.length),
-    );
-    events.add('$hook:boxes=${boxes.length}');
+  void _setPainter(String hook, TextDelegate delegate) {
+    events.add('$hook:laidOut=${isTextLaidOut()}');
+    delegate.backgroundPainter = _CallbackTextPainter((Canvas canvas, TextLayout layout) {
+      final List<TextBox> boxes = layout.getBoxesForSelection(
+        TextSelection(baseOffset: 0, extentOffset: delegate.text.length),
+      );
+      events.add('paint:${delegate.text}:boxes=${boxes.length}');
+    });
   }
 
   @override
-  void didAddText(TextDelegate delegate) => _checkGeometry('add', delegate);
+  void didAddText(TextDelegate delegate) => _setPainter('add', delegate);
 
   @override
-  void didUpdateText(TextDelegate delegate) => _checkGeometry('update', delegate);
+  void didUpdateText(TextDelegate delegate) => _setPainter('update', delegate);
+}
+
+/// Orders its texts inside [didAddText], with both document order APIs.
+class _OrderRecordingTextPlugin extends TextPlugin {
+  final List<TextDelegate> _delegates = <TextDelegate>[];
+  final List<String> addedTexts = <String>[];
+  List<String> orderByCompareTo = <String>[];
+  List<String> orderBySort = <String>[];
 
   @override
-  void didLayoutText(TextDelegate delegate) => _checkGeometry('layout', delegate);
+  void didAddText(TextDelegate delegate) {
+    _delegates.add(delegate);
+    addedTexts.add(delegate.text);
+    final byCompareTo = <TextDelegate>[..._delegates]..sort();
+    orderByCompareTo = <String>[for (final TextDelegate d in byCompareTo) d.text];
+    final bySort = <TextDelegate>[..._delegates];
+    TextDelegate.sortInDocumentOrder(bySort);
+    orderBySort = <String>[for (final TextDelegate d in bySort) d.text];
+  }
+
+  @override
+  void didRemoveText(TextDelegate delegate) {
+    _delegates.remove(delegate);
+  }
 }
 
 class _EagerToggleTextPlugin extends TextPlugin with ChangeNotifier {

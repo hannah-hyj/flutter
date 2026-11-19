@@ -121,13 +121,6 @@ class SpellcheckLinterPlugin extends TextPlugin {
   }
 
   @override
-  void didLayoutText(TextDelegate delegate) {
-    if (_issuesByDelegate.containsKey(delegate)) {
-      delegate.markNeedsPaint();
-    }
-  }
-
-  @override
   void didRemoveText(TextDelegate delegate) {
     delegate.foregroundPainter = null;
     _issuesByDelegate.remove(delegate);
@@ -163,17 +156,14 @@ class SpellcheckLinterPlugin extends TextPlugin {
   }
 }
 
-class _SpellcheckSquigglePainter extends CustomPainter {
+class _SpellcheckSquigglePainter extends TextPluginPainter {
   _SpellcheckSquigglePainter({required this.delegate, required this.issues});
 
   final TextDelegate delegate;
   final List<SpellcheckIssue> issues;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    if (!delegate.hasLayout) {
-      return;
-    }
+  void paint(Canvas canvas, TextLayout layout) {
     final errorPaint = Paint()
       ..color = const Color(0xFFD32F2F)
       ..style = PaintingStyle.stroke
@@ -192,7 +182,7 @@ class _SpellcheckSquigglePainter extends CustomPainter {
     const waveAmplitude = 1.6;
 
     for (final SpellcheckIssue issue in issues) {
-      final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
+      final List<ui.TextBox> boxes = layout.getBoxesForSelection(
         TextSelection(
           baseOffset: issue.range.start,
           extentOffset: issue.range.end,

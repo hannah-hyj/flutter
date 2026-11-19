@@ -21,11 +21,11 @@ class SearchMatch {
   final TextRange range;
 
   /// Returns the bounding [ui.TextBox]es for this match.
-  List<ui.TextBox> getBoxes() {
-    if (!delegate.hasLayout) {
-      return const <ui.TextBox>[];
-    }
-    return delegate.getBoxesForSelection(
+  ///
+  /// The [layout] is the one a painter of [delegate] receives, so this can
+  /// only be called while painting.
+  List<ui.TextBox> getBoxes(TextLayout layout) {
+    return layout.getBoxesForSelection(
       TextSelection(baseOffset: range.start, extentOffset: range.end),
       includePlaceholders: false,
     );
@@ -207,7 +207,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     Curve curve = Curves.easeInOut,
   }) {
     final SearchMatch? current = activeMatch;
-    if (current == null || !current.delegate.hasLayout) {
+    if (current == null) {
       return;
     }
     current.delegate.ensureVisible(
@@ -226,13 +226,6 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   @override
   void didUpdateText(TextDelegate delegate) {
     _updateDelegateMatches(delegate, _computeMatchesForDelegate(delegate));
-  }
-
-  @override
-  void didLayoutText(TextDelegate delegate) {
-    if (_matchesByDelegate.containsKey(delegate)) {
-      delegate.markNeedsPaint();
-    }
   }
 
   @override
@@ -476,7 +469,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   }
 }
 
-class _SearchBackgroundPainter extends CustomPainter {
+class _SearchBackgroundPainter extends TextPluginPainter {
   _SearchBackgroundPainter({
     required this.delegate,
     required this.matches,
@@ -492,10 +485,7 @@ class _SearchBackgroundPainter extends CustomPainter {
   final Color activeMatchColor;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    if (!delegate.hasLayout) {
-      return;
-    }
+  void paint(Canvas canvas, TextLayout layout) {
     final matchPaint = Paint()
       ..color = matchColor
       ..style = PaintingStyle.fill;
@@ -505,7 +495,7 @@ class _SearchBackgroundPainter extends CustomPainter {
 
     for (final SearchMatch match in matches) {
       final isActive = match == activeMatch;
-      final List<ui.TextBox> boxes = match.getBoxes();
+      final List<ui.TextBox> boxes = match.getBoxes(layout);
       for (final box in boxes) {
         final rrect = RRect.fromRectAndRadius(
           box.toRect().inflate(1.5),
@@ -525,7 +515,7 @@ class _SearchBackgroundPainter extends CustomPainter {
   }
 }
 
-class _SearchForegroundPainter extends CustomPainter {
+class _SearchForegroundPainter extends TextPluginPainter {
   _SearchForegroundPainter({
     required this.delegate,
     required this.activeMatch,
@@ -537,16 +527,13 @@ class _SearchForegroundPainter extends CustomPainter {
   final Color borderColor;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    if (!delegate.hasLayout) {
-      return;
-    }
+  void paint(Canvas canvas, TextLayout layout) {
     final borderPaint = Paint()
       ..color = borderColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.75;
 
-    for (final ui.TextBox box in activeMatch.getBoxes()) {
+    for (final ui.TextBox box in activeMatch.getBoxes(layout)) {
       final rrect = RRect.fromRectAndRadius(
         box.toRect().inflate(2.0),
         const Radius.circular(3.5),

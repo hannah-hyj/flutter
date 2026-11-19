@@ -302,10 +302,11 @@ void main() {
 
       final TextDelegate topDelegate = plugin.matches.first.delegate;
       final TextDelegate bottomDelegate = plugin.matches.last.delegate;
-      final CustomPainter? initialTopPainter = topDelegate.backgroundPainter;
-      final CustomPainter? initialBottomBgPainter =
+      final TextPluginPainter? initialTopPainter =
+          topDelegate.backgroundPainter;
+      final TextPluginPainter? initialBottomBgPainter =
           bottomDelegate.backgroundPainter;
-      final CustomPainter? initialBottomFgPainter =
+      final TextPluginPainter? initialBottomFgPainter =
           bottomDelegate.foregroundPainter;
       expect(initialTopPainter, isNotNull);
       expect(initialBottomBgPainter, isNotNull);
@@ -350,7 +351,7 @@ void main() {
       // 4. Middle paragraph expands to 2 matches in place: only middle painter
       // updates, top and bottom painters remain untouched, activeMatch shifts to 3.
       final TextDelegate middleDelegate = plugin.matches[1].delegate;
-      final CustomPainter? middlePainterWithOne =
+      final TextPluginPainter? middlePainterWithOne =
           middleDelegate.backgroundPainter;
       expect(middlePainterWithOne, isNotNull);
 

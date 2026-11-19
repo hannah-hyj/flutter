@@ -2409,9 +2409,9 @@ abstract class RenderObject with DiagnosticableTreeMixin implements HitTestTarge
             style: DiagnosticsTreeStyle.errorProperty,
           ),
           ErrorHint(
-            'The lifecycle callbacks of a TextPlugin (didAddText, '
-            'didUpdateText and didLayoutText) are post-layout callbacks. In '
-            'them a plugin may read the text and its geometry, set its '
+            'The lifecycle callbacks of a TextPlugin (didAddText and '
+            'didUpdateText) are post-layout callbacks. In '
+            'them a plugin may read the text, set its '
             'painters and ask for a repaint. To change layout or to scroll, '
             'wait until after the frame, for example with '
             'SchedulerBinding.addPostFrameCallback.',

@@ -195,7 +195,7 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
 
   void _ensureCurrentWordVisible() {
     final ReadAloudWord? active = currentWord;
-    if (active == null || !active.delegate.hasLayout) {
+    if (active == null) {
       return;
     }
     active.delegate.ensureVisible(
@@ -214,13 +214,6 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
   @override
   void didUpdateText(TextDelegate delegate) {
     _rebuildWords();
-  }
-
-  @override
-  void didLayoutText(TextDelegate delegate) {
-    if (currentWord?.delegate == delegate) {
-      delegate.markNeedsPaint();
-    }
   }
 
   @override
@@ -295,7 +288,7 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
   }
 }
 
-class _ReadAloudBackgroundPainter extends CustomPainter {
+class _ReadAloudBackgroundPainter extends TextPluginPainter {
   _ReadAloudBackgroundPainter({
     required this.delegate,
     required this.wordRange,
@@ -309,16 +302,13 @@ class _ReadAloudBackgroundPainter extends CustomPainter {
   final Color activeWordBackgroundColor;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    if (!delegate.hasLayout) {
-      return;
-    }
+  void paint(Canvas canvas, TextLayout layout) {
     final paragraphPaint = Paint()
       ..color = paragraphTintColor
       ..style = PaintingStyle.fill;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        (Offset.zero & size).inflate(4.0),
+        (Offset.zero & layout.size).inflate(4.0),
         const Radius.circular(6.0),
       ),
       paragraphPaint,
@@ -327,7 +317,7 @@ class _ReadAloudBackgroundPainter extends CustomPainter {
     final wordPaint = Paint()
       ..color = activeWordBackgroundColor
       ..style = PaintingStyle.fill;
-    final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
+    final List<ui.TextBox> boxes = layout.getBoxesForSelection(
       TextSelection(baseOffset: wordRange.start, extentOffset: wordRange.end),
       includePlaceholders: false,
     );
@@ -350,7 +340,7 @@ class _ReadAloudBackgroundPainter extends CustomPainter {
   }
 }
 
-class _ReadAloudForegroundPainter extends CustomPainter {
+class _ReadAloudForegroundPainter extends TextPluginPainter {
   _ReadAloudForegroundPainter({
     required this.delegate,
     required this.wordRange,
@@ -362,17 +352,14 @@ class _ReadAloudForegroundPainter extends CustomPainter {
   final Color underlineColor;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    if (!delegate.hasLayout) {
-      return;
-    }
+  void paint(Canvas canvas, TextLayout layout) {
     final underlinePaint = Paint()
       ..color = underlineColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.2
       ..strokeCap = StrokeCap.round;
 
-    final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
+    final List<ui.TextBox> boxes = layout.getBoxesForSelection(
       TextSelection(baseOffset: wordRange.start, extentOffset: wordRange.end),
       includePlaceholders: false,
     );

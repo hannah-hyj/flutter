@@ -131,13 +131,6 @@ class StockTickerPlugin extends TextPlugin {
   }
 
   @override
-  void didLayoutText(TextDelegate delegate) {
-    if (_occurrencesByDelegate.containsKey(delegate)) {
-      delegate.markNeedsPaint();
-    }
-  }
-
-  @override
   void didRemoveText(TextDelegate delegate) {
     delegate.backgroundPainter = null;
     delegate.foregroundPainter = null;
@@ -183,7 +176,7 @@ class StockTickerPlugin extends TextPlugin {
   }
 }
 
-class _StockTickerBackgroundPainter extends CustomPainter {
+class _StockTickerBackgroundPainter extends TextPluginPainter {
   _StockTickerBackgroundPainter({
     required this.delegate,
     required this.occurrences,
@@ -193,10 +186,7 @@ class _StockTickerBackgroundPainter extends CustomPainter {
   final List<_TickerOccurrence> occurrences;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    if (!delegate.hasLayout) {
-      return;
-    }
+  void paint(Canvas canvas, TextLayout layout) {
     final upPaint = Paint()
       ..color = const Color(0x332E7D32)
       ..style = PaintingStyle.fill;
@@ -205,7 +195,7 @@ class _StockTickerBackgroundPainter extends CustomPainter {
       ..style = PaintingStyle.fill;
 
     for (final _TickerOccurrence occurrence in occurrences) {
-      final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
+      final List<ui.TextBox> boxes = layout.getBoxesForSelection(
         TextSelection(
           baseOffset: occurrence.range.start,
           extentOffset: occurrence.range.end,
@@ -230,7 +220,7 @@ class _StockTickerBackgroundPainter extends CustomPainter {
   }
 }
 
-class _StockTickerForegroundPainter extends CustomPainter {
+class _StockTickerForegroundPainter extends TextPluginPainter {
   _StockTickerForegroundPainter({
     required this.delegate,
     required this.occurrences,
@@ -240,10 +230,7 @@ class _StockTickerForegroundPainter extends CustomPainter {
   final List<_TickerOccurrence> occurrences;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    if (!delegate.hasLayout) {
-      return;
-    }
+  void paint(Canvas canvas, TextLayout layout) {
     final upStroke = Paint()
       ..color = const Color(0xFF2E7D32)
       ..strokeWidth = 1.5
@@ -255,7 +242,7 @@ class _StockTickerForegroundPainter extends CustomPainter {
 
     for (final _TickerOccurrence occurrence in occurrences) {
       final paint = occurrence.info.isPositive ? upStroke : downStroke;
-      final List<ui.TextBox> boxes = delegate.getBoxesForSelection(
+      final List<ui.TextBox> boxes = layout.getBoxesForSelection(
         TextSelection(
           baseOffset: occurrence.range.start,
           extentOffset: occurrence.range.end,
