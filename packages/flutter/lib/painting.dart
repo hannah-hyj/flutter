@@ -67,4 +67,5 @@ export 'src/painting/strut_style.dart';
 export 'src/painting/text_painter.dart';
 export 'src/painting/text_scaler.dart';
 export 'src/painting/text_span.dart';
+export 'src/painting/text_span_decoration.dart';
 export 'src/painting/text_style.dart';
