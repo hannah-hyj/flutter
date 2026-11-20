@@ -358,8 +358,10 @@ class RenderParagraph extends RenderBox
     this._selectionColor,
     SelectionRegistrar? registrar,
     List<TextPlugin>? textPlugins,
+    TextDelegateSet? textDelegateSet,
     this._devicePixelRatio = 1.0,
   }) : assert(text.debugAssertIsValid()),
+       _text = text,
        assert(maxLines == null || maxLines > 0),
        assert(
          identical(textScaler, const _UnspecifiedTextScaler()) || textScaleFactor == 1.0,
@@ -383,6 +385,7 @@ class RenderParagraph extends RenderBox
     addAll(children);
     this.registrar = registrar;
     this.textPlugins = textPlugins;
+    this.textDelegateSet = textDelegateSet;
   }
 
   static final String _placeholderCharacter = String.fromCharCode(
@@ -418,20 +421,41 @@ class RenderParagraph extends RenderBox
   List<InlineSpanSemanticsInformation>? _cachedCombinedSemanticsInfos;
 
   /// The text to display.
-  InlineSpan get text => _textPainter.text!;
+  ///
+  /// This is the span that this render object was given. If this render
+  /// object has [textPlugins], the span that is laid out and painted is this
+  /// span with the decorations of the plugins.
+  InlineSpan get text => _text;
+  InlineSpan _text;
 
   set text(InlineSpan value) {
-    final RenderComparison comparison = _textPainter.text!.compareTo(value);
-    if (comparison == RenderComparison.identical) {
+    if (_text.compareTo(value) == RenderComparison.identical) {
       return;
     }
-    // Only read the old plain text when the span changed. A rebuild with an
-    // equal span is the common case, and building the string for every text
-    // on the page is not free.
-    final String? oldPlainText = hasTextDelegates
-        ? _textPainter.text!.toPlainText(includeSemanticsLabels: false)
-        : null;
-    switch (comparison) {
+    _text = value;
+    // With plugins of its own (Option B), the plugins are told about the new
+    // text first, and their decorations are applied to it.
+    if (!updateTextDelegates()) {
+      _setPainterText(value);
+    }
+  }
+
+  @override
+  void applyDecoratedTextSpan(InlineSpan span) => _setPainterText(span);
+
+  /// The span that is laid out and painted: [text] with the decorations of
+  /// the text plugins.
+  @visibleForTesting
+  InlineSpan get debugDecoratedText => _textPainter.text!;
+
+  /// How many times the selectable fragments were kept because only the
+  /// decoration of the text changed, for tests.
+  @visibleForTesting
+  static int debugKeptSelectableFragmentsCount = 0;
+
+  void _setPainterText(InlineSpan value) {
+    final InlineSpan old = _textPainter.text!;
+    switch (old.compareTo(value)) {
       case RenderComparison.identical:
         return;
       case RenderComparison.metadata:
@@ -445,20 +469,36 @@ class RenderParagraph extends RenderBox
         markNeedsPaint();
         markNeedsSemanticsUpdate();
       case RenderComparison.layout:
+        // A decoration splits spans, which is a layout change of the span
+        // tree even though no character changed. The selectable fragments
+        // only depend on the plain text, so they are kept in that case, and
+        // the selection of the user with them.
+        final bool keepFragments =
+            hasTextDelegates &&
+            _lastSelectableFragments != null &&
+            old.toPlainText(includeSemanticsLabels: false) ==
+                value.toPlainText(includeSemanticsLabels: false);
         _textPainter.text = value;
         _overflowShader = null;
         _cachedAttributedLabels = null;
         _cachedCombinedSemanticsInfos = null;
         markNeedsLayout();
-        _removeSelectionRegistrarSubscription();
-        _disposeSelectableFragments();
-        _updateSelectionRegistrarSubscription();
-    }
-    if (oldPlainText != null &&
-        oldPlainText != _textPainter.text!.toPlainText(includeSemanticsLabels: false)) {
-      markNeedsTextDelegateUpdate();
+        markNeedsSemanticsUpdate();
+        if (keepFragments) {
+          debugKeptSelectableFragmentsCount += 1;
+        } else {
+          _removeSelectionRegistrarSubscription();
+          _disposeSelectableFragments();
+          _updateSelectionRegistrarSubscription();
+        }
     }
   }
+
+  @override
+  InlineSpan get textSpan => _text;
+
+  @override
+  bool get isSelectable => _registrar != null;
 
   /// The ongoing selections in this paragraph.
   ///
@@ -521,7 +561,7 @@ class RenderParagraph extends RenderBox
   }
 
   List<_SelectableFragment> _getSelectableFragments() {
-    final String plainText = text.toPlainText(includeSemanticsLabels: false);
+    final String plainText = _textPainter.text!.toPlainText(includeSemanticsLabels: false);
     final result = <_SelectableFragment>[];
     var start = 0;
     while (start < plainText.length) {
@@ -565,17 +605,6 @@ class RenderParagraph extends RenderBox
     }
     _lastSelectableFragments = null;
   }
-
-  @override
-  String get plainText => text.toPlainText(includeSemanticsLabels: false);
-
-  @override
-  InlineSpan get textSpan => text;
-
-  void _notifyTextPluginsSelectionChanged() => notifyTextDelegateListeners();
-
-  bool get _hasSelectionHighlightPlugin =>
-      hasTextDelegates && textPlugins!.any((TextPlugin plugin) => plugin.handlesSelectionHighlight);
 
   @override
   bool get alwaysNeedsCompositing => _lastSelectableFragments?.isNotEmpty ?? false;
@@ -800,7 +829,7 @@ class RenderParagraph extends RenderBox
       return;
     }
     _selectionColor = value;
-    _notifyTextPluginsSelectionChanged();
+    notifyTextDelegateListeners();
     if (_lastSelectableFragments?.any(
           (_SelectableFragment fragment) => fragment.value.hasSelection,
         ) ??
@@ -1071,18 +1100,7 @@ class RenderParagraph extends RenderBox
       return true;
     }());
 
-    if (hasTextDelegates) {
-      if (_needsClipping) {
-        context.canvas.save();
-        context.canvas.clipRect(offset & size);
-      }
-      paintTextPluginBackgrounds(context, offset);
-      if (_needsClipping) {
-        context.canvas.restore();
-      }
-    }
-
-    if (_lastSelectableFragments != null && !_hasSelectionHighlightPlugin) {
+    if (_lastSelectableFragments != null && !hasSelectionHighlightPlugin) {
       if (_needsClipping) {
         context.canvas.save();
         context.canvas.clipRect(offset & size);
@@ -1125,17 +1143,6 @@ class RenderParagraph extends RenderBox
         context.canvas.drawRect(Offset.zero & size, paint);
       }
       context.canvas.restore();
-    }
-
-    if (hasTextDelegates) {
-      if (_needsClipping) {
-        context.canvas.save();
-        context.canvas.clipRect(offset & size);
-      }
-      paintTextPluginForegrounds(context, offset);
-      if (_needsClipping) {
-        context.canvas.restore();
-      }
     }
 
     if (_lastSelectableFragments != null) {
@@ -1199,7 +1206,6 @@ class RenderParagraph extends RenderBox
   /// Returns the position within the text for the given pixel offset.
   ///
   /// Valid only after [layout].
-  @override
   TextPosition getPositionForOffset(Offset offset) {
     assert(!debugNeedsLayout);
     _layoutTextWithConstraints(constraints);
@@ -1215,7 +1221,6 @@ class RenderParagraph extends RenderBox
   /// <http://www.unicode.org/reports/tr29/#Word_Boundaries>.
   ///
   /// Valid only after [layout].
-  @override
   TextRange getWordBoundary(TextPosition position) {
     assert(!debugNeedsLayout);
     _layoutTextWithConstraints(constraints);
@@ -1275,7 +1280,7 @@ class RenderParagraph extends RenderBox
   @override
   void describeSemanticsConfiguration(SemanticsConfiguration config) {
     super.describeSemanticsConfiguration(config);
-    _semanticsInfo = text.getSemanticsInformation();
+    _semanticsInfo = _textPainter.text!.getSemanticsInformation();
     var needsAssembleSemanticsNode = false;
     var needsChildConfigurationsDelegate = false;
     for (final InlineSpanSemanticsInformation info in _semanticsInfo!) {
@@ -1746,7 +1751,7 @@ class _SelectableFragment
   }
 
   void _didChangeSelection() {
-    paragraph._notifyTextPluginsSelectionChanged();
+    paragraph.notifyTextDelegateListeners();
     paragraph.markNeedsPaint();
     _updateSelectionGeometry();
   }

@@ -3,8 +3,6 @@
 // found in the LICENSE file.
 
 import 'dart:async';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -205,23 +203,39 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
     );
   }
 
+  // The lifecycle callbacks run while texts are being built. The document
+  // order is not known then, so the word list is made at the end of the frame.
+
   @override
   void didAddText(TextDelegate delegate) {
     _delegates.add(delegate);
-    _rebuildWords();
+    _scheduleRebuildWords();
   }
 
   @override
   void didUpdateText(TextDelegate delegate) {
-    _rebuildWords();
+    _scheduleRebuildWords();
   }
 
   @override
   void didRemoveText(TextDelegate delegate) {
-    delegate.backgroundPainter = null;
-    delegate.foregroundPainter = null;
     _delegates.remove(delegate);
-    _rebuildWords();
+    _scheduleRebuildWords();
+  }
+
+  bool _rebuildScheduled = false;
+
+  void _scheduleRebuildWords() {
+    if (_rebuildScheduled) {
+      return;
+    }
+    _rebuildScheduled = true;
+    TextPlugin.deferToEndOfFrame(() {
+      _rebuildScheduled = false;
+      if (!_disposed) {
+        _rebuildWords();
+      }
+    });
   }
 
   void _rebuildWords() {
@@ -258,26 +272,46 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
     _notifyListenersSafely();
   }
 
+  // The text that has the decorations of the active word.
+  TextDelegate? _decoratedDelegate;
+
+  // Asks for new decorations for the text that had the active word and for
+  // the text that has it now.
   void _updatePainters() {
-    final ReadAloudWord? active = currentWord;
-    for (final TextDelegate delegate in _delegates) {
-      if (active != null && active.delegate == delegate) {
-        delegate.backgroundPainter = _ReadAloudBackgroundPainter(
-          delegate: delegate,
-          wordRange: active.range,
-          paragraphTintColor: paragraphTintColor,
-          activeWordBackgroundColor: activeWordBackgroundColor,
-        );
-        delegate.foregroundPainter = _ReadAloudForegroundPainter(
-          delegate: delegate,
-          wordRange: active.range,
-          underlineColor: activeWordUnderlineColor,
-        );
-      } else {
-        delegate.backgroundPainter = null;
-        delegate.foregroundPainter = null;
-      }
+    final TextDelegate? active = currentWord?.delegate;
+    final TextDelegate? previous = _decoratedDelegate;
+    _decoratedDelegate = active;
+    if (previous != null && previous != active && _delegates.contains(previous)) {
+      previous.markNeedsDecoration();
     }
+    if (active != null && _delegates.contains(active)) {
+      active.markNeedsDecoration();
+    }
+  }
+
+  @override
+  List<TextSpanDecoration> buildDecorations(TextDelegate delegate) {
+    final ReadAloudWord? active = currentWord;
+    if (active == null || active.delegate != delegate) {
+      return const <TextSpanDecoration>[];
+    }
+    return <TextSpanDecoration>[
+      // The painter version tints a rounded box around the whole paragraph.
+      // A span can only color the boxes of its glyph runs.
+      TextSpanDecoration(
+        range: TextRange(start: 0, end: delegate.text.length),
+        style: TextStyle(backgroundColor: paragraphTintColor),
+      ),
+      TextSpanDecoration(
+        range: active.range,
+        style: TextStyle(
+          backgroundColor: activeWordBackgroundColor,
+          decoration: TextDecoration.underline,
+          decorationColor: activeWordUnderlineColor,
+          decorationThickness: 2,
+        ),
+      ),
+    ];
   }
 
   @override
@@ -285,97 +319,5 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
     _disposed = true;
     _timer?.cancel();
     super.dispose();
-  }
-}
-
-class _ReadAloudBackgroundPainter extends TextPluginPainter {
-  _ReadAloudBackgroundPainter({
-    required this.delegate,
-    required this.wordRange,
-    required this.paragraphTintColor,
-    required this.activeWordBackgroundColor,
-  });
-
-  final TextDelegate delegate;
-  final TextRange wordRange;
-  final Color paragraphTintColor;
-  final Color activeWordBackgroundColor;
-
-  @override
-  void paint(Canvas canvas, TextLayout layout) {
-    final paragraphPaint = Paint()
-      ..color = paragraphTintColor
-      ..style = PaintingStyle.fill;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        (Offset.zero & layout.size).inflate(4.0),
-        const Radius.circular(6.0),
-      ),
-      paragraphPaint,
-    );
-
-    final wordPaint = Paint()
-      ..color = activeWordBackgroundColor
-      ..style = PaintingStyle.fill;
-    final List<ui.TextBox> boxes = layout.getBoxesForSelection(
-      TextSelection(baseOffset: wordRange.start, extentOffset: wordRange.end),
-      includePlaceholders: false,
-    );
-    for (final box in boxes) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          box.toRect().inflate(2.0),
-          const Radius.circular(4.0),
-        ),
-        wordPaint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ReadAloudBackgroundPainter oldDelegate) {
-    return oldDelegate.wordRange != wordRange ||
-        oldDelegate.paragraphTintColor != paragraphTintColor ||
-        oldDelegate.activeWordBackgroundColor != activeWordBackgroundColor;
-  }
-}
-
-class _ReadAloudForegroundPainter extends TextPluginPainter {
-  _ReadAloudForegroundPainter({
-    required this.delegate,
-    required this.wordRange,
-    required this.underlineColor,
-  });
-
-  final TextDelegate delegate;
-  final TextRange wordRange;
-  final Color underlineColor;
-
-  @override
-  void paint(Canvas canvas, TextLayout layout) {
-    final underlinePaint = Paint()
-      ..color = underlineColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.2
-      ..strokeCap = StrokeCap.round;
-
-    final List<ui.TextBox> boxes = layout.getBoxesForSelection(
-      TextSelection(baseOffset: wordRange.start, extentOffset: wordRange.end),
-      includePlaceholders: false,
-    );
-    for (final box in boxes) {
-      final Rect rect = box.toRect();
-      canvas.drawLine(
-        Offset(rect.left, rect.bottom + 1.0),
-        Offset(rect.right, rect.bottom + 1.0),
-        underlinePaint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ReadAloudForegroundPainter oldDelegate) {
-    return oldDelegate.wordRange != wordRange ||
-        oldDelegate.underlineColor != underlineColor;
   }
 }

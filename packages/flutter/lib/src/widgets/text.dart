@@ -25,6 +25,7 @@ import 'inherited_theme.dart';
 import 'media_query.dart';
 import 'selectable_region.dart';
 import 'selection_container.dart';
+import 'text_plugin.dart';
 
 // Examples can assume:
 // late BuildContext context;
@@ -777,26 +778,33 @@ class Text extends StatelessWidget {
         ),
       );
     } else {
-      result = RichText(
-        textAlign: textAlign ?? defaultTextStyle.textAlign ?? TextAlign.start,
-        textDirection:
-            textDirection, // RichText uses Directionality.of to obtain a default if this is null.
-        locale: locale, // RichText uses Localizations.localeOf to obtain a default if this is null
-        softWrap: softWrap ?? defaultTextStyle.softWrap,
-        overflow: overflow ?? effectiveTextStyle?.overflow ?? defaultTextStyle.overflow,
-        textScaler: textScaler,
-        maxLines: maxLines ?? defaultTextStyle.maxLines,
-        strutStyle: effectiveStrutStyle,
-        textWidthBasis: textWidthBasis ?? defaultTextStyle.textWidthBasis,
-        textHeightBehavior:
-            textHeightBehavior ??
-            defaultTextStyle.textHeightBehavior ??
-            DefaultTextHeightBehavior.maybeOf(context),
-        selectionColor:
-            selectionColor ??
-            DefaultSelectionStyle.of(context).selectionColor ??
-            DefaultSelectionStyle.defaultColor,
+      result = TextPluginSpanBuilder.wrap(
+        context,
         text: effectiveTextSpan,
+        textDirection: textDirection,
+        builder: (InlineSpan text, TextDelegateSet? delegates) => RichText(
+          textAlign: textAlign ?? defaultTextStyle.textAlign ?? TextAlign.start,
+          textDirection:
+              textDirection, // RichText uses Directionality.of to obtain a default if this is null.
+          locale:
+              locale, // RichText uses Localizations.localeOf to obtain a default if this is null
+          softWrap: softWrap ?? defaultTextStyle.softWrap,
+          overflow: overflow ?? effectiveTextStyle?.overflow ?? defaultTextStyle.overflow,
+          textScaler: textScaler,
+          maxLines: maxLines ?? defaultTextStyle.maxLines,
+          strutStyle: effectiveStrutStyle,
+          textWidthBasis: textWidthBasis ?? defaultTextStyle.textWidthBasis,
+          textHeightBehavior:
+              textHeightBehavior ??
+              defaultTextStyle.textHeightBehavior ??
+              DefaultTextHeightBehavior.maybeOf(context),
+          selectionColor:
+              selectionColor ??
+              DefaultSelectionStyle.of(context).selectionColor ??
+              DefaultSelectionStyle.defaultColor,
+          text: text,
+          textDelegateSet: delegates,
+        ),
       );
     }
     if (semanticsLabel != null || semanticsIdentifier != null) {
@@ -962,21 +970,27 @@ class _RichText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final SelectionRegistrar? registrar = SelectionContainer.maybeOf(context);
-    return RichText(
-      key: textKey,
-      textAlign: textAlign,
-      textDirection: textDirection,
-      locale: locale,
-      softWrap: softWrap,
-      overflow: overflow,
-      textScaler: textScaler,
-      maxLines: maxLines,
-      strutStyle: strutStyle,
-      textWidthBasis: textWidthBasis,
-      textHeightBehavior: textHeightBehavior,
-      selectionRegistrar: registrar,
-      selectionColor: selectionColor,
+    return TextPluginSpanBuilder.wrap(
+      context,
       text: text,
+      textDirection: textDirection,
+      builder: (InlineSpan text, TextDelegateSet? delegates) => RichText(
+        key: textKey,
+        textAlign: textAlign,
+        textDirection: textDirection,
+        locale: locale,
+        softWrap: softWrap,
+        overflow: overflow,
+        textScaler: textScaler,
+        maxLines: maxLines,
+        strutStyle: strutStyle,
+        textWidthBasis: textWidthBasis,
+        textHeightBehavior: textHeightBehavior,
+        selectionRegistrar: registrar,
+        selectionColor: selectionColor,
+        text: text,
+        textDelegateSet: delegates,
+      ),
     );
   }
 }

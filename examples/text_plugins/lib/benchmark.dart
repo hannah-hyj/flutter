@@ -8,27 +8,24 @@
 //
 //     flutter run --profile -d macos -t lib/benchmark.dart
 //
-// It answers two review questions on the RFC:
-//
-//  * Does the cost of the plugin lifecycle follow the amount of text that
-//    changed in a frame, and not the amount of text on the page?
-//  * On a very large page, is appending a little text fast, even if the first
-//    search is slow?
+// The same file runs on the painter prototype (`text-plugin-mvp`) and on the
+// inline-span prototype. What differs between the two is in
+// `benchmark_compat.dart`.
 //
 // Each page is a column of N paragraphs that are all mounted and laid out.
 // Every paragraph is its own repaint boundary, as an item of a list would be.
-// The same page is measured three ways: with no TextPluginScope, with a
-// plugin that does nothing, and with SearchInPagePlugin and an active query.
 //
-// The time reported for a frame is the time spent in drawFrame: build,
-// layout, the post-layout plugin callbacks, paint and compositing. Raster
-// time is not included.
+// A time is reported in two parts where there are two: the time of the call
+// that changes something (for example setting the search query, which scans
+// the text), and the time spent in drawFrame for the frames that follow:
+// build, layout, paint and compositing. Raster time is not included.
 
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import 'benchmark_compat.dart';
 import 'plugins/search_in_page_plugin.dart';
 
 /// How many frames are averaged for one number.
@@ -62,36 +59,38 @@ class _BenchmarkBinding extends WidgetsFlutterBinding {
 
 class _NoopPlugin extends TextPlugin {}
 
-enum _Mode {
-  noScope('no scope'),
-  emptyScope('scope without plugins'),
-  noopPlugin('no-op plugin'),
-  searchPlugin('search plugin');
-
-  const _Mode(this.label);
-
-  final String label;
-}
-
 String _paragraph(int index, int version) {
   final word = index % 10 == 0 ? _query : 'Nothing';
   return 'Paragraph $index, version $version: the quick brown fox jumps over '
       'the lazy dog. $word appears in this sentence.';
 }
 
+Widget _shell(Widget child) {
+  return Directionality(
+    textDirection: TextDirection.ltr,
+    child: DefaultTextStyle(
+      style: const TextStyle(fontSize: 14, color: Color(0xFF000000)),
+      child: ColoredBox(color: const Color(0xFFFFFFFF), child: child),
+    ),
+  );
+}
+
 class _Page extends StatefulWidget {
   const _Page({
     super.key,
     required this.count,
-    required this.plugin,
+    required this.plugins,
+    this.variant,
     this.emptyScope = false,
   });
 
   final int count;
-  final TextPlugin? plugin;
 
-  /// Whether to wrap the page in a scope that installs no plugin. Every text
-  /// then looks up and depends on the scope, but gets no delegate.
+  /// The plugins of the scope. Null for no scope.
+  final List<TextPlugin>? plugins;
+  final Variant? variant;
+
+  /// Whether to wrap the page in a scope that installs no plugin.
   final bool emptyScope;
 
   @override
@@ -103,6 +102,8 @@ class _PageState extends State<_Page> {
     for (var i = 0; i < widget.count; i++)
       ValueNotifier<String>(_paragraph(i, 0)),
   ];
+
+  late List<TextPlugin>? plugins = widget.plugins;
 
   /// Changes [count] paragraphs, spread evenly over the page.
   void change(int count, int version) {
@@ -128,6 +129,13 @@ class _PageState extends State<_Page> {
     });
   }
 
+  /// Replaces the plugins of the scope.
+  void setPlugins(List<TextPlugin> value) {
+    setState(() {
+      plugins = value;
+    });
+  }
+
   @override
   void dispose() {
     for (final ValueNotifier<String> text in texts) {
@@ -136,75 +144,108 @@ class _PageState extends State<_Page> {
     super.dispose();
   }
 
+  late final Widget _column = SingleChildScrollView(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (final ValueNotifier<String> text in texts)
+          RepaintBoundary(
+            child: ValueListenableBuilder<String>(
+              valueListenable: text,
+              builder: (BuildContext context, String value, Widget? child) {
+                return Text(value);
+              },
+            ),
+          ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
-    Widget body = SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          for (final ValueNotifier<String> text in texts)
-            RepaintBoundary(
-              child: ValueListenableBuilder<String>(
-                valueListenable: text,
-                builder: (BuildContext context, String value, Widget? child) {
-                  return Text(value);
-                },
-              ),
+    // The column is built again when the list of texts grows, and when
+    // [rebuild] asks for it.
+    Widget body = texts.length == widget.count && !_rebuildAll
+        ? _column
+        : SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                for (final ValueNotifier<String> text in texts)
+                  RepaintBoundary(
+                    child: ValueListenableBuilder<String>(
+                      valueListenable: text,
+                      builder:
+                          (BuildContext context, String value, Widget? child) {
+                            return Text(value);
+                          },
+                    ),
+                  ),
+              ],
             ),
-        ],
-      ),
-    );
-    final TextPlugin? plugin = widget.plugin;
-    if (plugin != null) {
-      body = TextPluginScope(plugin: plugin, child: body);
+          );
+    final List<TextPlugin>? plugins = this.plugins;
+    if (plugins != null) {
+      body = wrapScope(plugins: plugins, variant: widget.variant!, child: body);
     } else if (widget.emptyScope) {
       body = TextPluginScope.none(child: body);
     }
-    return Directionality(
-      textDirection: TextDirection.ltr,
-      child: DefaultTextStyle(
-        style: const TextStyle(fontSize: 14, color: Color(0xFF000000)),
-        child: ColoredBox(color: const Color(0xFFFFFFFF), child: body),
-      ),
-    );
+    return _shell(body);
   }
+
+  bool _rebuildAll = false;
+
+  /// Whether [rebuild] builds every paragraph widget again (true), or only
+  /// the page and its scope (false).
+  set rebuildAll(bool value) => _rebuildAll = value;
 }
 
 /// Runs one frame now, without waiting for the engine to ask for it.
-///
-/// The engine only asks for frames while the window can be seen. Driving the
-/// frames from here lets the benchmark finish when the window is covered or
-/// the display is asleep, and keeps vsync waits out of the timings.
 void _pumpFrame() {
   _binding.handleBeginFrame(null);
   _binding.handleDrawFrame();
 }
 
-/// Runs the frames that the last frame asked for, such as the one that
-/// follows a notification that a plugin postponed to after the frame.
+/// Runs the frames that the last frame asked for.
 void _settle() {
   for (var i = 0; i < 10 && _binding.hasScheduledFrame; i++) {
     _pumpFrame();
   }
 }
 
-/// Returns the average time in milliseconds of a frame that follows [change].
-Future<double> _measureFrames(int runs, void Function(int run) change) async {
+class _Timing {
+  const _Timing(this.change, this.frame);
+
+  /// Milliseconds in the call that made the change.
+  final double change;
+
+  /// Milliseconds in drawFrame for the frames that followed.
+  final double frame;
+
+  @override
+  String toString() =>
+      '${(change + frame).toStringAsFixed(3)} ms '
+      '(${change.toStringAsFixed(3)} change + ${frame.toStringAsFixed(3)} frame)';
+}
+
+/// Returns the average time of [change] and of the frames that follow it.
+Future<_Timing> _measure(int runs, void Function(int run) change) async {
   _settle();
   final int before = _binding.frameWatch.elapsedMicroseconds;
+  final changeWatch = Stopwatch();
   for (var run = 0; run < runs; run++) {
+    changeWatch.start();
     change(run);
+    changeWatch.stop();
     _pumpFrame();
     _settle();
   }
-  final double result =
+  final double frame =
       (_binding.frameWatch.elapsedMicroseconds - before) / runs / 1000.0;
   // Let the event loop run, so that the window stays responsive.
   await Future<void>.delayed(Duration.zero);
-  return result;
+  return _Timing(changeWatch.elapsedMicroseconds / runs / 1000.0, frame);
 }
-
-String _ms(double value) => '${value.toStringAsFixed(3)} ms';
 
 final List<String> _lines = <String>[];
 
@@ -213,204 +254,262 @@ void _report(String line) {
   debugPrint('BENCHMARK $line');
 }
 
-Future<void> _runScenario(int count, _Mode mode) async {
-  final SearchInPagePlugin? search = mode == _Mode.searchPlugin
-      ? SearchInPagePlugin()
+Future<void> _mount(Widget widget) async {
+  runApp(widget);
+  // The first frame of a new root widget is a warm-up frame that runs from
+  // timers. Wait for it, then run whatever it asked for.
+  await Future<void>.delayed(const Duration(milliseconds: 100));
+  _settle();
+}
+
+Future<void> _unmount() => _mount(const SizedBox.shrink());
+
+enum _Kind { noScope, emptyScope, noop, search }
+
+Future<void> _runPage(int count, _Kind kind, Variant? variant) async {
+  final SearchInPagePlugin? search = kind == _Kind.search
+      ? makeSearch(variant!)
       : null;
-  final TextPlugin? plugin = switch (mode) {
-    _Mode.noScope || _Mode.emptyScope => null,
-    _Mode.noopPlugin => _NoopPlugin(),
-    _Mode.searchPlugin => search,
+  final List<TextPlugin>? plugins = switch (kind) {
+    _Kind.noScope || _Kind.emptyScope => null,
+    _Kind.noop => <TextPlugin>[_NoopPlugin()],
+    _Kind.search => <TextPlugin>[search!],
   };
   final pageKey = GlobalKey<_PageState>();
-  final label = 'N=$count, ${mode.label}';
+  final String name = switch (kind) {
+    _Kind.noScope => 'no scope',
+    _Kind.emptyScope => 'scope without plugins',
+    _Kind.noop => 'no-op plugin [${variant!.label}]',
+    _Kind.search => 'search plugin [${variant!.label}]',
+  };
+  final label = 'N=$count, $name';
 
-  // Mount the page.
   final int beforeMount = _binding.frameWatch.elapsedMicroseconds;
-  runApp(
+  await _mount(
     _Page(
       key: pageKey,
       count: count,
-      plugin: plugin,
-      emptyScope: mode == _Mode.emptyScope,
+      plugins: plugins,
+      variant: variant,
+      emptyScope: kind == _Kind.emptyScope,
     ),
   );
-  // The first frame of a new root widget is a warm-up frame that runs from
-  // timers. Wait for it, then run whatever it asked for.
-  await Future<void>.delayed(const Duration(milliseconds: 100));
-  _settle();
   final double mount =
       (_binding.frameWatch.elapsedMicroseconds - beforeMount) / 1000.0;
-  _report('$label: mount the page: ${_ms(mount)}');
+  _report('$label: P1 mount the page: ${mount.toStringAsFixed(3)} ms');
   final _PageState page = pageKey.currentState!;
+  counters();
 
-  // The first search over the whole page.
   if (search != null) {
-    final watch = Stopwatch()..start();
-    search.query = _query;
-    watch.stop();
-    final double frame = await _measureFrames(1, (int run) {});
+    // P6. The first search over the whole page.
+    final _Timing first = await _measure(1, (int run) {
+      search.query = _query;
+    });
     _report(
-      '$label: first search, ${search.matches.length} matches: '
-      '${_ms(watch.elapsedMicroseconds / 1000.0)} to scan and sort, '
-      'then ${_ms(frame)} for the frame',
+      '$label: P6 first search, ${search.matches.length} matches: $first'
+      ' [${counters()}]',
     );
   }
 
-  // A frame in which k paragraphs change.
+  // P1. A frame in which k paragraphs change.
   for (final int changed in _changedCounts) {
-    final double frame = await _measureFrames(_runs, (int run) {
+    final _Timing timing = await _measure(_runs, (int run) {
       page.change(changed, 1 + run % 2);
     });
-    _report('$label: frame with $changed changed paragraphs: ${_ms(frame)}');
+    _report(
+      '$label: P1 frame with $changed changed paragraphs: '
+      '${timing.frame.toStringAsFixed(3)} ms',
+    );
   }
 
-  // A frame that rebuilds every paragraph, with no change.
-  final double rebuild = await _measureFrames(_runs, (int run) {
+  // P1. A frame that rebuilds every paragraph widget, with no change.
+  page.rebuildAll = true;
+  final _Timing rebuild = await _measure(_runs, (int run) {
     page.rebuild();
   });
-  _report('$label: frame that rebuilds all paragraphs: ${_ms(rebuild)}');
+  page.rebuildAll = false;
+  _report(
+    '$label: P1 frame that rebuilds all paragraphs: '
+    '${rebuild.frame.toStringAsFixed(3)} ms',
+  );
 
-  // A frame in which one paragraph is appended.
-  final double append = await _measureFrames(_runs, (int run) {
-    page.append();
-  });
-  _report('$label: frame that appends one paragraph: ${_ms(append)}');
   if (search != null) {
-    _report('$label: matches after the appends: ${search.matches.length}');
+    counters();
+    // P2. A keystroke in the search field: the query changes, and every text
+    // that matched gets a different highlight.
+    final _Timing keystroke = await _measure(_runs, (int run) {
+      search.query = run.isEven ? 'Flutte' : _query;
+    });
+    _report(
+      '$label: P2 query change, 10% of the texts match: $keystroke'
+      ' [per run: ${counters()} / $_runs]',
+    );
+
+    // P2b. The active match moves to the next text.
+    search.query = _query;
+    _settle();
+    counters();
+    final _Timing next = await _measure(_runs, (int run) {
+      search.nextMatch();
+    });
+    _report(
+      '$label: P2b next match: $next [per run: ${counters()} / $_runs]',
+    );
+
+    // P3. A keystroke that matches nothing, before and after.
+    search.query = 'qqqq';
+    _settle();
+    counters();
+    final _Timing nothing = await _measure(_runs, (int run) {
+      search.query = run.isEven ? 'qqqqq' : 'qqqq';
+    });
+    _report(
+      '$label: P3 query change, no text matches: $nothing'
+      ' [per run: ${counters()} / $_runs]',
+    );
+
+    // P1. A frame in which one paragraph that matches is appended.
+    search.query = _query;
+    _settle();
+    final _Timing append = await _measure(_runs, (int run) {
+      page.append();
+    });
+    _report(
+      '$label: P1 frame that appends one paragraph: '
+      '${append.frame.toStringAsFixed(3)} ms',
+    );
   }
 
-  // Unmount the page before the plugin is disposed.
-  runApp(const SizedBox.shrink());
-  // The first frame of a new root widget is a warm-up frame that runs from
-  // timers. Wait for it, then run whatever it asked for.
-  await Future<void>.delayed(const Duration(milliseconds: 100));
-  _settle();
+  await _unmount();
   search?.dispose();
 }
 
-/// A page whose content never changes, under a scope that is rebuilt.
-///
-/// This is the case of an ancestor that rebuilds for an unrelated reason. The
-/// content is one cached widget, so a rebuild reaches the scope and nothing
-/// below it. The scope either keeps one plugin, as a `State` field would, or
-/// creates a new plugin in every build, which is the mistake of writing
-/// `TextPluginScope(plugin: MyPlugin(), ...)` in a build method.
-class _ScopeHost extends StatefulWidget {
-  const _ScopeHost({
-    super.key,
-    required this.count,
-    required this.createPlugin,
-    required this.newInstanceEveryBuild,
-  });
-
-  final int count;
-  final TextPlugin Function() createPlugin;
-  final bool newInstanceEveryBuild;
-
-  @override
-  State<_ScopeHost> createState() => _ScopeHostState();
-}
-
-class _ScopeHostState extends State<_ScopeHost> {
-  late final TextPlugin _held = widget.createPlugin();
-
-  late final Widget _body = SingleChildScrollView(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        for (var i = 0; i < widget.count; i++)
-          RepaintBoundary(child: Text(_paragraph(i, 0))),
-      ],
+/// P8. A scope that has no plugin gets its first one, and loses it again.
+Future<void> _runFirstPlugin(int count, Variant variant) async {
+  final pageKey = GlobalKey<_PageState>();
+  await _mount(
+    _Page(
+      key: pageKey,
+      count: count,
+      plugins: const <TextPlugin>[],
+      variant: variant,
     ),
   );
-
-  void rebuild() {
-    setState(() {});
-  }
-
-  @override
-  void dispose() {
-    if (_held case final ChangeNotifier notifier) {
-      notifier.dispose();
-    }
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.ltr,
-      child: DefaultTextStyle(
-        style: const TextStyle(fontSize: 14, color: Color(0xFF000000)),
-        child: ColoredBox(
-          color: const Color(0xFFFFFFFF),
-          child: TextPluginScope(
-            plugin: widget.newInstanceEveryBuild
-                ? widget.createPlugin()
-                : _held,
-            child: _body,
-          ),
-        ),
-      ),
-    );
-  }
+  final _PageState page = pageKey.currentState!;
+  final plugin = _NoopPlugin();
+  final _Timing add = await _measure(1, (int run) {
+    page.setPlugins(<TextPlugin>[plugin]);
+  });
+  final _Timing remove = await _measure(1, (int run) {
+    page.setPlugins(const <TextPlugin>[]);
+  });
+  _report(
+    'N=$count, [${variant.label}]: P8 first plugin added to the scope: '
+    '${add.frame.toStringAsFixed(3)} ms, removed: ${remove.frame.toStringAsFixed(3)} ms',
+  );
+  await _unmount();
 }
 
-/// Measures a rebuild of the scope alone, with one plugin instance and with a
-/// new instance in every build.
-Future<void> _runNewInstanceScenario(
-  int count,
-  String pluginLabel,
-  TextPlugin Function() createPlugin,
-) async {
-  for (final newInstanceEveryBuild in <bool>[false, true]) {
-    final hostKey = GlobalKey<_ScopeHostState>();
-    runApp(
-      _ScopeHost(
-        key: hostKey,
-        count: count,
-        createPlugin: createPlugin,
-        newInstanceEveryBuild: newInstanceEveryBuild,
-      ),
+/// P4. One long paragraph in which the highlighted word moves.
+Future<void> _runKaraoke(Variant? variant) async {
+  final String text = List<String>.generate(
+    2000,
+    (int i) => 'word$i',
+  ).join(' ');
+  final KaraokePlugin? plugin = variant == null ? null : KaraokePlugin();
+  Widget body = SingleChildScrollView(
+    child: RepaintBoundary(child: Text(text)),
+  );
+  if (plugin != null) {
+    body = wrapScope(
+      plugins: <TextPlugin>[plugin],
+      variant: variant!,
+      child: body,
     );
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-    _settle();
-    final _ScopeHostState host = hostKey.currentState!;
-    final double frame = await _measureFrames(_runs, (int run) {
-      host.rebuild();
-    });
-    _report(
-      'N=$count, $pluginLabel: frame that rebuilds only the scope, '
-      '${newInstanceEveryBuild ? 'new plugin in every build' : 'one plugin instance'}: '
-      '${_ms(frame)}',
-    );
-    runApp(const SizedBox.shrink());
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-    _settle();
   }
+  await _mount(_shell(body));
+  final _Timing step = await _measure(100, (int run) {
+    plugin?.step();
+  });
+  _report(
+    'P4 moving word in a paragraph of 2000 words, '
+    '${variant == null ? 'no plugin (idle frame)' : '[${variant.label}]'}: $step',
+  );
+  await _unmount();
+}
+
+/// P5. Typing in a text field whose text has matches.
+Future<void> _runTyping(Variant? variant) async {
+  final controller = TextEditingController(
+    text: List<String>.filled(
+      40,
+      'The quick brown fox jumps over the lazy dog.',
+    ).join(' '),
+  );
+  final focusNode = FocusNode();
+  final SearchInPagePlugin? search = variant == null
+      ? null
+      : makeSearch(variant);
+  Widget body = EditableText(
+    controller: controller,
+    focusNode: focusNode,
+    maxLines: null,
+    style: const TextStyle(fontSize: 14, color: Color(0xFF000000)),
+    cursorColor: const Color(0xFF000000),
+    backgroundCursorColor: const Color(0xFF888888),
+  );
+  if (search != null) {
+    body = wrapScope(
+      plugins: <TextPlugin>[search],
+      variant: variant!,
+      child: body,
+    );
+  }
+  await _mount(_shell(body));
+  search?.query = 'fox';
+  _settle();
+  final _Timing typing = await _measure(100, (int run) {
+    controller.text = '${controller.text}x';
+  });
+  _report(
+    'P5 typing one character in a field of 1800 characters with 40 matches, '
+    '${variant == null ? 'no plugin' : '[${variant.label}]'}: '
+    '${typing.frame.toStringAsFixed(3)} ms',
+  );
+  await _unmount();
+  search?.dispose();
+  controller.dispose();
+  focusNode.dispose();
 }
 
 Future<void> _runAll() async {
   _report(
     kDebugMode
         ? 'WARNING: debug mode. These numbers are not valid. Use --profile.'
-        : 'mode: ${kProfileMode ? 'profile' : 'release'}, '
+        : 'prototype: $branchLabel, mode: ${kProfileMode ? 'profile' : 'release'}, '
               '${kIsWeb ? 'web' : defaultTargetPlatform.name}',
   );
-  _report('each frame time is the average of $_runs frames');
+  _report('each frame time is the average of $_runs frames unless it says otherwise');
   for (final int count in _pageSizes) {
-    for (final _Mode mode in _Mode.values) {
-      await _runScenario(count, mode);
+    await _runPage(count, _Kind.noScope, null);
+    await _runPage(count, _Kind.emptyScope, null);
+    for (final Variant variant in variants) {
+      await _runPage(count, _Kind.noop, variant);
+      await _runPage(count, _Kind.search, variant);
     }
   }
   for (final int count in _pageSizes) {
-    await _runNewInstanceScenario(count, 'no-op plugin', _NoopPlugin.new);
-    await _runNewInstanceScenario(
-      count,
-      'search plugin',
-      () => SearchInPagePlugin()..query = _query,
-    );
+    for (final Variant variant in variants.take(2)) {
+      await _runFirstPlugin(count, variant);
+    }
+  }
+  await _runKaraoke(null);
+  for (final Variant variant in variants.take(2)) {
+    await _runKaraoke(variant);
+  }
+  await _runTyping(null);
+  for (final Variant variant in variants.take(2)) {
+    await _runTyping(variant);
   }
   _report('done');
   runApp(

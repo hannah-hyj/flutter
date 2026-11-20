@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 
 /// Market quote metadata for a recognized stock ticker symbol.
@@ -96,10 +94,11 @@ const Map<String, StockTickerInfo> kDefaultStockTickers =
 
 @immutable
 class _TickerOccurrence {
-  const _TickerOccurrence({required this.range, required this.info});
+  const _TickerOccurrence({required this.range, required this.info, required this.text});
 
   final TextRange range;
   final StockTickerInfo info;
+  final String text;
 }
 
 /// A [TextPlugin] that automatically identifies stock ticker symbols (e.g.
@@ -107,7 +106,16 @@ class _TickerOccurrence {
 /// color-coded badge and underline.
 class StockTickerPlugin extends TextPlugin {
   /// Creates a [StockTickerPlugin].
-  StockTickerPlugin({this.tickers = kDefaultStockTickers});
+  StockTickerPlugin({this.tickers = kDefaultStockTickers, this.badges = false});
+
+  /// Whether a ticker is replaced by a badge widget (a [WidgetSpan]).
+  ///
+  /// If false, a ticker gets a background color and a dotted underline, which
+  /// is what a [TextStyle] can do. A rounded badge with padding is not
+  /// something a style can draw. With a badge the ticker is no longer text:
+  /// it does not wrap, it is not part of a selection, and a text field
+  /// ignores it.
+  final bool badges;
 
   /// Map of recognized ticker symbols to their [StockTickerInfo].
   final Map<String, StockTickerInfo> tickers;
@@ -132,16 +140,12 @@ class StockTickerPlugin extends TextPlugin {
 
   @override
   void didRemoveText(TextDelegate delegate) {
-    delegate.backgroundPainter = null;
-    delegate.foregroundPainter = null;
     _occurrencesByDelegate.remove(delegate);
   }
 
   void _analyzeDelegate(TextDelegate delegate) {
     if (tickers.isEmpty) {
       _occurrencesByDelegate.remove(delegate);
-      delegate.backgroundPainter = null;
-      delegate.foregroundPainter = null;
       return;
     }
     final String text = delegate.text;
@@ -153,116 +157,82 @@ class StockTickerPlugin extends TextPlugin {
           _TickerOccurrence(
             range: TextRange(start: match.start, end: match.end),
             info: tickers[symbol]!,
+            text: text.substring(match.start, match.end),
           ),
         );
       }
     }
-
     if (found.isEmpty) {
       _occurrencesByDelegate.remove(delegate);
-      delegate.backgroundPainter = null;
-      delegate.foregroundPainter = null;
     } else {
       _occurrencesByDelegate[delegate] = found;
-      delegate.backgroundPainter = _StockTickerBackgroundPainter(
-        delegate: delegate,
-        occurrences: found,
-      );
-      delegate.foregroundPainter = _StockTickerForegroundPainter(
-        delegate: delegate,
-        occurrences: found,
-      );
     }
+  }
+
+  static const TextStyle _upStyle = TextStyle(
+    backgroundColor: Color(0x332E7D32),
+    decoration: TextDecoration.underline,
+    decorationStyle: TextDecorationStyle.dotted,
+    decorationColor: Color(0xFF2E7D32),
+  );
+
+  static const TextStyle _downStyle = TextStyle(
+    backgroundColor: Color(0x33C62828),
+    decoration: TextDecoration.underline,
+    decorationStyle: TextDecorationStyle.dotted,
+    decorationColor: Color(0xFFC62828),
+  );
+
+  @override
+  List<TextSpanDecoration> buildDecorations(TextDelegate delegate) {
+    final List<_TickerOccurrence>? occurrences = _occurrencesByDelegate[delegate];
+    if (occurrences == null) {
+      return const <TextSpanDecoration>[];
+    }
+    return <TextSpanDecoration>[
+      for (final _TickerOccurrence occurrence in occurrences)
+        if (badges && !delegate.isEditable)
+          TextSpanDecoration(
+            range: occurrence.range,
+            replacement: WidgetSpan(
+              alignment: PlaceholderAlignment.baseline,
+              baseline: TextBaseline.alphabetic,
+              child: _TickerBadge(occurrence: occurrence),
+            ),
+          )
+        else
+          TextSpanDecoration(
+            range: occurrence.range,
+            style: occurrence.info.isPositive ? _upStyle : _downStyle,
+          ),
+    ];
   }
 }
 
-class _StockTickerBackgroundPainter extends TextPluginPainter {
-  _StockTickerBackgroundPainter({
-    required this.delegate,
-    required this.occurrences,
-  });
+class _TickerBadge extends StatelessWidget {
+  const _TickerBadge({required this.occurrence});
 
-  final TextDelegate delegate;
-  final List<_TickerOccurrence> occurrences;
+  final _TickerOccurrence occurrence;
 
   @override
-  void paint(Canvas canvas, TextLayout layout) {
-    final upPaint = Paint()
-      ..color = const Color(0x332E7D32)
-      ..style = PaintingStyle.fill;
-    final downPaint = Paint()
-      ..color = const Color(0x33C62828)
-      ..style = PaintingStyle.fill;
-
-    for (final _TickerOccurrence occurrence in occurrences) {
-      final List<ui.TextBox> boxes = layout.getBoxesForSelection(
-        TextSelection(
-          baseOffset: occurrence.range.start,
-          extentOffset: occurrence.range.end,
+  Widget build(BuildContext context) {
+    final bool up = occurrence.info.isPositive;
+    final color = up ? const Color(0xFF2E7D32) : const Color(0xFFC62828);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.2),
+        border: Border.all(color: color),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      // The badge is outside of the plugin scope, or the plugin would find
+      // the ticker inside of its own badge.
+      child: TextPluginScope.none(
+        child: Text(
+          '${occurrence.text} ${up ? '\u25B2' : '\u25BC'}',
+          style: DefaultTextStyle.of(context).style.copyWith(color: color),
         ),
-      );
-      for (final box in boxes) {
-        final pill = RRect.fromRectAndRadius(
-          box.toRect().inflate(2.0),
-          const Radius.circular(4.0),
-        );
-        canvas.drawRRect(
-          pill,
-          occurrence.info.isPositive ? upPaint : downPaint,
-        );
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _StockTickerBackgroundPainter oldDelegate) {
-    return oldDelegate.occurrences != occurrences;
-  }
-}
-
-class _StockTickerForegroundPainter extends TextPluginPainter {
-  _StockTickerForegroundPainter({
-    required this.delegate,
-    required this.occurrences,
-  });
-
-  final TextDelegate delegate;
-  final List<_TickerOccurrence> occurrences;
-
-  @override
-  void paint(Canvas canvas, TextLayout layout) {
-    final upStroke = Paint()
-      ..color = const Color(0xFF2E7D32)
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
-    final downStroke = Paint()
-      ..color = const Color(0xFFC62828)
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
-
-    for (final _TickerOccurrence occurrence in occurrences) {
-      final paint = occurrence.info.isPositive ? upStroke : downStroke;
-      final List<ui.TextBox> boxes = layout.getBoxesForSelection(
-        TextSelection(
-          baseOffset: occurrence.range.start,
-          extentOffset: occurrence.range.end,
-        ),
-      );
-      for (final box in boxes) {
-        final Rect rect = box.toRect();
-        final double y = rect.bottom;
-        double x = rect.left;
-        while (x < rect.right) {
-          final double segEnd = (x + 3.0).clamp(rect.left, rect.right);
-          canvas.drawLine(Offset(x, y), Offset(segEnd, y), paint);
-          x += 5.0;
-        }
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _StockTickerForegroundPainter oldDelegate) {
-    return oldDelegate.occurrences != occurrences;
+      ),
+    );
   }
 }

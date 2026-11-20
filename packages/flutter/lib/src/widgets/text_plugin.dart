@@ -12,6 +12,7 @@ library;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 
+import 'basic.dart';
 import 'framework.dart';
 import 'viewport.dart';
 
@@ -52,10 +53,14 @@ class TextPluginScope extends StatefulWidget {
   /// Creates a scope that installs [plugin] for all [Text], [RichText], and
   /// [EditableText] widgets in [child], composing with any ancestor
   /// [TextPluginScope]s.
-  const TextPluginScope({super.key, required TextPlugin this.plugin, required this.child})
-    : plugins = null,
-      types = null,
-      _disabled = false;
+  const TextPluginScope({
+    super.key,
+    required TextPlugin this.plugin,
+    this.decorationLayer,
+    required this.child,
+  }) : plugins = null,
+       types = null,
+       _disabled = false;
 
   /// Creates a scope that installs multiple [plugins] for all [Text],
   /// [RichText], and [EditableText] widgets in [child], composing with any
@@ -63,6 +68,7 @@ class TextPluginScope extends StatefulWidget {
   const TextPluginScope.multiple({
     super.key,
     required List<TextPlugin> this.plugins,
+    this.decorationLayer,
     required this.child,
   }) : plugin = null,
        types = null,
@@ -73,12 +79,14 @@ class TextPluginScope extends StatefulWidget {
   const TextPluginScope.exclude({super.key, required Set<Type> this.types, required this.child})
     : plugin = null,
       plugins = null,
+      decorationLayer = null,
       _disabled = false;
 
   /// Creates a scope that disables any ancestor [TextPluginScope]s for [child].
   const TextPluginScope.none({super.key, required this.child})
     : plugin = null,
       plugins = null,
+      decorationLayer = null,
       types = null,
       _disabled = true;
 
@@ -95,6 +103,30 @@ class TextPluginScope extends StatefulWidget {
   final Set<Type>? types;
 
   final bool _disabled;
+
+  /// Where the decorations of the plugins are turned into a span, for the
+  /// texts below this scope.
+  ///
+  /// Experiment only. If null, the layer of the enclosing scope is used, and
+  /// [debugDefaultTextDecorationLayer] if there is none.
+  final TextDecorationLayer? decorationLayer;
+
+  /// The [TextDecorationLayer] for a text at [context].
+  static TextDecorationLayer decorationLayerOf(BuildContext context) {
+    return context
+            .dependOnInheritedWidgetOfExactType<_InheritedTextPluginScope>()
+            ?.decorationLayer ??
+        debugDefaultTextDecorationLayer;
+  }
+
+  /// A number that changes when a plugin with
+  /// [TextPlugin.notifiesDecorationChanges] notifies its listeners.
+  static int decorationVersionOf(BuildContext context) {
+    return context
+            .dependOnInheritedWidgetOfExactType<_InheritedTextPluginScope>()
+            ?.decorationVersion ??
+        0;
+  }
 
   /// The widget below this widget in the tree.
   final Widget child;
@@ -140,6 +172,7 @@ class TextPluginScope extends StatefulWidget {
 class _TextPluginScopeState extends State<TextPluginScope> {
   final List<Listenable> _listenedPlugins = <Listenable>[];
   bool _localRequiresOffscreenScan = false;
+  int _decorationVersion = 0;
 
   List<TextPlugin> get _ownPlugins => <TextPlugin>[
     if (widget.plugin != null) widget.plugin!,
@@ -178,11 +211,33 @@ class _TextPluginScopeState extends State<TextPluginScope> {
 
   void _handlePluginChanged() {
     final bool updated = _computeLocalRequiresOffscreenScan();
-    if (updated != _localRequiresOffscreenScan) {
-      setState(() {
-        _localRequiresOffscreenScan = updated;
-      });
+    final bool redecorate = _ownPlugins.any((TextPlugin item) => item.notifiesDecorationChanges);
+    if (updated == _localRequiresOffscreenScan && !redecorate) {
+      return;
     }
+    assert(() {
+      if (context.owner?.debugBuilding ?? false) {
+        throw FlutterError.fromParts(<DiagnosticsNode>[
+          ErrorSummary('A TextPlugin notified its listeners while widgets were being built.'),
+          ErrorDescription(
+            'The lifecycle callbacks of a TextPlugin (didAddText, didUpdateText and '
+            'didRemoveText) run during build. A TextPluginScope that listens to the '
+            'plugin cannot rebuild at that point.',
+          ),
+          ErrorHint(
+            'Notify through TextPlugin.deferToEndOfFrame, which waits for the end of '
+            'the frame when one is being produced.',
+          ),
+        ]);
+      }
+      return true;
+    }());
+    setState(() {
+      _localRequiresOffscreenScan = updated;
+      if (redecorate) {
+        _decorationVersion += 1;
+      }
+    });
   }
 
   @override
@@ -219,6 +274,7 @@ class _TextPluginScopeState extends State<TextPluginScope> {
           pluginMap: const <Type, TextPlugin>{},
           plugins: const <TextPlugin>[],
           suspended: suspended,
+          decorationLayer: ancestorScope?.decorationLayer,
           child: widget.child,
         ),
       );
@@ -256,6 +312,8 @@ class _TextPluginScopeState extends State<TextPluginScope> {
       child: _InheritedTextPluginScope(
         pluginMap: Map<Type, TextPlugin>.unmodifiable(pluginMap),
         plugins: List<TextPlugin>.unmodifiable(orderedPlugins),
+        decorationLayer: widget.decorationLayer ?? ancestorScope?.decorationLayer,
+        decorationVersion: (ancestorScope?.decorationVersion ?? 0) + _decorationVersion,
         child: widget.child,
       ),
     );
@@ -299,12 +357,15 @@ class TextPluginSuspension extends StatelessWidget {
         pluginMap: const <Type, TextPlugin>{},
         plugins: const <TextPlugin>[],
         suspended: effectiveSuspended,
+        decorationLayer: ancestorScope?.decorationLayer,
         child: child,
       );
     }
     return _InheritedTextPluginScope(
       pluginMap: ancestorScope.pluginMap,
       plugins: ancestorScope.plugins,
+      decorationLayer: ancestorScope.decorationLayer,
+      decorationVersion: ancestorScope.decorationVersion,
       child: child,
     );
   }
@@ -321,8 +382,13 @@ class _InheritedTextPluginScope extends InheritedWidget {
     required this.pluginMap,
     required this.plugins,
     this.suspended = false,
+    this.decorationLayer,
+    this.decorationVersion = 0,
     required super.child,
   });
+
+  final TextDecorationLayer? decorationLayer;
+  final int decorationVersion;
 
   final Map<Type, TextPlugin> pluginMap;
   final List<TextPlugin> plugins;
@@ -333,6 +399,125 @@ class _InheritedTextPluginScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(_InheritedTextPluginScope oldWidget) {
-    return suspended != oldWidget.suspended || !listEquals(plugins, oldWidget.plugins);
+    return suspended != oldWidget.suspended ||
+        decorationLayer != oldWidget.decorationLayer ||
+        decorationVersion != oldWidget.decorationVersion ||
+        !listEquals(plugins, oldWidget.plugins);
+  }
+}
+
+/// Builds the decorated span of one text (Option A of the inline-span
+/// experiment), and owns the [TextDelegate]s of that text.
+///
+/// [Text] and [EditableText] put this around their render object widget when a
+/// [TextPlugin] is in scope and the [TextDecorationLayer] is
+/// [TextDecorationLayer.widget]. In `build` it first tells the plugins about
+/// the text ([TextPlugin.didAddText], [TextPlugin.didUpdateText]), then asks
+/// them for their decorations, and then builds the text with the decorated
+/// span.
+///
+/// It is not part of the plugin API.
+class TextPluginSpanBuilder extends StatefulWidget {
+  /// Creates a widget that decorates [text] for [plugins].
+  const TextPluginSpanBuilder({
+    super.key,
+    required this.plugins,
+    required this.text,
+    required this.textDirection,
+    this.isEditable = false,
+    required this.decorationVersion,
+    required this.builder,
+  });
+
+  /// Returns what [builder] returns, with a [TextPluginSpanBuilder] around it
+  /// if a plugin is in scope at [context] and the layer is
+  /// [TextDecorationLayer.widget].
+  ///
+  /// Without one, [builder] is called with [text] itself and without
+  /// delegates.
+  static Widget wrap(
+    BuildContext context, {
+    required InlineSpan text,
+    required TextDirection? textDirection,
+    bool isEditable = false,
+    bool enabled = true,
+    required Widget Function(InlineSpan text, TextDelegateSet? delegates) builder,
+  }) {
+    final List<TextPlugin>? plugins = enabled ? TextPluginScope.maybeOf(context) : null;
+    if (plugins == null ||
+        TextPluginScope.decorationLayerOf(context) != TextDecorationLayer.widget) {
+      return builder(text, null);
+    }
+    return TextPluginSpanBuilder(
+      plugins: plugins,
+      text: text,
+      textDirection: textDirection ?? Directionality.of(context),
+      isEditable: isEditable,
+      decorationVersion: TextPluginScope.decorationVersionOf(context),
+      builder: builder,
+    );
+  }
+
+  /// How many of these widgets were built, for tests and benchmarks.
+  static int debugBuildCount = 0;
+
+  /// The plugins of the text, in paint order.
+  final List<TextPlugin> plugins;
+
+  /// The undecorated span.
+  final InlineSpan text;
+
+  /// The directionality of the text.
+  final TextDirection textDirection;
+
+  /// Whether the text is editable.
+  final bool isEditable;
+
+  /// See [TextPluginScope.decorationVersionOf]. It is only here so that the
+  /// widget is different when the version is.
+  final int decorationVersion;
+
+  /// Builds the text with the decorated span.
+  final Widget Function(InlineSpan text, TextDelegateSet? delegates) builder;
+
+  @override
+  State<TextPluginSpanBuilder> createState() => _TextPluginSpanBuilderState();
+}
+
+class _TextPluginSpanBuilderState extends State<TextPluginSpanBuilder> {
+  late final TextDelegateSet _set = TextDelegateSet(onNeedsDecoration: _handleNeedsDecoration);
+  bool _building = false;
+
+  void _handleNeedsDecoration() {
+    // While this text is being built, the decorations are about to be asked
+    // for anyway.
+    if (_building || !mounted) {
+      return;
+    }
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _set.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    TextPluginSpanBuilder.debugBuildCount += 1;
+    _building = true;
+    try {
+      _set.update(
+        plugins: widget.plugins,
+        span: widget.text,
+        textDirection: widget.textDirection,
+        isEditable: widget.isEditable,
+      );
+      final DecoratedTextSpan decorated = _set.decorate();
+      return widget.builder(decorated.span, _set);
+    } finally {
+      _building = false;
+    }
   }
 }

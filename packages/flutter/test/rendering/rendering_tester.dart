@@ -195,7 +195,6 @@ class TestRenderingFlutterBinding extends BindingBase
     FlutterError.onError = _errors.add;
     try {
       rootPipelineOwner.flushLayout();
-      flushPostLayoutCallbacks();
       if (phase == EnginePhase.layout) {
         return;
       }

@@ -250,7 +250,7 @@ void main() {
   );
 
   testWidgets(
-    'SearchInPagePlugin updates only the changed delegate on didUpdateText',
+    'SearchInPagePlugin decorates only the changed text on didUpdateText',
     (WidgetTester tester) async {
       final plugin = SearchInPagePlugin()..query = 'Flutter';
       addTearDown(plugin.dispose);
@@ -302,59 +302,54 @@ void main() {
 
       final TextDelegate topDelegate = plugin.matches.first.delegate;
       final TextDelegate bottomDelegate = plugin.matches.last.delegate;
-      final TextPluginPainter? initialTopPainter =
-          topDelegate.backgroundPainter;
-      final TextPluginPainter? initialBottomBgPainter =
-          bottomDelegate.backgroundPainter;
-      final TextPluginPainter? initialBottomFgPainter =
-          bottomDelegate.foregroundPainter;
-      expect(initialTopPainter, isNotNull);
-      expect(initialBottomBgPainter, isNotNull);
-      expect(initialBottomFgPainter, isNotNull);
+      RenderParagraph paragraphOf(String text) => tester.renderObject<RenderParagraph>(
+        find.byWidgetPredicate(
+          (Widget widget) => widget is RichText && widget.text.toPlainText() == text,
+        ),
+      );
+      final RenderParagraph top = paragraphOf('Top Flutter item');
+      final InlineSpan initialTopSpan = top.debugDecoratedText;
+      expect(initialTopSpan, isNot(same(topDelegate.textSpan)));
 
-      // 1. Updating a paragraph with 0 -> 0 matches does no work and does not
-      // rebuild painters or notify listeners.
+      // 1. Updating a paragraph with 0 -> 0 matches builds one new span (the
+      // text changed) and does not notify listeners.
       notifications = 0;
+      int decorated = TextDelegateSet.debugDecorateCount;
       middleText.value = 'Still no match here';
       await tester.pump();
       expect(notifications, 0);
+      expect(TextDelegateSet.debugDecorateCount - decorated, 1);
       expect(plugin.matches, hasLength(2));
       expect(plugin.activeMatchIndex, 1);
-      expect(topDelegate.backgroundPainter, same(initialTopPainter));
-      expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
-      expect(bottomDelegate.foregroundPainter, same(initialBottomFgPainter));
+      expect(top.debugDecoratedText, same(initialTopSpan));
 
       // 2. Updating a matching paragraph where match ranges stay identical
-      // preserves painters on other delegates and skips redundant notifications.
+      // does not touch the other texts and skips redundant notifications.
+      decorated = TextDelegateSet.debugDecorateCount;
       bottomExtra.value = 'Bottom Flutter item with trailing text';
       await tester.pump();
       expect(notifications, 0);
+      expect(TextDelegateSet.debugDecorateCount - decorated, 1);
       expect(plugin.matches, hasLength(2));
       expect(plugin.activeMatchIndex, 1);
-      expect(topDelegate.backgroundPainter, same(initialTopPainter));
-      expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
+      expect(top.debugDecoratedText, same(initialTopSpan));
 
-      // 3. Middle paragraph gains 1 match: spliced in document order between
-      // top and bottom without recreating painters on top or bottom!
+      // 3. Middle paragraph gains 1 match: it is between top and bottom in
+      // document order, and top and bottom are not decorated again.
+      decorated = TextDelegateSet.debugDecorateCount;
       middleText.value = 'Middle Flutter match';
       await tester.pump();
       expect(notifications, 1);
+      expect(TextDelegateSet.debugDecorateCount - decorated, 1);
       expect(plugin.matches, hasLength(3));
       expect(plugin.matches[0].delegate, same(topDelegate));
       expect(plugin.matches[2].delegate, same(bottomDelegate));
       expect(plugin.activeMatchIndex, 2);
       expect(plugin.activeMatch!.delegate, same(bottomDelegate));
-      expect(topDelegate.backgroundPainter, same(initialTopPainter));
-      expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
-      expect(bottomDelegate.foregroundPainter, same(initialBottomFgPainter));
+      expect(top.debugDecoratedText, same(initialTopSpan));
 
-      // 4. Middle paragraph expands to 2 matches in place: only middle painter
-      // updates, top and bottom painters remain untouched, activeMatch shifts to 3.
+      // 4. Middle paragraph expands to 2 matches in place.
       final TextDelegate middleDelegate = plugin.matches[1].delegate;
-      final TextPluginPainter? middlePainterWithOne =
-          middleDelegate.backgroundPainter;
-      expect(middlePainterWithOne, isNotNull);
-
       middleText.value = 'Middle Flutter and second Flutter';
       await tester.pump();
       expect(notifications, 2);
@@ -363,25 +358,19 @@ void main() {
       expect(plugin.matches[2].delegate, same(middleDelegate));
       expect(plugin.activeMatchIndex, 3);
       expect(plugin.activeMatch!.delegate, same(bottomDelegate));
-      expect(
-        middleDelegate.backgroundPainter,
-        isNot(same(middlePainterWithOne)),
-      );
-      expect(topDelegate.backgroundPainter, same(initialTopPainter));
-      expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
+      expect(top.debugDecoratedText, same(initialTopSpan));
 
-      // 5. Middle paragraph loses all matches: its painters clear, top and
-      // bottom painters remain untouched, and activeMatch shifts back to 1.
+      // 5. Middle paragraph loses all matches: its span is the plain one
+      // again, and the active match shifts back to 1.
       middleText.value = 'Cleared middle paragraph';
       await tester.pump();
       expect(notifications, 3);
       expect(plugin.matches, hasLength(2));
       expect(plugin.activeMatchIndex, 1);
       expect(plugin.activeMatch!.delegate, same(bottomDelegate));
-      expect(middleDelegate.backgroundPainter, isNull);
-      expect(middleDelegate.foregroundPainter, isNull);
-      expect(topDelegate.backgroundPainter, same(initialTopPainter));
-      expect(bottomDelegate.backgroundPainter, same(initialBottomBgPainter));
+      final RenderParagraph middle = paragraphOf('Cleared middle paragraph');
+      expect(middle.debugDecoratedText, same(middle.text));
+      expect(top.debugDecoratedText, same(initialTopSpan));
     },
   );
 

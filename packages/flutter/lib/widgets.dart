@@ -17,7 +17,13 @@ export 'package:vector_math/vector_math_64.dart' show Matrix4;
 
 export 'foundation.dart' show Brightness, UniqueKey;
 export 'rendering.dart'
-    show TextDelegate, TextLayout, TextPlugin, TextPluginPainter, TextSelectionHandleType;
+    show
+        TextDecorationLayer,
+        TextDelegate,
+        TextDelegateSet,
+        TextPlugin,
+        TextSelectionHandleType,
+        debugDefaultTextDecorationLayer;
 export 'src/widgets/actions.dart';
 export 'src/widgets/adapter.dart';
 export 'src/widgets/animated_cross_fade.dart';

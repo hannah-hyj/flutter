@@ -2,10 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:ui' as ui;
-
 import 'package:flutter/foundation.dart' show listEquals;
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 /// Represents a single search match within a [TextDelegate].
@@ -19,17 +16,6 @@ class SearchMatch {
 
   /// The character range of the match within [TextDelegate.text].
   final TextRange range;
-
-  /// Returns the bounding [ui.TextBox]es for this match.
-  ///
-  /// The [layout] is the one a painter of [delegate] receives, so this can
-  /// only be called while painting.
-  List<ui.TextBox> getBoxes(TextLayout layout) {
-    return layout.getBoxesForSelection(
-      TextSelection(baseOffset: range.start, extentOffset: range.end),
-      includePlaceholders: false,
-    );
-  }
 
   @override
   bool operator ==(Object other) {
@@ -46,14 +32,16 @@ class SearchMatch {
 }
 
 /// A [TextPlugin] that implements browser-style "Find in Page" search and
-/// highlighting across all [Text] and [RichText] widgets in a
+/// highlighting across all [Text] and [EditableText] widgets in a
 /// [TextPluginScope].
+///
+/// This is the inline-span version. A match is a [TextSpanDecoration] with a
+/// background color. The plugin does not paint.
 ///
 /// The plugin has no user interface and does not depend on a design system.
 /// It is a [ChangeNotifier]: a search bar sets [query] and [caseSensitive],
 /// calls [nextMatch] and [previousMatch], and listens to show [matches] and
-/// [activeMatchIndex]. The search bar is written by the app, or by a design
-/// system library. The highlight colors are constructor parameters.
+/// [activeMatchIndex].
 class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   /// Creates a [SearchInPagePlugin].
   SearchInPagePlugin({
@@ -61,6 +49,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     this.activeMatchBackgroundColor = const Color(0x99FF9800),
     this.activeMatchBorderColor = const Color(0xFFE65100),
     this._eagerLoadOffscreenText = false,
+    this.notifyToRedecorate = false,
   });
 
   /// Background highlight color for all matches.
@@ -69,21 +58,37 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   /// Background highlight color for the currently active match.
   final Color activeMatchBackgroundColor;
 
-  /// Border color painted in the foreground around the active match.
+  /// Color of the lines above and below the active match.
+  ///
+  /// A span cannot have a border. An overline and an underline are the
+  /// closest that a [TextStyle] can do.
   final Color activeMatchBorderColor;
+
+  /// Experiment only. If true, the plugin does not say which texts changed:
+  /// it notifies, and every text in the scope asks for its decorations again
+  /// ([TextPlugin.notifiesDecorationChanges]). If false, it calls
+  /// [TextDelegate.markNeedsDecoration] on the texts whose matches changed.
+  final bool notifyToRedecorate;
+
+  @override
+  bool get notifiesDecorationChanges => notifyToRedecorate;
 
   final Set<TextDelegate> _delegates = <TextDelegate>{};
   final Map<TextDelegate, List<SearchMatch>> _matchesByDelegate =
       <TextDelegate, List<SearchMatch>>{};
-  final List<TextDelegate> _orderedMatchingDelegates = <TextDelegate>[];
-  final List<SearchMatch> _matches = <SearchMatch>[];
+
+  // The matches in document order. The order is not known while texts are
+  // being built, so this list is made when it is asked for, or at the end of
+  // the frame.
+  List<SearchMatch> _matches = <SearchMatch>[];
+  bool _orderDirty = false;
 
   String _query = '';
   bool _caseSensitive = false;
   bool _eagerLoadOffscreenText;
-  int _activeMatchIndex = -1;
+  SearchMatch? _activeMatch;
   bool _hasExplicitActiveMatch = false;
-  bool _notificationScheduled = false;
+  bool _reconcileScheduled = false;
   bool _disposed = false;
 
   @override
@@ -98,7 +103,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
       return;
     }
     _eagerLoadOffscreenText = value;
-    _notifyListenersSafely();
+    _notify();
   }
 
   @override
@@ -107,23 +112,20 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     super.dispose();
   }
 
-  void _notifyListenersSafely() {
+  void _notify() {
     if (_disposed) {
       return;
     }
-    if (SchedulerBinding.instance.schedulerPhase ==
-        SchedulerPhase.persistentCallbacks) {
-      if (!_notificationScheduled) {
-        _notificationScheduled = true;
-        SchedulerBinding.instance.addPostFrameCallback((_) {
-          _notificationScheduled = false;
-          if (!_disposed) {
-            notifyListeners();
-          }
-        });
+    TextPlugin.deferToEndOfFrame(() {
+      if (!_disposed) {
+        notifyListeners();
       }
-    } else {
-      notifyListeners();
+    });
+  }
+
+  void _redecorate(TextDelegate delegate) {
+    if (!notifyToRedecorate && _delegates.contains(delegate)) {
+      delegate.markNeedsDecoration();
     }
   }
 
@@ -134,7 +136,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
       return;
     }
     _query = value;
-    _activeMatchIndex = -1;
+    _activeMatch = null;
     _hasExplicitActiveMatch = false;
     _rescanAllDelegates();
   }
@@ -149,56 +151,89 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     _rescanAllDelegates();
   }
 
-  /// All current matches across the scoped subtree, ordered in logical
-  /// document order.
-  List<SearchMatch> get matches => List<SearchMatch>.unmodifiable(_matches);
+  void _ensureOrdered() {
+    if (!_orderDirty) {
+      return;
+    }
+    _orderDirty = false;
+    final List<TextDelegate> ordered = _matchesByDelegate.keys.toList();
+    TextDelegate.sortInDocumentOrder(ordered);
+    _matches = <SearchMatch>[
+      for (final TextDelegate delegate in ordered) ..._matchesByDelegate[delegate]!,
+    ];
+  }
+
+  /// All current matches across the scoped subtree, in document order.
+  ///
+  /// The order is only right once the current frame has been laid out.
+  List<SearchMatch> get matches {
+    _ensureOrdered();
+    return List<SearchMatch>.unmodifiable(_matches);
+  }
+
+  /// The number of matches. Unlike [matches], this does not need the order.
+  int get matchCount {
+    var count = 0;
+    for (final List<SearchMatch> list in _matchesByDelegate.values) {
+      count += list.length;
+    }
+    return count;
+  }
 
   /// The index of the currently focused match in [matches], or `-1` if there
   /// are no matches.
-  int get activeMatchIndex => _activeMatchIndex;
+  int get activeMatchIndex {
+    final SearchMatch? active = _activeMatch;
+    if (active == null) {
+      return -1;
+    }
+    _ensureOrdered();
+    return _matches.indexOf(active);
+  }
 
   /// The currently focused [SearchMatch], or `null` if there are no matches.
-  SearchMatch? get activeMatch =>
-      (_activeMatchIndex >= 0 && _activeMatchIndex < _matches.length)
-      ? _matches[_activeMatchIndex]
-      : null;
+  SearchMatch? get activeMatch => _activeMatch;
 
   /// Advances focus to the next match and scrolls it into view.
   void nextMatch() {
+    _ensureOrdered();
     if (_matches.isEmpty) {
       return;
     }
-    _setActiveMatchIndex((_activeMatchIndex + 1) % _matches.length);
+    _setActiveMatch(_matches[(activeMatchIndex + 1) % _matches.length], explicit: true);
+    scrollToActiveMatch();
+    _notify();
   }
 
   /// Moves focus to the previous match and scrolls it into view.
   void previousMatch() {
+    _ensureOrdered();
     if (_matches.isEmpty) {
       return;
     }
-    _setActiveMatchIndex(
-      (_activeMatchIndex - 1 + _matches.length) % _matches.length,
+    _setActiveMatch(
+      _matches[(activeMatchIndex - 1 + _matches.length) % _matches.length],
+      explicit: true,
     );
+    scrollToActiveMatch();
+    _notify();
   }
 
-  void _setActiveMatchIndex(int newIndex) {
-    final SearchMatch? previousActive = activeMatch;
-    _hasExplicitActiveMatch = true;
-    _activeMatchIndex = newIndex;
-    final SearchMatch? currentActive = activeMatch;
-    if (previousActive != currentActive) {
-      if (previousActive != null &&
-          _delegates.contains(previousActive.delegate)) {
-        _updatePainterForDelegate(previousActive.delegate);
-      }
-      if (currentActive != null &&
-          currentActive.delegate != previousActive?.delegate &&
-          _delegates.contains(currentActive.delegate)) {
-        _updatePainterForDelegate(currentActive.delegate);
-      }
+  void _setActiveMatch(SearchMatch? match, {bool explicit = false}) {
+    final SearchMatch? previous = _activeMatch;
+    if (explicit) {
+      _hasExplicitActiveMatch = true;
     }
-    scrollToActiveMatch();
-    _notifyListenersSafely();
+    if (previous == match) {
+      return;
+    }
+    _activeMatch = match;
+    if (previous != null) {
+      _redecorate(previous.delegate);
+    }
+    if (match != null && match.delegate != previous?.delegate) {
+      _redecorate(match.delegate);
+    }
   }
 
   /// Scrolls any enclosing viewport so that [activeMatch] is visible on screen.
@@ -217,26 +252,60 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     );
   }
 
+  // The lifecycle callbacks run while the text is being built. They only
+  // record the matches. The decorations of this text are asked for right
+  // after, so there is nothing to invalidate. What needs the document order
+  // (which match is the first one) waits for the end of the frame.
+
   @override
   void didAddText(TextDelegate delegate) {
     _delegates.add(delegate);
-    _updateDelegateMatches(delegate, _computeMatchesForDelegate(delegate));
+    _setMatches(delegate, _computeMatchesForDelegate(delegate));
   }
 
   @override
   void didUpdateText(TextDelegate delegate) {
-    _updateDelegateMatches(delegate, _computeMatchesForDelegate(delegate));
+    _setMatches(delegate, _computeMatchesForDelegate(delegate));
   }
 
   @override
   void didRemoveText(TextDelegate delegate) {
-    delegate.backgroundPainter = null;
-    delegate.foregroundPainter = null;
     _delegates.remove(delegate);
     if (_delegates.isEmpty) {
       _hasExplicitActiveMatch = false;
     }
-    _updateDelegateMatches(delegate, const <SearchMatch>[]);
+    _setMatches(delegate, const <SearchMatch>[]);
+  }
+
+  void _setMatches(TextDelegate delegate, List<SearchMatch> newMatches) {
+    final List<SearchMatch> oldMatches =
+        _matchesByDelegate[delegate] ?? const <SearchMatch>[];
+    if (oldMatches.isEmpty && newMatches.isEmpty) {
+      return;
+    }
+    if (listEquals(oldMatches, newMatches)) {
+      return;
+    }
+    if (newMatches.isEmpty) {
+      _matchesByDelegate.remove(delegate);
+    } else {
+      _matchesByDelegate[delegate] = newMatches;
+    }
+    _orderDirty = true;
+    if (_activeMatch?.delegate == delegate && !newMatches.contains(_activeMatch)) {
+      _activeMatch = null;
+    }
+    if (!_reconcileScheduled) {
+      _reconcileScheduled = true;
+      TextPlugin.deferToEndOfFrame(() {
+        _reconcileScheduled = false;
+        if (_disposed) {
+          return;
+        }
+        _reconcileActiveMatch();
+        notifyListeners();
+      });
+    }
   }
 
   List<SearchMatch> _computeMatchesForDelegate(TextDelegate delegate) {
@@ -261,290 +330,72 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
       );
       start = index + needle.length;
     }
-    return delegateMatches;
+    return delegateMatches.isEmpty ? const <SearchMatch>[] : delegateMatches;
   }
 
-  int _findInsertionIndex(TextDelegate target) {
-    var low = 0;
-    var high = _orderedMatchingDelegates.length;
-    while (low < high) {
-      final int mid = (low + high) >>> 1;
-      if (_orderedMatchingDelegates[mid].compareTo(target) < 0) {
-        low = mid + 1;
-      } else {
-        high = mid;
-      }
-    }
-    return low;
-  }
-
-  int _matchOffsetForDelegateIndex(int delegateIndex) {
-    var offset = 0;
-    for (var i = 0; i < delegateIndex; i++) {
-      offset += _matchesByDelegate[_orderedMatchingDelegates[i]]!.length;
-    }
-    return offset;
-  }
-
-  bool _isDelegateOutOfOrder(int index) {
-    final TextDelegate delegate = _orderedMatchingDelegates[index];
-    if (index > 0 &&
-        _orderedMatchingDelegates[index - 1].compareTo(delegate) > 0) {
-      return true;
-    }
-    if (index + 1 < _orderedMatchingDelegates.length &&
-        delegate.compareTo(_orderedMatchingDelegates[index + 1]) > 0) {
-      return true;
-    }
-    return false;
-  }
-
-  void _updateDelegateMatches(
-    TextDelegate delegate,
-    List<SearchMatch> newMatches,
-  ) {
-    final List<SearchMatch> oldMatches =
-        _matchesByDelegate[delegate] ?? const <SearchMatch>[];
-    if (oldMatches.isEmpty && newMatches.isEmpty) {
-      return;
-    }
-    if (oldMatches.isNotEmpty && listEquals(oldMatches, newMatches)) {
-      final int existingIndex = _orderedMatchingDelegates.indexOf(delegate);
-      if (!_isDelegateOutOfOrder(existingIndex)) {
-        if (_delegates.contains(delegate)) {
-          delegate.markNeedsPaint();
-        }
-        return;
-      }
-    }
-
-    final SearchMatch? oldActive = activeMatch;
-    final SearchMatch? explicitPreviousActive = _hasExplicitActiveMatch
-        ? oldActive
-        : null;
-
-    if (oldMatches.isEmpty) {
-      final int insertIndex = _findInsertionIndex(delegate);
-      final int matchOffset = _matchOffsetForDelegateIndex(insertIndex);
-      _orderedMatchingDelegates.insert(insertIndex, delegate);
-      _matchesByDelegate[delegate] = newMatches;
-      _matches.insertAll(matchOffset, newMatches);
-    } else if (newMatches.isEmpty) {
-      final int existingIndex = _orderedMatchingDelegates.indexOf(delegate);
-      final int matchOffset = _matchOffsetForDelegateIndex(existingIndex);
-      _orderedMatchingDelegates.removeAt(existingIndex);
-      _matchesByDelegate.remove(delegate);
-      _matches.removeRange(matchOffset, matchOffset + oldMatches.length);
-    } else {
-      final int existingIndex = _orderedMatchingDelegates.indexOf(delegate);
-      final bool movedOrder = _isDelegateOutOfOrder(existingIndex);
-      _matchesByDelegate[delegate] = newMatches;
-      if (!movedOrder) {
-        final int matchOffset = _matchOffsetForDelegateIndex(existingIndex);
-        _matches.replaceRange(
-          matchOffset,
-          matchOffset + oldMatches.length,
-          newMatches,
-        );
-      } else {
-        TextDelegate.sortInDocumentOrder(_orderedMatchingDelegates);
-        _matches
-          ..clear()
-          ..addAll(
-            _orderedMatchingDelegates.expand(
-              (TextDelegate d) => _matchesByDelegate[d]!,
-            ),
-          );
-      }
-    }
-
-    _reconcileActiveMatch(explicitPreviousActive);
-    final SearchMatch? newActive = activeMatch;
-
-    if (_delegates.contains(delegate)) {
-      _updatePainterForDelegate(delegate);
-    }
-    if (oldActive != newActive) {
-      if (oldActive != null &&
-          oldActive.delegate != delegate &&
-          _delegates.contains(oldActive.delegate)) {
-        _updatePainterForDelegate(oldActive.delegate);
-      }
-      if (newActive != null &&
-          newActive.delegate != delegate &&
-          _delegates.contains(newActive.delegate)) {
-        _updatePainterForDelegate(newActive.delegate);
-      }
-    }
-
-    _notifyListenersSafely();
-  }
-
+  // Runs when the query changes, which is outside of a frame: the tree of the
+  // last frame is complete, so the order is known right away.
   void _rescanAllDelegates() {
     final SearchMatch? explicitPreviousActive = _hasExplicitActiveMatch
-        ? activeMatch
+        ? _activeMatch
         : null;
-    final previousMatchingDelegates = Set<TextDelegate>.of(
-      _orderedMatchingDelegates,
-    );
-
-    _matchesByDelegate.clear();
-    _orderedMatchingDelegates.clear();
-    _matches.clear();
-
-    if (_query.isNotEmpty) {
-      for (final TextDelegate delegate in _delegates) {
-        final List<SearchMatch> delegateMatches = _computeMatchesForDelegate(
-          delegate,
-        );
-        if (delegateMatches.isNotEmpty) {
-          _matchesByDelegate[delegate] = delegateMatches;
-          _orderedMatchingDelegates.add(delegate);
-        }
+    for (final TextDelegate delegate in _delegates) {
+      final List<SearchMatch> oldMatches =
+          _matchesByDelegate[delegate] ?? const <SearchMatch>[];
+      final List<SearchMatch> newMatches = _computeMatchesForDelegate(delegate);
+      if (oldMatches.isEmpty && newMatches.isEmpty) {
+        continue;
       }
-      TextDelegate.sortInDocumentOrder(_orderedMatchingDelegates);
-      for (final TextDelegate delegate in _orderedMatchingDelegates) {
-        _matches.addAll(_matchesByDelegate[delegate]!);
+      if (newMatches.isEmpty) {
+        _matchesByDelegate.remove(delegate);
+      } else {
+        _matchesByDelegate[delegate] = newMatches;
+      }
+      if (!listEquals(oldMatches, newMatches)) {
+        _redecorate(delegate);
       }
     }
-
-    _reconcileActiveMatch(explicitPreviousActive);
-
-    for (final TextDelegate delegate in previousMatchingDelegates) {
-      if (!_matchesByDelegate.containsKey(delegate) &&
-          _delegates.contains(delegate)) {
-        delegate.backgroundPainter = null;
-        delegate.foregroundPainter = null;
-      }
-    }
-    for (final TextDelegate delegate in _orderedMatchingDelegates) {
-      _updatePainterForDelegate(delegate);
-    }
-
-    _notifyListenersSafely();
+    _orderDirty = true;
+    _activeMatch = explicitPreviousActive;
+    _reconcileActiveMatch();
+    _notify();
   }
 
-  void _reconcileActiveMatch(SearchMatch? explicitPreviousActive) {
+  void _reconcileActiveMatch() {
+    _ensureOrdered();
     if (_matches.isEmpty) {
-      _activeMatchIndex = -1;
       _hasExplicitActiveMatch = false;
-    } else if (explicitPreviousActive != null) {
-      final int preservedIndex = _matches.indexOf(explicitPreviousActive);
-      if (preservedIndex != -1) {
-        _activeMatchIndex = preservedIndex;
-      } else if (_activeMatchIndex < 0 ||
-          _activeMatchIndex >= _matches.length) {
-        _activeMatchIndex = 0;
-      }
-    } else {
-      _activeMatchIndex = 0;
+      _setActiveMatch(null);
+    } else if (_activeMatch == null || !_matches.contains(_activeMatch)) {
+      _setActiveMatch(_matches.first);
+    } else if (!_hasExplicitActiveMatch && _activeMatch != _matches.first) {
+      _setActiveMatch(_matches.first);
     }
   }
 
-  void _updatePainterForDelegate(TextDelegate delegate) {
+  @override
+  List<TextSpanDecoration> buildDecorations(TextDelegate delegate) {
     final List<SearchMatch>? delegateMatches = _matchesByDelegate[delegate];
-    if (delegateMatches == null || delegateMatches.isEmpty) {
-      delegate.backgroundPainter = null;
-      delegate.foregroundPainter = null;
-      return;
+    if (delegateMatches == null) {
+      return const <TextSpanDecoration>[];
     }
-    final SearchMatch? currentActive = activeMatch;
-    final SearchMatch? activeInDelegate = currentActive?.delegate == delegate
-        ? currentActive
-        : null;
-    delegate.backgroundPainter = _SearchBackgroundPainter(
-      delegate: delegate,
-      matches: delegateMatches,
-      activeMatch: activeInDelegate,
-      matchColor: matchHighlightColor,
-      activeMatchColor: activeMatchBackgroundColor,
-    );
-    delegate.foregroundPainter = activeInDelegate != null
-        ? _SearchForegroundPainter(
-            delegate: delegate,
-            activeMatch: activeInDelegate,
-            borderColor: activeMatchBorderColor,
-          )
-        : null;
-  }
-}
-
-class _SearchBackgroundPainter extends TextPluginPainter {
-  _SearchBackgroundPainter({
-    required this.delegate,
-    required this.matches,
-    required this.activeMatch,
-    required this.matchColor,
-    required this.activeMatchColor,
-  });
-
-  final TextDelegate delegate;
-  final List<SearchMatch> matches;
-  final SearchMatch? activeMatch;
-  final Color matchColor;
-  final Color activeMatchColor;
-
-  @override
-  void paint(Canvas canvas, TextLayout layout) {
-    final matchPaint = Paint()
-      ..color = matchColor
-      ..style = PaintingStyle.fill;
-    final activePaint = Paint()
-      ..color = activeMatchColor
-      ..style = PaintingStyle.fill;
-
-    for (final SearchMatch match in matches) {
-      final isActive = match == activeMatch;
-      final List<ui.TextBox> boxes = match.getBoxes(layout);
-      for (final box in boxes) {
-        final rrect = RRect.fromRectAndRadius(
-          box.toRect().inflate(1.5),
-          const Radius.circular(3.0),
-        );
-        canvas.drawRRect(rrect, isActive ? activePaint : matchPaint);
-      }
-    }
+    final SearchMatch? active = _activeMatch;
+    return <TextSpanDecoration>[
+      for (final SearchMatch match in delegateMatches)
+        TextSpanDecoration(
+          range: match.range,
+          style: match == active ? _activeStyle : _matchStyle,
+        ),
+    ];
   }
 
-  @override
-  bool shouldRepaint(covariant _SearchBackgroundPainter oldDelegate) {
-    return !listEquals(oldDelegate.matches, matches) ||
-        oldDelegate.activeMatch != activeMatch ||
-        oldDelegate.matchColor != matchColor ||
-        oldDelegate.activeMatchColor != activeMatchColor;
-  }
-}
-
-class _SearchForegroundPainter extends TextPluginPainter {
-  _SearchForegroundPainter({
-    required this.delegate,
-    required this.activeMatch,
-    required this.borderColor,
-  });
-
-  final TextDelegate delegate;
-  final SearchMatch activeMatch;
-  final Color borderColor;
-
-  @override
-  void paint(Canvas canvas, TextLayout layout) {
-    final borderPaint = Paint()
-      ..color = borderColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.75;
-
-    for (final ui.TextBox box in activeMatch.getBoxes(layout)) {
-      final rrect = RRect.fromRectAndRadius(
-        box.toRect().inflate(2.0),
-        const Radius.circular(3.5),
-      );
-      canvas.drawRRect(rrect, borderPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SearchForegroundPainter oldDelegate) {
-    return oldDelegate.activeMatch != activeMatch ||
-        oldDelegate.borderColor != borderColor;
-  }
+  late final TextStyle _matchStyle = TextStyle(backgroundColor: matchHighlightColor);
+  late final TextStyle _activeStyle = TextStyle(
+    backgroundColor: activeMatchBackgroundColor,
+    decoration: TextDecoration.combine(<TextDecoration>[
+      TextDecoration.underline,
+      TextDecoration.overline,
+    ]),
+    decorationColor: activeMatchBorderColor,
+  );
 }

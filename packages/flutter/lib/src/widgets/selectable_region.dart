@@ -1959,8 +1959,7 @@ class SelectableRegionState extends State<SelectableRegion>
     super.dispose();
   }
 
-  static const _SelectionHighlightTextPlugin _selectionHighlightPlugin =
-      _SelectionHighlightTextPlugin();
+  final _SelectionHighlightTextPlugin _selectionHighlightPlugin = _SelectionHighlightTextPlugin();
 
   @protected
   @override
@@ -1969,14 +1968,16 @@ class SelectableRegionState extends State<SelectableRegion>
     Widget result = SelectableRegionSelectionStatusScope._(
       key: _selectionStatusScopeKey,
       selectionStatusNotifier: _selectionStatusNotifier,
-      child: TextPluginScope(
-        plugin: _selectionHighlightPlugin,
-        child: SelectionContainer(
-          registrar: this,
-          delegate: _selectionDelegate,
-          child: widget.child,
-        ),
-      ),
+      child: debugSelectionHighlightAsTextPlugin
+          ? TextPluginScope(
+              plugin: _selectionHighlightPlugin,
+              child: SelectionContainer(
+                registrar: this,
+                delegate: _selectionDelegate,
+                child: widget.child,
+              ),
+            )
+          : SelectionContainer(registrar: this, delegate: _selectionDelegate, child: widget.child),
     );
     if (_webContextMenuEnabled) {
       result = PlatformSelectableRegionContextMenu(child: result);
@@ -3742,52 +3743,59 @@ final class SelectionListenerNotifier extends ChangeNotifier {
   }
 }
 
+/// Whether a [SelectableRegion] shows the selection of static text through a
+/// text plugin that decorates the span, instead of the highlight that
+/// [RenderParagraph] paints.
+///
+/// This is an experiment of the inline-span prototype of text plugins. It is
+/// off by default.
+bool debugSelectionHighlightAsTextPlugin = false;
+
 class _SelectionHighlightTextPlugin extends TextPlugin {
-  const _SelectionHighlightTextPlugin();
+  final Map<TextDelegate, VoidCallback> _listeners = <TextDelegate, VoidCallback>{};
 
   @override
   bool get handlesSelectionHighlight => true;
 
+  // The selection is shown over every other decoration.
+  @override
+  int get paintOrder => 1 << 30;
+
   @override
   void didAddText(TextDelegate delegate) {
-    // A text field reports no selections through its delegate, because it
-    // paints its own selection. So this painter draws nothing for it.
-    delegate.backgroundPainter = _SelectionHighlightPainter(delegate: delegate);
+    void listener() => delegate.markNeedsDecoration();
+    _listeners[delegate] = listener;
+    delegate.addListener(listener);
   }
 
   @override
   void didRemoveText(TextDelegate delegate) {
-    delegate.backgroundPainter = null;
+    final VoidCallback? listener = _listeners.remove(delegate);
+    if (listener != null) {
+      delegate.removeListener(listener);
+    }
   }
-}
-
-class _SelectionHighlightPainter extends TextPluginPainter {
-  _SelectionHighlightPainter({required this.delegate}) : super(repaint: delegate);
-
-  final TextDelegate delegate;
 
   @override
-  void paint(Canvas canvas, TextLayout layout) {
+  List<TextSpanDecoration> buildDecorations(TextDelegate delegate) {
     final Color? selectionColor = delegate.selectionColor;
     if (selectionColor == null) {
-      return;
+      return const <TextSpanDecoration>[];
     }
+    // A text field reports no selections through its delegate, because it
+    // paints its own selection.
     final List<TextSelection> selections = delegate.selections;
     if (selections.isEmpty) {
-      return;
+      return const <TextSpanDecoration>[];
     }
-    final selectionPaint = Paint()
-      ..style = PaintingStyle.fill
-      ..color = selectionColor;
-    for (final selection in selections) {
-      for (final TextBox textBox in layout.getBoxesForSelection(selection)) {
-        canvas.drawRect(textBox.toRect(), selectionPaint);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SelectionHighlightPainter oldDelegate) {
-    return oldDelegate.delegate != delegate;
+    final style = TextStyle(backgroundColor: selectionColor);
+    return <TextSpanDecoration>[
+      for (final TextSelection selection in selections)
+        if (!selection.isCollapsed)
+          TextSpanDecoration(
+            range: TextRange(start: selection.start, end: selection.end),
+            style: style,
+          ),
+    ];
   }
 }

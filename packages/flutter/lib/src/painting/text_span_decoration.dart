@@ -5,8 +5,6 @@
 /// @docImport 'text_painter.dart';
 library;
 
-import 'dart:ui' show TextRange;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -312,10 +310,7 @@ class _Decorator {
     if (_edits.isEmpty) {
       return const <TextRange>[];
     }
-    mergeSort<TextRange>(
-      _edits,
-      compare: (TextRange a, TextRange b) => a.start.compareTo(b.start),
-    );
+    mergeSort<TextRange>(_edits, compare: (TextRange a, TextRange b) => a.start.compareTo(b.start));
     return List<TextRange>.unmodifiable(_edits);
   }
 
@@ -433,7 +428,9 @@ class _Decorator {
         final List<InlineSpan> result = _visit(child);
         final bool same = result.length == 1 && identical(result.first, child);
         if (newChildren == null && !same) {
-          newChildren = children.sublist(0, i);
+          // Not sublist: the list of the app may be a List<TextSpan>, which
+          // cannot hold a placeholder.
+          newChildren = <InlineSpan>[...children.take(i)];
         }
         newChildren?.addAll(result);
       }

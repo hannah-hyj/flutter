@@ -6035,66 +6035,84 @@ class EditableTextState extends State<EditableText>
                                   _updateSelectionRects(force: true);
                                 },
                                 child: SizeChangedLayoutNotifier(
-                                  child: _Editable(
-                                    key: _editableKey,
-                                    startHandleLayerLink: _startHandleLayerLink,
-                                    endHandleLayerLink: _endHandleLayerLink,
-                                    inlineSpan:
+                                  // Obscured text is never given to a text
+                                  // plugin, so that a plugin cannot read a
+                                  // password.
+                                  child: TextPluginSpanBuilder.wrap(
+                                    context,
+                                    enabled: !widget.obscureText && widget.textPlugins == null,
+                                    isEditable: true,
+                                    textDirection: _textDirection,
+                                    text:
                                         _OverridingTextStyleTextSpanUtils.applyTextSpacingOverrides(
                                           lineHeightScaleFactor: lineHeightScaleFactor,
                                           letterSpacing: letterSpacing,
                                           wordSpacing: wordSpacing,
                                           textSpan: buildTextSpan(),
                                         ),
-                                    value: _value,
-                                    cursorColor: _cursorColor,
-                                    backgroundCursorColor: widget.backgroundCursorColor,
-                                    showCursor: _cursorVisibilityNotifier,
-                                    forceLine: widget.forceLine,
-                                    readOnly: widget.readOnly,
-                                    hasFocus: _hasFocus,
-                                    maxLines: widget.maxLines,
-                                    minLines: widget.minLines,
-                                    expands: widget.expands,
-                                    strutStyle: widget.strutStyle.merge(
-                                      StrutStyle(height: lineHeightScaleFactor),
-                                    ),
-                                    selectionColor:
-                                        _selectionOverlay?.spellCheckToolbarIsVisible ?? false
-                                        ? _spellCheckConfiguration.misspelledSelectionColor ??
-                                              widget.selectionColor
-                                        : widget.selectionColor,
-                                    textScaler: effectiveTextScaler,
-                                    textAlign: widget.textAlign,
-                                    textDirection: _textDirection,
-                                    locale: widget.locale,
-                                    textHeightBehavior:
-                                        widget.textHeightBehavior ??
-                                        DefaultTextHeightBehavior.maybeOf(context),
-                                    textWidthBasis: widget.textWidthBasis,
-                                    obscuringCharacter: widget.obscuringCharacter,
-                                    obscureText: widget.obscureText,
-                                    offset: offset,
-                                    rendererIgnoresPointer: widget.rendererIgnoresPointer,
-                                    cursorWidth: widget.cursorWidth,
-                                    cursorHeight: widget.cursorHeight,
-                                    cursorRadius: widget.cursorRadius,
-                                    cursorOffset: widget.cursorOffset ?? Offset.zero,
-                                    selectionHeightStyle: widget.selectionHeightStyle,
-                                    selectionWidthStyle: widget.selectionWidthStyle,
-                                    paintCursorAboveText: widget.paintCursorAboveText,
-                                    enableInteractiveSelection: widget._userSelectionEnabled,
-                                    textSelectionDelegate: this,
-                                    devicePixelRatio: _devicePixelRatio,
-                                    promptRectRange: _currentPromptRectRange,
-                                    promptRectColor: widget.autocorrectionTextRectColor,
-                                    clipBehavior: widget.clipBehavior,
-                                    // Obscured text is never given to a text
-                                    // plugin, so that a plugin cannot read
-                                    // a password.
-                                    textPlugins: widget.obscureText
-                                        ? null
-                                        : widget.textPlugins ?? TextPluginScope.maybeOf(context),
+                                    builder: (InlineSpan inlineSpan, TextDelegateSet? delegates) =>
+                                        _Editable(
+                                          key: _editableKey,
+                                          startHandleLayerLink: _startHandleLayerLink,
+                                          endHandleLayerLink: _endHandleLayerLink,
+                                          inlineSpan: inlineSpan,
+                                          value: _value,
+                                          cursorColor: _cursorColor,
+                                          backgroundCursorColor: widget.backgroundCursorColor,
+                                          showCursor: _cursorVisibilityNotifier,
+                                          forceLine: widget.forceLine,
+                                          readOnly: widget.readOnly,
+                                          hasFocus: _hasFocus,
+                                          maxLines: widget.maxLines,
+                                          minLines: widget.minLines,
+                                          expands: widget.expands,
+                                          strutStyle: widget.strutStyle.merge(
+                                            StrutStyle(height: lineHeightScaleFactor),
+                                          ),
+                                          selectionColor:
+                                              _selectionOverlay?.spellCheckToolbarIsVisible ?? false
+                                              ? _spellCheckConfiguration.misspelledSelectionColor ??
+                                                    widget.selectionColor
+                                              : widget.selectionColor,
+                                          textScaler: effectiveTextScaler,
+                                          textAlign: widget.textAlign,
+                                          textDirection: _textDirection,
+                                          locale: widget.locale,
+                                          textHeightBehavior:
+                                              widget.textHeightBehavior ??
+                                              DefaultTextHeightBehavior.maybeOf(context),
+                                          textWidthBasis: widget.textWidthBasis,
+                                          obscuringCharacter: widget.obscuringCharacter,
+                                          obscureText: widget.obscureText,
+                                          offset: offset,
+                                          rendererIgnoresPointer: widget.rendererIgnoresPointer,
+                                          cursorWidth: widget.cursorWidth,
+                                          cursorHeight: widget.cursorHeight,
+                                          cursorRadius: widget.cursorRadius,
+                                          cursorOffset: widget.cursorOffset ?? Offset.zero,
+                                          selectionHeightStyle: widget.selectionHeightStyle,
+                                          selectionWidthStyle: widget.selectionWidthStyle,
+                                          paintCursorAboveText: widget.paintCursorAboveText,
+                                          enableInteractiveSelection: widget._userSelectionEnabled,
+                                          textSelectionDelegate: this,
+                                          devicePixelRatio: _devicePixelRatio,
+                                          promptRectRange: _currentPromptRectRange,
+                                          promptRectColor: widget.autocorrectionTextRectColor,
+                                          clipBehavior: widget.clipBehavior,
+                                          // Obscured text is never given to a text
+                                          // plugin, so that a plugin cannot read
+                                          // a password.
+                                          textPlugins: delegates != null || widget.obscureText
+                                              ? null
+                                              : widget.textPlugins ??
+                                                    (TextPluginScope.decorationLayerOf(context) ==
+                                                            TextDecorationLayer.render
+                                                        ? TextPluginScope.maybeOf(context)
+                                                        : null),
+                                          textDelegateSet: delegates,
+                                          textPluginDecorationVersion:
+                                              TextPluginScope.decorationVersionOf(context),
+                                        ),
                                   ),
                                 ),
                               ),
@@ -6233,6 +6251,8 @@ class _Editable extends MultiChildRenderObjectWidget {
     this.promptRectColor,
     required this.clipBehavior,
     this.textPlugins,
+    this.textDelegateSet,
+    this.textPluginDecorationVersion = 0,
   }) : selectionHeightStyle = selectionHeightStyle ?? EditableText.defaultSelectionHeightStyle,
        selectionWidthStyle = selectionWidthStyle ?? EditableText.defaultSelectionWidthStyle,
        super(children: WidgetSpan.extractFromInlineSpan(inlineSpan, textScaler));
@@ -6276,6 +6296,8 @@ class _Editable extends MultiChildRenderObjectWidget {
   final Color? promptRectColor;
   final Clip clipBehavior;
   final List<TextPlugin>? textPlugins;
+  final TextDelegateSet? textDelegateSet;
+  final int textPluginDecorationVersion;
 
   @override
   RenderEditable createRenderObject(BuildContext context) {
@@ -6319,7 +6341,8 @@ class _Editable extends MultiChildRenderObjectWidget {
       promptRectColor: promptRectColor,
       clipBehavior: clipBehavior,
       textPlugins: textPlugins,
-    );
+      textDelegateSet: textDelegateSet,
+    )..textPluginDecorationVersion = textPluginDecorationVersion;
   }
 
   @override
@@ -6363,7 +6386,9 @@ class _Editable extends MultiChildRenderObjectWidget {
       ..promptRectColor = promptRectColor
       ..clipBehavior = clipBehavior
       ..setPromptRectRange(promptRectRange)
-      ..textPlugins = textPlugins;
+      ..textPlugins = textPlugins
+      ..textDelegateSet = textDelegateSet
+      ..textPluginDecorationVersion = textPluginDecorationVersion;
   }
 }
 

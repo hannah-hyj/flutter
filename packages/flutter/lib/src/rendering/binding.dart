@@ -753,7 +753,6 @@ mixin RendererBinding
   @protected
   void drawFrame() {
     rootPipelineOwner.flushLayout();
-    flushPostLayoutCallbacks();
     rootPipelineOwner.flushCompositingBits();
     rootPipelineOwner.flushPaint();
 
@@ -771,72 +770,6 @@ mixin RendererBinding
       }
       rootPipelineOwner.flushSemantics(); // this sends the semantics to the OS.
       _firstFrameSent = true;
-    }
-  }
-
-  final List<VoidCallback> _postLayoutCallbacks = <VoidCallback>[];
-
-  /// Whether the callbacks registered with [addPostLayoutCallback] are
-  /// running.
-  ///
-  /// While this is true, layout has finished for the frame and painting has
-  /// not started, so marking a [RenderObject] as needing layout is an error.
-  ///
-  /// Only valid when asserts are enabled; in release builds, this always
-  /// returns false.
-  static bool get debugDoingPostLayoutCallbacks => _debugDoingPostLayoutCallbacks;
-  static bool _debugDoingPostLayoutCallbacks = false;
-
-  /// Schedules a [callback] to run once, after layout and before paint.
-  ///
-  /// The callback runs in the next frame, or in the current frame if it is
-  /// registered before or during layout. It runs in [drawFrame], after the
-  /// [rootPipelineOwner] has flushed layout. Every render tree has been laid
-  /// out by then, so the callback can read the layout of any [RenderObject].
-  ///
-  /// The [callback] may mark render objects as needing paint. It must not mark
-  /// a render object as needing layout: the object would be painted with a
-  /// layout that is out of date. In debug mode, doing so throws.
-  ///
-  /// The callbacks only run as part of a frame. A [PipelineOwner] whose
-  /// [PipelineOwner.flushLayout] is called directly, outside [drawFrame], does
-  /// not run them.
-  ///
-  /// See also:
-  ///
-  ///  * [SchedulerBinding.addPostFrameCallback], which runs a callback after
-  ///    the whole frame, including paint.
-  @internal
-  void addPostLayoutCallback(VoidCallback callback) {
-    _postLayoutCallbacks.add(callback);
-    ensureVisualUpdate();
-  }
-
-  /// Runs the callbacks registered with [addPostLayoutCallback].
-  ///
-  /// [drawFrame] calls this right after the [rootPipelineOwner] has flushed
-  /// layout. A binding that overrides [drawFrame] without calling the inherited
-  /// method has to call this at the same point.
-  @protected
-  void flushPostLayoutCallbacks() {
-    assert(() {
-      _debugDoingPostLayoutCallbacks = true;
-      return true;
-    }());
-    try {
-      // A callback can register another one. It runs in the same frame.
-      while (_postLayoutCallbacks.isNotEmpty) {
-        final callbacks = List<VoidCallback>.of(_postLayoutCallbacks, growable: false);
-        _postLayoutCallbacks.clear();
-        for (final callback in callbacks) {
-          callback();
-        }
-      }
-    } finally {
-      assert(() {
-        _debugDoingPostLayoutCallbacks = false;
-        return true;
-      }());
     }
   }
 

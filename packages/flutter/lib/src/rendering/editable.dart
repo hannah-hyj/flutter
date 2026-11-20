@@ -333,8 +333,10 @@ class RenderEditable extends RenderBox
     RenderEditablePainter? painter,
     RenderEditablePainter? foregroundPainter,
     List<TextPlugin>? textPlugins,
+    TextDelegateSet? textDelegateSet,
     List<RenderBox>? children,
   }) : assert(maxLines == null || maxLines > 0),
+       _text = text,
        assert(minLines == null || minLines > 0),
        assert(
          (maxLines == null) || (minLines == null) || (maxLines >= minLines),
@@ -394,14 +396,12 @@ class RenderEditable extends RenderBox
     _updatePainter(painter);
     addAll(children);
     this.textPlugins = textPlugins;
+    this.textDelegateSet = textDelegateSet;
   }
 
   /// Child render objects
   _RenderEditableCustomPaint? _foregroundRenderObject;
   _RenderEditableCustomPaint? _backgroundRenderObject;
-
-  @override
-  InlineSpan get textSpan => text ?? TextSpan(text: plainText);
 
   @override
   void dispose() {
@@ -770,28 +770,70 @@ class RenderEditable extends RenderBox
   /// If [obscureText] is true, returns the obscured text. See
   /// [obscureText] and [obscuringCharacter].
   /// In order to get the styled text as an [InlineSpan] tree, use [text].
-  @override
   String get plainText => _textPainter.plainText;
 
   /// The text to paint in the form of a tree of [InlineSpan]s.
   ///
   /// In order to get the plain text representation, use [plainText].
-  InlineSpan? get text => _textPainter.text;
+  ///
+  /// This is the span that this render object was given. If this render
+  /// object has [textPlugins], the span that is laid out and painted is this
+  /// span with the decorations of the plugins.
+  InlineSpan? get text => _text;
+  InlineSpan? _text;
   final TextPainter _textPainter;
   AttributedString? _cachedAttributedValue;
   List<InlineSpanSemanticsInformation>? _cachedCombinedSemanticsInfos;
   set text(InlineSpan? value) {
-    if (_textPainter.text == value) {
+    if (_text == value) {
       return;
     }
-    _cachedLineBreakCount = null;
+    _text = value;
+    if (!updateTextDelegates()) {
+      _setPainterText(value);
+    }
+  }
+
+  @override
+  void applyDecoratedTextSpan(InlineSpan span) => _setPainterText(span);
+
+  /// The span that is laid out and painted: [text] with the decorations of
+  /// the text plugins.
+  @visibleForTesting
+  InlineSpan? get debugDecoratedText => _textPainter.text;
+
+  void _setPainterText(InlineSpan? value) {
+    final InlineSpan? old = _textPainter.text;
+    if (old == value) {
+      return;
+    }
+    // A change of colors and text decorations only needs a repaint. This is
+    // what a decoration of a text plugin usually is.
+    final bool paintOnly =
+        old != null &&
+        value != null &&
+        hasTextDelegates &&
+        old.compareTo(value).index <= RenderComparison.paint.index;
     _textPainter.text = value;
     _cachedAttributedValue = null;
     _cachedCombinedSemanticsInfos = null;
-    markNeedsTextDelegateUpdate();
-    markNeedsLayout();
+    if (paintOnly) {
+      markNeedsPaint();
+    } else {
+      _cachedLineBreakCount = null;
+      markNeedsLayout();
+    }
     markNeedsSemanticsUpdate();
   }
+
+  @override
+  InlineSpan get textSpan => _text ?? const TextSpan(text: '');
+
+  @override
+  bool get isTextEditable => !readOnly;
+
+  @override
+  bool get isSelectable => true;
 
   TextPainter? _textIntrinsicsCache;
   TextPainter get _textIntrinsics {
@@ -1813,13 +1855,6 @@ class RenderEditable extends RenderBox
     return _textPainter.getPositionForOffset(globalToLocal(globalPosition) - _paintOffset);
   }
 
-  /// Returns the [TextPosition] within the text for the given local pixel [offset].
-  @override
-  TextPosition getPositionForOffset(Offset offset) {
-    _computeTextMetricsIfNeeded();
-    return _textPainter.getPositionForOffset(offset - _paintOffset);
-  }
-
   /// Returns the [Rect] in local coordinates for the caret at the given text
   /// position.
   ///
@@ -1877,20 +1912,6 @@ class RenderEditable extends RenderBox
 
     caretRect = caretRect.shift(_paintOffset);
     return caretRect.shift(_snapToPhysicalPixel(caretRect.topLeft));
-  }
-
-  /// Returns the local offset at which to paint the caret for the given [position].
-  @override
-  Offset getOffsetForCaret(TextPosition position, Rect caretPrototype) {
-    _computeTextMetricsIfNeeded();
-    return _textPainter.getOffsetForCaret(position, caretPrototype) + _paintOffset;
-  }
-
-  /// Returns the full height of the caret at the given [position].
-  @override
-  double getFullHeightForCaret(TextPosition position) {
-    _computeTextMetricsIfNeeded();
-    return _textPainter.getFullHeightForCaret(position, _caretPrototype);
   }
 
   @override
@@ -2469,6 +2490,20 @@ class RenderEditable extends RenderBox
     didLayoutTextDelegates();
   }
 
+  /// Returns the local offset at which to paint the caret for [position].
+  @override
+  Offset getOffsetForCaret(TextPosition position, Rect caretPrototype) {
+    _computeTextMetricsIfNeeded();
+    return _textPainter.getOffsetForCaret(position, caretPrototype) + _paintOffset;
+  }
+
+  /// Returns the full height of the caret at [position].
+  @override
+  double getFullHeightForCaret(TextPosition position) {
+    _computeTextMetricsIfNeeded();
+    return _textPainter.getFullHeightForCaret(position, _caretPrototype);
+  }
+
   // The relative origin in relation to the distance the user has theoretically
   // dragged the floating cursor offscreen. This value is used to account for the
   // difference in the rendering position and the raw offset value.
@@ -2642,7 +2677,11 @@ class RenderEditable extends RenderBox
   }
 
   void _paintContents(PaintingContext context, Offset offset) {
-    paintTextPluginBackgrounds(context, offset);
+    final Offset effectiveOffset = offset + _paintOffset;
+
+    if (selection != null && !_floatingCursorOn) {
+      _updateSelectionExtentsVisibility(effectiveOffset);
+    }
 
     final RenderBox? foregroundChild = _foregroundRenderObject;
     final RenderBox? backgroundChild = _backgroundRenderObject;
@@ -2653,20 +2692,12 @@ class RenderEditable extends RenderBox
       context.paintChild(backgroundChild, offset);
     }
 
-    final Offset effectiveOffset = offset + _paintOffset;
-
-    if (selection != null && !_floatingCursorOn) {
-      _updateSelectionExtentsVisibility(effectiveOffset);
-    }
-
     _textPainter.paint(context.canvas, effectiveOffset);
     paintInlineChildren(context, effectiveOffset);
 
     if (foregroundChild != null) {
       context.paintChild(foregroundChild, offset);
     }
-
-    paintTextPluginForegrounds(context, offset);
   }
 
   final LayerHandle<LeaderLayer> _leaderLayerHandler = LayerHandle<LeaderLayer>();

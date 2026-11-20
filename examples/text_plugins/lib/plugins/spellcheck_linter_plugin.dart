@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 
 /// Severity of a [SpellcheckIssue].
@@ -65,7 +63,7 @@ class SpellcheckIssue {
 
 /// A [TextPlugin] that performs live spellchecking and editorial style-guide
 /// linting across all [Text] and [RichText] widgets in its scope, painting
-/// wavy squiggly underlines via [TextDelegate.foregroundPainter].
+/// wavy underlines as [TextSpanDecoration]s.
 class SpellcheckLinterPlugin extends TextPlugin {
   /// Creates a [SpellcheckLinterPlugin].
   SpellcheckLinterPlugin();
@@ -122,8 +120,40 @@ class SpellcheckLinterPlugin extends TextPlugin {
 
   @override
   void didRemoveText(TextDelegate delegate) {
-    delegate.foregroundPainter = null;
     _issuesByDelegate.remove(delegate);
+  }
+
+  static const TextStyle _errorStyle = TextStyle(
+    decoration: TextDecoration.underline,
+    decorationStyle: TextDecorationStyle.wavy,
+    decorationColor: Color(0xFFD32F2F),
+  );
+
+  static const TextStyle _suggestionStyle = TextStyle(
+    decoration: TextDecoration.underline,
+    decorationStyle: TextDecorationStyle.wavy,
+    decorationColor: Color(0xFFEF6C00),
+  );
+
+  /// The issues found in the text of [delegate].
+  List<SpellcheckIssue> issuesFor(TextDelegate delegate) =>
+      _issuesByDelegate[delegate] ?? const <SpellcheckIssue>[];
+
+  @override
+  List<TextSpanDecoration> buildDecorations(TextDelegate delegate) {
+    final List<SpellcheckIssue>? issues = _issuesByDelegate[delegate];
+    if (issues == null) {
+      return const <TextSpanDecoration>[];
+    }
+    return <TextSpanDecoration>[
+      for (final SpellcheckIssue issue in issues)
+        TextSpanDecoration(
+          range: issue.range,
+          style: issue.rule.severity == LintSeverity.spellingError
+              ? _errorStyle
+              : _suggestionStyle,
+        ),
+    ];
   }
 
   void _lintDelegate(TextDelegate delegate) {
@@ -143,71 +173,12 @@ class SpellcheckLinterPlugin extends TextPlugin {
         );
       }
     }
+    // The lifecycle callbacks run before the decorations of this text are
+    // asked for, so recording the issues is all there is to do.
     if (issues.isEmpty) {
       _issuesByDelegate.remove(delegate);
-      delegate.foregroundPainter = null;
     } else {
       _issuesByDelegate[delegate] = issues;
-      delegate.foregroundPainter = _SpellcheckSquigglePainter(
-        delegate: delegate,
-        issues: issues,
-      );
     }
-  }
-}
-
-class _SpellcheckSquigglePainter extends TextPluginPainter {
-  _SpellcheckSquigglePainter({required this.delegate, required this.issues});
-
-  final TextDelegate delegate;
-  final List<SpellcheckIssue> issues;
-
-  @override
-  void paint(Canvas canvas, TextLayout layout) {
-    final errorPaint = Paint()
-      ..color = const Color(0xFFD32F2F)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    final stylePaint = Paint()
-      ..color = const Color(0xFFEF6C00)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    const waveStep = 3.0;
-    const waveAmplitude = 1.6;
-
-    for (final SpellcheckIssue issue in issues) {
-      final List<ui.TextBox> boxes = layout.getBoxesForSelection(
-        TextSelection(
-          baseOffset: issue.range.start,
-          extentOffset: issue.range.end,
-        ),
-        includePlaceholders: false,
-      );
-      final paintToUse = issue.rule.severity == LintSeverity.spellingError
-          ? errorPaint
-          : stylePaint;
-      for (final box in boxes) {
-        final Rect rect = box.toRect();
-        final double baseY = rect.bottom - 0.5;
-        final path = Path()..moveTo(rect.left, baseY);
-        var up = true;
-        for (double x = rect.left + waveStep; x <= rect.right; x += waveStep) {
-          path.lineTo(x, baseY + (up ? -waveAmplitude : waveAmplitude));
-          up = !up;
-        }
-        canvas.drawPath(path, paintToUse);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SpellcheckSquigglePainter oldDelegate) {
-    return oldDelegate.issues != issues;
   }
 }

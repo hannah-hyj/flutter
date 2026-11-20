@@ -6536,6 +6536,7 @@ class RichText extends MultiChildRenderObjectWidget {
     this.selectionRegistrar,
     this.selectionColor,
     this.textPlugins,
+    this.textDelegateSet,
   }) : assert(maxLines == null || maxLines > 0),
        assert(selectionRegistrar == null || selectionColor != null),
        assert(
@@ -6651,6 +6652,27 @@ class RichText extends MultiChildRenderObjectWidget {
   /// [TextPlugin]s from the ambient [BuildContext].
   final List<TextPlugin>? textPlugins;
 
+  /// The delegates that a widget above owns for this text (Option A of the
+  /// inline-span experiment). The [text] is then already decorated, and this
+  /// rich text does not use the ambient [TextPluginScope].
+  @internal
+  final TextDelegateSet? textDelegateSet;
+
+  // In Option A, a RichText that is created directly is not decorated: the
+  // decoration is done by the widget above it, and this widget has no build
+  // method in which it could be done.
+  List<TextPlugin>? _effectiveTextPlugins(BuildContext context) {
+    if (textDelegateSet != null) {
+      return null;
+    }
+    if (textPlugins != null) {
+      return textPlugins;
+    }
+    return TextPluginScope.decorationLayerOf(context) == TextDecorationLayer.render
+        ? TextPluginScope.maybeOf(context)
+        : null;
+  }
+
   double _getDevicePixelRatio(BuildContext context) =>
       MediaQuery.maybeDevicePixelRatioOf(context) ?? View.maybeOf(context)?.devicePixelRatio ?? 1.0;
 
@@ -6671,9 +6693,10 @@ class RichText extends MultiChildRenderObjectWidget {
       locale: locale ?? Localizations.maybeLocaleOf(context),
       registrar: selectionRegistrar,
       selectionColor: selectionColor,
-      textPlugins: textPlugins ?? TextPluginScope.maybeOf(context),
+      textPlugins: _effectiveTextPlugins(context),
+      textDelegateSet: textDelegateSet,
       devicePixelRatio: _getDevicePixelRatio(context),
-    );
+    )..textPluginDecorationVersion = TextPluginScope.decorationVersionOf(context);
   }
 
   @override
@@ -6693,7 +6716,9 @@ class RichText extends MultiChildRenderObjectWidget {
       ..locale = locale ?? Localizations.maybeLocaleOf(context)
       ..registrar = selectionRegistrar
       ..selectionColor = selectionColor
-      ..textPlugins = textPlugins ?? TextPluginScope.maybeOf(context)
+      ..textPlugins = _effectiveTextPlugins(context)
+      ..textDelegateSet = textDelegateSet
+      ..textPluginDecorationVersion = TextPluginScope.decorationVersionOf(context)
       ..devicePixelRatio = _getDevicePixelRatio(context);
   }
 

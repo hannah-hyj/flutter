@@ -46,7 +46,10 @@ void main() {
       const span = TextSpan(text: 'hello world');
       expect(decorateTextSpan(span, const <TextSpanDecoration>[]).span, same(span));
       // A decoration outside of the text.
-      expect(decorateTextSpan(span, <TextSpanDecoration>[_style(50, 60, _yellow)]).span, same(span));
+      expect(
+        decorateTextSpan(span, <TextSpanDecoration>[_style(50, 60, _yellow)]).span,
+        same(span),
+      );
       // A collapsed range without a replacement, and an invalid range.
       expect(
         decorateTextSpan(span, <TextSpanDecoration>[

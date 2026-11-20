@@ -3,48 +3,61 @@
 // found in the LICENSE file.
 
 /// @docImport 'package:flutter/widgets.dart';
-/// @docImport 'custom_paint.dart';
 library;
 
-import 'dart:ui'
-    as ui
-    show BoxHeightStyle, BoxWidthStyle, TextBox, TextDirection, TextPosition, TextRange;
+import 'dart:ui' as ui show BoxHeightStyle, BoxWidthStyle, TextBox, TextDirection, TextPosition;
 
 import 'package:flutter/animation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
-import 'binding.dart';
 import 'box.dart';
 import 'editable.dart';
 import 'object.dart';
 import 'paragraph.dart';
 
-/// An interface for plugins that interact with and change the visual appearance
-/// of text rendered by [RenderParagraph] and [RenderEditable] (such as via [Text],
-/// [RichText], and [EditableText] widgets) within a [TextPluginScope].
+/// Where the decorations of a [TextPlugin] are turned into a span.
+///
+/// This exists for the inline-span experiment only, so that the two options
+/// can be compared in one build. It is not a proposed API.
+enum TextDecorationLayer {
+  /// Option A. [Text] and [EditableText] build the decorated span in `build`
+  /// and give it to the render object.
+  widget,
+
+  /// Option B. The render object keeps the span it was given and builds the
+  /// decorated span itself.
+  render,
+}
+
+/// The [TextDecorationLayer] of a [TextPluginScope] that does not choose one.
+///
+/// Experiment only. Tests set it to run the same test on both options. The
+/// initial value can be chosen with `--dart-define=TEXT_DECORATION_LAYER=render`.
+TextDecorationLayer debugDefaultTextDecorationLayer =
+    const String.fromEnvironment('TEXT_DECORATION_LAYER') == 'render'
+    ? TextDecorationLayer.render
+    : TextDecorationLayer.widget;
+
+/// An interface for plugins that read and decorate the text rendered by
+/// [RenderParagraph] and [RenderEditable] (such as via [Text], [RichText],
+/// and [EditableText] widgets) within a [TextPluginScope].
+///
+/// This is the inline-span prototype. A plugin does not paint. It returns
+/// [TextSpanDecoration]s from [buildDecorations], and the framework applies
+/// them to the [InlineSpan] tree of the text.
 ///
 /// A [TextPlugin] is notified as text widgets are added, updated, and removed
-/// within its scope. It is not notified when a text is laid out.
-///
-/// Each text widget in the scope is represented by a [TextDelegate], which
-/// allows the plugin to query the displayed string and attach a
-/// [TextDelegate.backgroundPainter] or [TextDelegate.foregroundPainter]. The
-/// layout of the text is not available on the delegate. A painter receives
-/// it, as a [TextLayout], while it paints.
-///
-/// Multiple [TextPlugin]s can be composed for the same subtree by nesting
-/// [TextPluginScope] widgets or using [TextPluginScope.multiple]. By default,
-/// their painters are painted in the order in which the plugins were installed
-/// in the widget tree (outermost first), or ordered by [paintOrder] when
-/// specified.
+/// within its scope. The callbacks run at build time: for each text,
+/// [didAddText] or [didUpdateText] runs before [buildDecorations] for that
+/// text, in the same frame.
 ///
 /// See also:
 ///
 ///  * [TextPluginScope], which installs one or more [TextPlugin]s for a
 ///    widget subtree.
-///  * [TextDelegate], which represents an individual [RenderParagraph] or
-///    [RenderEditable] managed by a [TextPlugin].
+///  * [TextDelegate], which represents an individual text managed by a
+///    [TextPlugin].
 abstract class TextPlugin {
   /// Abstract const constructor. This constructor enables subclasses to provide
   /// const constructors so that they can be used in const expressions.
@@ -54,244 +67,133 @@ abstract class TextPlugin {
   /// be rendered so it can be discovered and navigated to (for example,
   /// "Find in Page" / `Ctrl+F` search).
   ///
-  /// When any active [TextPlugin] within a [TextPluginScope] has
-  /// [needsOffscreenContent] set to `true`, [TextPluginScope] installs an
-  /// [OffscreenContentRenderingStrategy] with
-  /// [OffscreenRenderingPolicy.eager] so that scrollable viewports (such as
-  /// [ListView], [CustomScrollView], and [Viewport]) within the scope expand
-  /// their cache extent and eagerly render offscreen sliver children.
-  ///
-  /// If a [TextPlugin] also implements [Listenable] (for example, by extending
-  /// or mixing in [ChangeNotifier]), [TextPluginScope] automatically listens
-  /// to the plugin and updates the [OffscreenContentRenderingStrategy] whenever
-  /// [needsOffscreenContent] changes.
+  /// If a [TextPlugin] also implements [Listenable], [TextPluginScope] listens
+  /// to it and updates the [OffscreenContentRenderingStrategy] whenever this
+  /// changes.
   ///
   /// Defaults to `false`.
   bool get needsOffscreenContent => false;
 
-  /// The relative order in which this plugin paints compared to other active
-  /// [TextPlugin]s on the same text widget.
+  /// The relative order of this plugin compared to other [TextPlugin]s on the
+  /// same text.
   ///
-  /// Plugins with a lower [paintOrder] paint first (further in the
-  /// background). When two plugins have the same
-  /// [paintOrder], their relative order is determined by their
-  /// [TextPluginScope] installation order (outermost scope first).
+  /// Where the decorations of two plugins overlap, the plugin with the higher
+  /// [paintOrder] wins. When two plugins have the same [paintOrder], the one
+  /// from the inner [TextPluginScope] wins.
   ///
   /// Defaults to `0`.
   int get paintOrder => 0;
 
-  /// Whether this plugin paints text selection highlights.
-  ///
-  /// When a plugin with [handlesSelectionHighlight] set to `true` is active
-  /// on a [RenderParagraph], its [TextDelegate.backgroundPainter] is painted
-  /// after other plugin background painters (immediately behind the text
-  /// glyphs) and replaces the built-in selection highlight painting on
-  /// [RenderParagraph].
+  /// Whether this plugin shows the selection of static text, so that
+  /// [RenderParagraph] does not paint its own highlight.
   @internal
   bool get handlesSelectionHighlight => false;
 
-  /// Called whenever a new text widget ([Text], [RichText], or
-  /// [EditableText]) appears in the subtree covered by this plugin.
+  /// Whether every text in the scope asks this plugin for its decorations
+  /// again when this plugin, as a [Listenable], notifies its listeners.
   ///
-  /// This runs after the layout phase of the frame. The render tree is
-  /// complete by then, also for text that is created during layout, such as
-  /// the items of a lazy list. So the document order of [delegate]
-  /// ([TextDelegate.compareTo]) is valid during this callback.
+  /// This is the simple way to change decorations: change state and notify.
+  /// Its cost follows the number of texts in the scope. The precise way is
+  /// [TextDelegate.markNeedsDecoration], for the texts that changed.
   ///
-  /// The layout of the text is not available here. Set a painter, which
-  /// receives a [TextLayout] when it paints. A painter that is set in this
-  /// callback paints in the same frame.
+  /// Defaults to `false`.
+  bool get notifiesDecorationChanges => false;
+
+  /// Called whenever a new text appears in the subtree covered by this plugin.
+  ///
+  /// This runs while the text is being built, before [buildDecorations] is
+  /// called for it. The text has no layout yet, and the render tree around it
+  /// may be incomplete, so the document order of [delegate]
+  /// ([TextDelegate.compareTo]) is not reliable here.
+  ///
+  /// A plugin must not notify listeners synchronously from this callback. Use
+  /// [deferToEndOfFrame].
   void didAddText(TextDelegate delegate) {}
 
-  /// Called whenever the text displayed in a text widget covered by this
-  /// plugin changes.
+  /// Called whenever the plain text of a text covered by this plugin changes.
   ///
-  /// Like [didAddText], this runs after the layout phase of the frame, and the
-  /// layout of the text is not available here.
-  ///
-  /// There is no callback for a text that is only laid out again. Such a text
-  /// is painted again, and its painters receive the new [TextLayout].
+  /// Like [didAddText], this runs at build time, before [buildDecorations].
   void didUpdateText(TextDelegate delegate) {}
 
-  /// Called whenever a text widget is removed from the subtree covered by this
+  /// Called whenever a text is removed from the subtree covered by this
   /// plugin.
   void didRemoveText(TextDelegate delegate) {}
-}
 
-/// The layout of a text widget, given to a [TextPluginPainter] while it
-/// paints.
-///
-/// All geometry is in the local coordinate space of the text widget, which is
-/// also the coordinate space of the canvas the painter receives.
-///
-/// A [TextLayout] is only valid during the call to [TextPluginPainter.paint]
-/// that received it. Using it later throws in debug mode.
-final class TextLayout {
-  TextLayout._(this._delegate);
-
-  final TextDelegate _delegate;
-  bool _debugValid = true;
-
-  bool _debugCheckValid() {
-    assert(
-      _debugValid,
-      'A TextLayout was used outside of the TextPluginPainter.paint call that '
-      'received it. The layout of a text is only available while painting.',
-    );
-    return true;
-  }
-
-  /// The size of the text widget.
-  Size get size {
-    assert(_debugCheckValid());
-    return _delegate._host.size;
-  }
-
-  /// Returns a list of [ui.TextBox]es that bound the given [selection].
+  /// Returns what this plugin wants done to the text of [delegate].
   ///
-  /// By default ([includePlaceholders] is `false`), boxes corresponding to
-  /// embedded [PlaceholderSpan]s (such as [WidgetSpan]s) are excluded from the
-  /// returned list so text highlights do not paint across inline widgets.
-  List<ui.TextBox> getBoxesForSelection(
-    TextSelection selection, {
-    ui.BoxHeightStyle boxHeightStyle = ui.BoxHeightStyle.tight,
-    ui.BoxWidthStyle boxWidthStyle = ui.BoxWidthStyle.tight,
-    bool includePlaceholders = false,
-  }) {
-    assert(_debugCheckValid());
-    return _delegate._getBoxesForSelection(
-      selection,
-      boxHeightStyle: boxHeightStyle,
-      boxWidthStyle: boxWidthStyle,
-      includePlaceholders: includePlaceholders,
-    );
-  }
+  /// Each [TextSpanDecoration.range] is in [TextDelegate.text], whatever other
+  /// plugins do to the same text.
+  ///
+  /// The framework calls this when the text is built and whenever
+  /// [TextDelegate.markNeedsDecoration] was called. It has to return equal
+  /// decorations for equal state, and it must not change state.
+  List<TextSpanDecoration> buildDecorations(TextDelegate delegate) => const <TextSpanDecoration>[];
 
-  /// Returns the [ui.TextPosition] within the text for the given [offset].
-  ui.TextPosition getPositionForOffset(Offset offset) {
-    assert(_debugCheckValid());
-    return _delegate._getPositionForOffset(offset);
-  }
-
-  /// Returns the [ui.TextRange] of the word at the given [position].
-  ui.TextRange getWordBoundary(ui.TextPosition position) {
-    assert(_debugCheckValid());
-    return _delegate._getWordBoundary(position);
-  }
-
-  /// Returns the offset at which to paint the caret for the given [position].
-  Offset getOffsetForCaret(ui.TextPosition position, Rect caretPrototype) {
-    assert(_debugCheckValid());
-    return _delegate._getOffsetForCaret(position, caretPrototype);
-  }
-
-  /// Returns the full height of the caret at the given [position].
-  double getFullHeightForCaret(ui.TextPosition position) {
-    assert(_debugCheckValid());
-    return _delegate._getFullHeightForCaret(position);
+  /// Runs [callback] now if no frame is being produced, and otherwise at the
+  /// end of the current frame.
+  ///
+  /// The lifecycle callbacks run during build. A plugin that is a
+  /// [ChangeNotifier] cannot notify its listeners from them, because a
+  /// listener that calls `setState` would do so during build. It notifies
+  /// through this method instead.
+  static void deferToEndOfFrame(VoidCallback callback) {
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback(
+        (Duration timeStamp) => callback(),
+        debugLabel: 'TextPlugin.deferToEndOfFrame',
+      );
+    } else {
+      callback();
+    }
   }
 }
 
-/// Paints behind or in front of a text widget on behalf of a [TextPlugin].
+/// A delegate representing one text registered with a [TextPlugin].
 ///
-/// This is the text plugin counterpart of [CustomPainter]. The difference is
-/// that [paint] receives the [TextLayout] of the text, so that a plugin only
-/// sees the layout of a text while it paints.
+/// Each pair of a text and a [TextPlugin] has its own [TextDelegate]. Through
+/// it the plugin can:
 ///
-/// The painter repaints when the optional `repaint` [Listenable] notifies, or
-/// when a new painter is set for which [shouldRepaint] returns true.
-abstract class TextPluginPainter extends Listenable {
-  /// Creates a text plugin painter.
-  ///
-  /// The painter will repaint whenever `repaint` notifies its listeners.
-  const TextPluginPainter({this._repaint});
-
-  final Listenable? _repaint;
-
-  @override
-  void addListener(VoidCallback listener) => _repaint?.addListener(listener);
-
-  @override
-  void removeListener(VoidCallback listener) => _repaint?.removeListener(listener);
-
-  /// Paints on [canvas], in the local coordinate space of the text widget.
-  ///
-  /// [layout] is only valid during this call.
-  void paint(Canvas canvas, TextLayout layout);
-
-  /// Whether a new instance of this painter has to repaint, given the
-  /// instance it replaces.
-  bool shouldRepaint(covariant TextPluginPainter oldPainter);
-}
-
-/// A delegate representing a text render object ([RenderParagraph] or
-/// [RenderEditable]) registered with a [TextPlugin].
+///  * Read the plain text ([text]) or the [InlineSpan] tree ([textSpan]).
+///  * Ask for [TextPlugin.buildDecorations] to be called again
+///    ([markNeedsDecoration]).
+///  * Scroll enclosing viewports to reveal a range ([ensureVisible]).
+///  * Sort delegates in document order ([compareTo], [sortInDocumentOrder]).
+///  * Listen for changes of the text and of the selection ([addListener]).
 ///
-/// Each `(RenderObject, TextPlugin)` pair receives its own dedicated
-/// [TextDelegate] instance. Through this delegate, the plugin can:
-///
-///  * Query the plain text ([text]) or rich [InlineSpan] ([textSpan]).
-///  * Scroll enclosing viewports to reveal a specific [ui.TextRange] via
-///    [ensureVisible].
-///  * Sort delegates in logical document order using [compareTo]
-///    ([Comparable]).
-///  * Provide a [backgroundPainter] or [foregroundPainter] to paint behind or
-///    in front of the text.
-///  * Listen for text updates via [addListener].
-///
-/// The delegate does not expose the layout of the text. A
-/// [TextPluginPainter] receives it, as a [TextLayout], while it paints.
+/// The delegate does not expose the layout of the text.
 class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
-  // Only a [TextDelegateHostMixin] creates delegates: one for each pair of a
-  // text render object and a [TextPlugin].
-  TextDelegate._(this._host, this.plugin) {
+  TextDelegate._(this._set, this.plugin) {
     if (kFlutterMemoryAllocationsEnabled) {
       ChangeNotifier.maybeDispatchObjectCreation(this);
     }
   }
 
-  // The render object ([RenderParagraph], [RenderEditable], or a custom
-  // [TextDelegateHostMixin]) that this delegate represents.
-  //
-  // It is private on purpose. A plugin reads the text through the members of
-  // this class, and the geometry through the [TextLayout] that its painter
-  // receives. With the render object it could change the text, read the
-  // layout at any time, or reach the painters of another plugin.
-  final TextDelegateHostMixin _host;
+  final TextDelegateSet _set;
 
   /// The [TextPlugin] that owns this delegate.
   final TextPlugin plugin;
 
-  // The state below is written by [TextDelegateHostMixin] only.
-
-  // Whether the underlying render object currently has an up-to-date layout,
-  // in both debug and release builds.
-  bool _hasValidLayout = false;
-
-  // Whether [TextPlugin.didAddText] has been dispatched for this delegate.
-  bool _hasDispatchedAdd = false;
-
-  // Whether [TextPlugin.didUpdateText] is pending for the next post-layout flush.
-  bool _pendingUpdate = false;
-
-  // Whether this delegate has been disposed.
   bool _isDisposed = false;
 
-  /// Returns the plain text in the text widget represented by this delegate.
-  String get text => _host.plainText;
+  // The render object of the text. Null in Option A until the text has been
+  // built for the first time.
+  TextDelegateHostMixin? get _host => _set._host;
 
-  /// Returns the [InlineSpan] tree displayed by the text widget represented by
-  /// this delegate.
-  InlineSpan get textSpan => _host.textSpan;
+  /// The plain text of the text widget, before any plugin decorated it.
+  ///
+  /// A [PlaceholderSpan] is one `0xFFFC` code unit, and semantics labels are
+  /// not used.
+  String get text => _set.plainText;
+
+  /// The [InlineSpan] tree of the text widget, before any plugin decorated
+  /// it.
+  InlineSpan get textSpan => _set.span;
 
   /// Returns the character ranges occupied by [PlaceholderSpan]s (such as
   /// [WidgetSpan]s) within [text].
-  ///
-  /// Each [PlaceholderSpan] is represented in [text] by a single
-  /// `0xFFFC` ([PlaceholderSpan.placeholderCodeUnit]) character.
-  List<ui.TextRange> get placeholderRanges {
+  List<TextRange> get placeholderRanges {
     final String plainText = text;
-    final ranges = <ui.TextRange>[];
+    final ranges = <TextRange>[];
     var index = 0;
     while (index < plainText.length) {
       if (plainText.codeUnitAt(index) == PlaceholderSpan.placeholderCodeUnit) {
@@ -300,7 +202,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
             plainText.codeUnitAt(index) == PlaceholderSpan.placeholderCodeUnit) {
           index += 1;
         }
-        ranges.add(ui.TextRange(start: start, end: index));
+        ranges.add(TextRange(start: start, end: index));
       } else {
         index += 1;
       }
@@ -308,230 +210,130 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     return ranges;
   }
 
-  /// The active text selections in the text widget represented by this
-  /// delegate.
+  /// The active text selections in the text widget, in offsets of [text].
   ///
-  /// For a [RenderParagraph] with embedded [PlaceholderSpan]s (such as
-  /// [WidgetSpan]s), each selectable text fragment may have its own
-  /// [TextSelection].
-  ///
-  /// This is empty for a text field ([RenderEditable]). A text field paints
-  /// its own selection, and a plugin has nothing to add to it.
-  List<TextSelection> get selections => _host.selections;
+  /// This is empty for a text field ([RenderEditable]), which paints its own
+  /// selection, and for a text that has not been built yet.
+  List<TextSelection> get selections {
+    final TextDelegateHostMixin? host = _host;
+    if (host == null) {
+      return const <TextSelection>[];
+    }
+    final DecoratedTextSpan? decorated = _set._decorated;
+    if (decorated == null || !decorated.changesText) {
+      return host.selections;
+    }
+    return <TextSelection>[
+      for (final TextSelection selection in host.selections)
+        TextSelection(
+          baseOffset: decorated.toOriginalOffset(selection.baseOffset),
+          extentOffset: decorated.toOriginalOffset(selection.extentOffset),
+        ),
+    ];
+  }
 
-  /// The color used to paint selection highlights on the text widget
-  /// represented by this delegate.
-  Color? get selectionColor => _host.selectionColor;
+  /// The color used to paint selection highlights on the text widget.
+  Color? get selectionColor => _host?.selectionColor;
 
   /// The directionality of the text.
-  ui.TextDirection get textDirection => _host.textDirection;
+  ui.TextDirection get textDirection => _set.textDirection;
 
-  /// Whether the underlying render object is currently attached to the
-  /// render tree.
-  bool get attached => _host.attached;
+  /// Whether the text can be edited.
+  bool get isEditable => _set.isEditable;
 
-  bool get _hasLayout => _hasValidLayout && _host.hasSize && !_host.debugNeedsLayout;
+  /// Whether the text is in a [SelectableRegion] or is a text field, so that
+  /// a pointer can select in it.
+  bool get isSelectable => _set.isEditable || (_host?.isSelectable ?? false);
 
-  /// A [TextPluginPainter] to be painted in front of the text widget.
-  TextPluginPainter? get foregroundPainter => _foregroundPainter;
-  TextPluginPainter? _foregroundPainter;
-  set foregroundPainter(TextPluginPainter? value) {
-    if (_foregroundPainter == value) {
-      return;
-    }
-    final TextPluginPainter? oldPainter = _foregroundPainter;
-    _foregroundPainter = value;
-    _didUpdatePainter(_foregroundPainter, oldPainter);
-  }
+  /// Whether the render object of the text is attached to the render tree.
+  bool get attached => _host?.attached ?? false;
 
-  /// A [TextPluginPainter] to be painted behind the text widget.
-  TextPluginPainter? get backgroundPainter => _backgroundPainter;
-  TextPluginPainter? _backgroundPainter;
-  set backgroundPainter(TextPluginPainter? value) {
-    if (_backgroundPainter == value) {
-      return;
-    }
-    final TextPluginPainter? oldPainter = _backgroundPainter;
-    _backgroundPainter = value;
-    _didUpdatePainter(_backgroundPainter, oldPainter);
-  }
-
-  void _didUpdatePainter(TextPluginPainter? newPainter, TextPluginPainter? oldPainter) {
-    if (newPainter == null) {
-      assert(oldPainter != null);
-      _host.markNeedsPaint();
-    } else if (oldPainter == null ||
-        newPainter.runtimeType != oldPainter.runtimeType ||
-        newPainter.shouldRepaint(oldPainter)) {
-      _host.markNeedsPaint();
-    }
-    if (_host.attached) {
-      oldPainter?.removeListener(_host.markNeedsPaint);
-      newPainter?.addListener(_host.markNeedsPaint);
+  /// Asks the framework to call [TextPlugin.buildDecorations] for this text
+  /// again.
+  ///
+  /// Only this text is updated. The text is laid out again if the new
+  /// decorations differ from the old ones by more than a color or a text
+  /// decoration.
+  ///
+  /// This must not be called while widgets are being built, laid out or
+  /// painted. A plugin does not have to call it from [TextPlugin.didAddText]
+  /// or [TextPlugin.didUpdateText]: the decorations are built right after
+  /// those.
+  void markNeedsDecoration() {
+    if (!_isDisposed) {
+      _set._markNeedsDecoration();
     }
   }
 
-  List<ui.TextBox> _getBoxesForSelection(
-    TextSelection selection, {
-    ui.BoxHeightStyle boxHeightStyle = ui.BoxHeightStyle.tight,
-    ui.BoxWidthStyle boxWidthStyle = ui.BoxWidthStyle.tight,
-    bool includePlaceholders = false,
-  }) {
-    if (includePlaceholders || !selection.isValid || selection.isCollapsed) {
-      return _host.getBoxesForSelection(
-        selection,
-        boxHeightStyle: boxHeightStyle,
-        boxWidthStyle: boxWidthStyle,
-      );
-    }
-    final String plainText = text;
-    final int start = selection.start.clamp(0, plainText.length);
-    final int end = selection.end.clamp(0, plainText.length);
-    final boxes = <ui.TextBox>[];
-    var segmentStart = start;
-    for (var i = start; i < end; i += 1) {
-      if (plainText.codeUnitAt(i) == PlaceholderSpan.placeholderCodeUnit) {
-        if (segmentStart < i) {
-          boxes.addAll(
-            _host.getBoxesForSelection(
-              TextSelection(baseOffset: segmentStart, extentOffset: i),
-              boxHeightStyle: boxHeightStyle,
-              boxWidthStyle: boxWidthStyle,
-            ),
-          );
-        }
-        segmentStart = i + 1;
-      }
-    }
-    if (segmentStart < end) {
-      boxes.addAll(
-        _host.getBoxesForSelection(
-          TextSelection(baseOffset: segmentStart, extentOffset: end),
-          boxHeightStyle: boxHeightStyle,
-          boxWidthStyle: boxWidthStyle,
-        ),
-      );
-    }
-    return boxes;
-  }
-
-  ui.TextPosition _getPositionForOffset(Offset offset) {
-    return _host.getPositionForOffset(offset);
-  }
-
-  ui.TextRange _getWordBoundary(ui.TextPosition position) {
-    return _host.getWordBoundary(position);
-  }
-
-  Offset _getOffsetForCaret(ui.TextPosition position, Rect caretPrototype) {
-    return _host.getOffsetForCaret(position, caretPrototype);
-  }
-
-  double _getFullHeightForCaret(ui.TextPosition position) {
-    return _host.getFullHeightForCaret(position);
+  bool get _hasLayout {
+    final TextDelegateHostMixin? host = _host;
+    return host != null && host.attached && host._hasValidLayout && host.hasSize;
   }
 
   /// Runs [scroll] after the current frame if a frame is being produced, and
   /// returns whether it did so.
-  ///
-  /// Scrolling can mark a viewport as needing layout. That is not allowed
-  /// while a frame is being built, laid out and painted, which is when the
-  /// lifecycle callbacks of a [TextPlugin] run. So a scroll that is requested
-  /// during a frame waits for the end of that frame. The scroll is dropped if
-  /// the text is gone by then.
   bool _deferScrollToEndOfFrame(VoidCallback scroll) {
     if (SchedulerBinding.instance.schedulerPhase != SchedulerPhase.persistentCallbacks) {
       return false;
     }
     SchedulerBinding.instance.addPostFrameCallback((Duration timeStamp) {
-      if (!_isDisposed && attached && _hasLayout) {
+      if (!_isDisposed && _hasLayout) {
         scroll();
       }
     }, debugLabel: 'TextDelegate.ensureVisible');
     return true;
   }
 
-  void _showOnScreen({Rect? rect, Duration duration = Duration.zero, Curve curve = Curves.ease}) {
-    _host.showOnScreen(descendant: _host, rect: rect, duration: duration, curve: curve);
-  }
-
   /// Scrolls any enclosing scrollable viewports so that the given character
-  /// [range] within this text widget is visible on screen.
-  ///
-  /// The framework computes the rectangle of the glyphs in [range] (or of the
-  /// caret if [range] is collapsed). A plugin does not need the layout of the
-  /// text for this.
+  /// [range] of [text] is visible on screen.
   ///
   /// This is safe to call from a lifecycle callback of a [TextPlugin]. When it
   /// is called while a frame is being produced, the scroll happens at the end
   /// of that frame and shows in the next one. Otherwise it happens right away.
   /// Nothing happens if the text has no layout at that point.
   void ensureVisible(
-    ui.TextRange range, {
+    TextRange range, {
     Duration duration = Duration.zero,
     Curve curve = Curves.ease,
   }) {
-    // The rectangle of the range is computed when the scroll runs.
     if (_deferScrollToEndOfFrame(() => ensureVisible(range, duration: duration, curve: curve))) {
       return;
     }
     if (!_hasLayout) {
       return;
     }
-    final List<ui.TextBox> boxes = _getBoxesForSelection(
-      TextSelection(baseOffset: range.start, extentOffset: range.end),
-      boxHeightStyle: ui.BoxHeightStyle.max,
-    );
-    if (boxes.isNotEmpty) {
-      Rect targetRect = boxes.first.toRect();
-      for (var i = 1; i < boxes.length; i += 1) {
-        targetRect = targetRect.expandToInclude(boxes[i].toRect());
-      }
-      _showOnScreen(rect: targetRect, duration: duration, curve: curve);
-      return;
-    }
-    final position = ui.TextPosition(offset: range.start);
-    final Offset caretOffset = _getOffsetForCaret(position, Rect.zero);
-    final double caretHeight = _getFullHeightForCaret(position);
-    _showOnScreen(
-      rect: Rect.fromLTWH(caretOffset.dx, caretOffset.dy, 1.0, caretHeight),
-      duration: duration,
-      curve: curve,
-    );
+    final TextDelegateHostMixin host = _host!;
+    final Rect? rect = host._rectForRange(_set._toDecoratedRange(range));
+    host.showOnScreen(descendant: host, rect: rect, duration: duration, curve: curve);
   }
 
   /// Compares this [TextDelegate] with [other] according to their logical
   /// document order in the render tree.
   ///
-  /// Returns a negative integer if this delegate's render object precedes
-  /// [other]'s in a pre-order traversal of the render tree, zero if they
-  /// represent the same render object, or a positive integer if this
-  /// delegate follows [other].
-  ///
-  /// This is useful when scrollable lists mount items out of document order
-  /// (for example, when scrolling upward in a lazy [ListView]).
-  ///
-  /// One comparison walks both ancestor chains to the root. When the two
-  /// branches are children of a parent that keeps a sibling list, such as a
-  /// [RenderFlex] or a [RenderSliverList], it then walks that list from both
-  /// children at once, so the cost grows with the distance between them. For
-  /// other parents it visits all children of the common parent.
+  /// The order is only reliable once the frame has been laid out. During
+  /// build, which is when the lifecycle callbacks of a [TextPlugin] run, the
+  /// render tree may be incomplete.
   ///
   /// To order many delegates, use [sortInDocumentOrder], which walks the tree
   /// once instead of comparing pairs.
   @override
   int compareTo(TextDelegate other) {
-    if (identical(this, other) || identical(_host, other._host)) {
+    final TextDelegateHostMixin? host = _host;
+    final TextDelegateHostMixin? otherHost = other._host;
+    if (identical(this, other) || (host != null && identical(host, otherHost))) {
       return 0;
+    }
+    if (host == null || otherHost == null) {
+      return identityHashCode(_set).compareTo(identityHashCode(other._set));
     }
 
     final thisAncestors = <RenderObject>[];
-    for (RenderObject? node = _host; node != null; node = node.parent) {
+    for (RenderObject? node = host; node != null; node = node.parent) {
       thisAncestors.add(node);
     }
 
     final otherAncestors = <RenderObject>[];
-    for (RenderObject? node = other._host; node != null; node = node.parent) {
+    for (RenderObject? node = otherHost; node != null; node = node.parent) {
       otherAncestors.add(node);
     }
 
@@ -540,7 +342,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
 
     if (!identical(thisAncestors[thisIndex], otherAncestors[otherIndex])) {
       // The two render objects do not share a common root (e.g., one is detached).
-      return identityHashCode(_host).compareTo(identityHashCode(other._host));
+      return identityHashCode(host).compareTo(identityHashCode(otherHost));
     }
 
     while (thisIndex >= 0 &&
@@ -587,12 +389,6 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     return parentData is ContainerParentDataMixin<RenderObject> ? parentData.nextSibling : null;
   }
 
-  /// Orders two children of one parent by walking the sibling list forward
-  /// from both at once. The walk ends when one reaches the other, so its cost
-  /// is the distance between the two.
-  ///
-  /// Returns null if the two are not in one sibling list, for example when
-  /// the parent does not use [ContainerRenderObjectMixin].
   static int? _compareSiblings(RenderObject a, RenderObject b) {
     if (a.parentData is! ContainerParentDataMixin<RenderObject> ||
         b.parentData is! ContainerParentDataMixin<RenderObject>) {
@@ -614,15 +410,7 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   }
 
   /// Sorts [delegates] in place into logical document order, the order that
-  /// [compareTo] defines.
-  ///
-  /// Sorting with [compareTo] compares pairs, and each comparison walks part
-  /// of the tree. This method walks the tree once instead: it marks the
-  /// ancestors of every delegate, then visits only the marked nodes from the
-  /// root, in the order of [RenderObject.visitChildren]. The cost is the
-  /// number of children of the marked nodes, however many delegates there
-  /// are. Use it to order many delegates at once, for example every text
-  /// that matches a search.
+  /// [compareTo] defines, with one walk of the render tree.
   static void sortInDocumentOrder(List<TextDelegate> delegates) {
     if (delegates.length < 2) {
       return;
@@ -631,15 +419,19 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     final marked = <RenderObject>{};
     RenderObject? root;
     for (final delegate in delegates) {
-      (delegatesByRenderObject[delegate._host] ??= <TextDelegate>[]).add(delegate);
-      RenderObject? node = delegate._host;
+      final TextDelegateHostMixin? host = delegate._host;
+      if (host == null) {
+        delegates.sort();
+        return;
+      }
+      (delegatesByRenderObject[host] ??= <TextDelegate>[]).add(delegate);
+      RenderObject? node = host;
       RenderObject? top;
       while (node != null && marked.add(node)) {
         top = node;
         node = node.parent;
       }
       if (node == null && top != null) {
-        // The walk ended at a node without a parent, so `top` is a root.
         if (root != null && !identical(root, top)) {
           // The delegates are not in one tree, for example because one is
           // detached. Fall back to comparing pairs.
@@ -671,41 +463,6 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
     delegates.setAll(0, sorted);
   }
 
-  /// Marks the underlying render object as needing to repaint.
-  void markNeedsPaint() {
-    _host.markNeedsPaint();
-  }
-
-  // Attaches painter listeners when the render object attaches to the
-  // pipeline owner.
-  void _attachPainters() {
-    _backgroundPainter?.addListener(_host.markNeedsPaint);
-    _foregroundPainter?.addListener(_host.markNeedsPaint);
-  }
-
-  // Detaches painter listeners when the render object detaches from the
-  // pipeline owner.
-  void _detachPainters() {
-    _backgroundPainter?.removeListener(_host.markNeedsPaint);
-    _foregroundPainter?.removeListener(_host.markNeedsPaint);
-  }
-
-  // Calls [painter] with the layout of the text. The [TextLayout] is only
-  // valid during the call.
-  void _paint(TextPluginPainter painter, Canvas canvas) {
-    final layout = TextLayout._(this);
-    try {
-      painter.paint(canvas, layout);
-    } finally {
-      assert(() {
-        layout._debugValid = false;
-        return true;
-      }());
-    }
-  }
-
-  // Notifies listeners registered on this [TextDelegate] that the text or the
-  // selection has been updated.
   void _notifyChanged() {
     notifyListeners();
   }
@@ -713,43 +470,277 @@ class TextDelegate extends ChangeNotifier implements Comparable<TextDelegate> {
   @override
   void dispose() {
     _isDisposed = true;
-    _detachPainters();
-    _backgroundPainter = null;
-    _foregroundPainter = null;
     super.dispose();
   }
 }
 
-/// A mixin for [RenderBox] subclasses that participate in a [TextPluginScope].
+/// The delegates of one text, one for each [TextPlugin], and the decorated
+/// span that the plugins produce for it.
 ///
-/// [RenderParagraph] and [RenderEditable] use it. A custom [RenderBox] can use
-/// it too, for example one that paints text directly with [TextPainter], or a
-/// non-text render object that exposes a searchable label.
-///
-/// The mixin creates one [TextDelegate] for each [TextPlugin] in
-/// [textPlugins], tells the plugins about the text after layout, and disposes
-/// the delegates when the render object is detached.
-///
-/// Subclasses using this mixin should:
-///  1. Implement [plainText], [textDirection], and [getBoxesForSelection].
-///  2. Call [markNeedsTextDelegateUpdate] when [plainText] changes.
-///  3. Call [didLayoutTextDelegates] at the end of [performLayout].
-///  4. Call [paintTextPluginBackgrounds] and [paintTextPluginForegrounds]
-///     inside [paint].
-mixin TextDelegateHostMixin on RenderBox {
-  /// The plain text (or searchable label) exposed to [TextPlugin]s.
-  String get plainText;
-
-  /// The [InlineSpan] tree exposed to [TextPlugin]s.
+/// This is the shared machinery of the two options of the inline-span
+/// experiment. In Option A a widget owns it, in Option B the render object
+/// does. It is not part of the plugin API.
+class TextDelegateSet {
+  /// Creates an empty set.
   ///
-  /// Defaults to a [TextSpan] wrapping [plainText].
-  InlineSpan get textSpan => TextSpan(text: plainText);
+  /// [onNeedsDecoration] is called when a plugin asks for new decorations
+  /// with [TextDelegate.markNeedsDecoration].
+  TextDelegateSet({required this.onNeedsDecoration});
 
-  /// The directionality of [plainText].
+  /// Called when a plugin asks for new decorations.
+  final VoidCallback onNeedsDecoration;
+
+  Map<TextPlugin, TextDelegate> _delegates = <TextPlugin, TextDelegate>{};
+  TextDelegateHostMixin? _host;
+
+  /// The undecorated span of the text.
+  InlineSpan get span => _span!;
+  InlineSpan? _span;
+
+  /// The plain text of [span].
+  String get plainText => _plainText ??= span.toPlainText(includeSemanticsLabels: false);
+  String? _plainText;
+
+  /// The directionality of the text.
+  ui.TextDirection get textDirection => _textDirection;
+  ui.TextDirection _textDirection = ui.TextDirection.ltr;
+
+  /// Whether the text is editable.
+  bool get isEditable => _isEditable;
+  bool _isEditable = false;
+
+  /// Whether there is no delegate.
+  bool get isEmpty => _delegates.isEmpty;
+
+  /// The delegates, in the order of their plugins.
+  Iterable<TextDelegate> get delegates => _delegates.values;
+
+  /// The delegate of [plugin], if any.
+  TextDelegate? delegateFor(TextPlugin plugin) => _delegates[plugin];
+
+  /// The render object of the text, once there is one.
+  TextDelegateHostMixin? get host => _host;
+
+  bool _disposed = false;
+
+  /// Brings the set up to date with the text and the plugins, and tells the
+  /// plugins about it.
+  ///
+  /// A plugin that is new gets [TextPlugin.didAddText]. A plugin that is gone
+  /// gets [TextPlugin.didRemoveText]. If the plain text changed, the others
+  /// get [TextPlugin.didUpdateText].
+  void update({
+    required List<TextPlugin> plugins,
+    required InlineSpan span,
+    required ui.TextDirection textDirection,
+    bool isEditable = false,
+  }) {
+    assert(!_disposed);
+    _updating = true;
+    try {
+      _update(plugins, span, textDirection, isEditable);
+    } finally {
+      _updating = false;
+    }
+  }
+
+  bool _updating = false;
+
+  void _update(
+    List<TextPlugin> plugins,
+    InlineSpan span,
+    ui.TextDirection textDirection,
+    bool isEditable,
+  ) {
+    var textChanged = false;
+    final InlineSpan? oldSpan = _span;
+    if (!identical(oldSpan, span)) {
+      // Only a layout change can change the plain text. A rebuild with an
+      // equal span is the common case, and building the string for every
+      // text on the page is not free.
+      if (oldSpan != null && oldSpan.compareTo(span) == RenderComparison.layout) {
+        final String oldPlainText = plainText;
+        _span = span;
+        _plainText = null;
+        textChanged = oldPlainText != plainText;
+      } else {
+        _span = span;
+      }
+    }
+    _textDirection = textDirection;
+    _isEditable = isEditable;
+
+    final Map<TextPlugin, TextDelegate> oldDelegates = _delegates;
+    var same = oldDelegates.length == plugins.length;
+    if (same) {
+      var index = 0;
+      for (final TextPlugin plugin in oldDelegates.keys) {
+        if (!identical(plugin, plugins[index])) {
+          same = false;
+          break;
+        }
+        index += 1;
+      }
+    }
+    if (same) {
+      if (textChanged) {
+        for (final TextDelegate delegate in oldDelegates.values.toList(growable: false)) {
+          delegate._notifyChanged();
+          delegate.plugin.didUpdateText(delegate);
+        }
+      }
+      return;
+    }
+
+    final newDelegates = <TextPlugin, TextDelegate>{};
+    final added = <TextDelegate>[];
+    for (final plugin in plugins) {
+      if (newDelegates.containsKey(plugin)) {
+        continue;
+      }
+      final TextDelegate? existing = oldDelegates[plugin];
+      if (existing != null) {
+        newDelegates[plugin] = existing;
+      } else {
+        final delegate = TextDelegate._(this, plugin);
+        newDelegates[plugin] = delegate;
+        added.add(delegate);
+      }
+    }
+    _delegates = newDelegates;
+    for (final MapEntry<TextPlugin, TextDelegate> entry in oldDelegates.entries) {
+      if (!newDelegates.containsKey(entry.key)) {
+        entry.key.didRemoveText(entry.value);
+        entry.value.dispose();
+      }
+    }
+    for (final TextDelegate delegate in newDelegates.values.toList(growable: false)) {
+      if (added.contains(delegate)) {
+        delegate.plugin.didAddText(delegate);
+      } else if (textChanged) {
+        delegate._notifyChanged();
+        delegate.plugin.didUpdateText(delegate);
+      }
+    }
+  }
+
+  DecoratedTextSpan? _decorated;
+  InlineSpan? _decoratedFrom;
+  List<TextSpanDecoration>? _decorations;
+
+  /// How many times a decorated span was built by [decorate], for tests and
+  /// benchmarks.
+  static int debugDecorateCount = 0;
+
+  /// How many times [TextPlugin.buildDecorations] was called, for tests and
+  /// benchmarks.
+  static int debugBuildDecorationsCount = 0;
+
+  /// Asks every plugin for its decorations and returns the decorated span.
+  ///
+  /// Returns the same object as the last call if neither the span nor the
+  /// decorations changed, so that the text is not laid out again.
+  DecoratedTextSpan decorate() {
+    assert(!_disposed);
+    List<TextSpanDecoration>? decorations;
+    for (final TextDelegate delegate in _delegates.values) {
+      debugBuildDecorationsCount += 1;
+      final List<TextSpanDecoration> own = delegate.plugin.buildDecorations(delegate);
+      if (own.isEmpty) {
+        continue;
+      }
+      decorations ??= <TextSpanDecoration>[];
+      if (_isEditable) {
+        // The text of a text field has to stay the same string, or the caret
+        // and the selection are wrong. So a replacement is dropped.
+        decorations.addAll(
+          own.where((TextSpanDecoration decoration) => decoration.replacement == null),
+        );
+      } else {
+        decorations.addAll(own);
+      }
+    }
+    decorations ??= const <TextSpanDecoration>[];
+    final DecoratedTextSpan? last = _decorated;
+    if (last != null && identical(_decoratedFrom, span) && listEquals(_decorations, decorations)) {
+      return last;
+    }
+    debugDecorateCount += 1;
+    _decoratedFrom = span;
+    _decorations = decorations;
+    return _decorated = decorateTextSpan(span, decorations);
+  }
+
+  /// The result of the last call to [decorate].
+  DecoratedTextSpan? get decorated => _decorated;
+
+  TextRange _toDecoratedRange(TextRange range) {
+    final DecoratedTextSpan? decorated = _decorated;
+    if (decorated == null || !decorated.changesText) {
+      return range;
+    }
+    return TextRange(
+      start: decorated.toDecoratedOffset(range.start),
+      end: decorated.toDecoratedOffset(range.end),
+    );
+  }
+
+  void _markNeedsDecoration() {
+    // While the plugins are being told about the text, the decorations are
+    // about to be asked for anyway.
+    if (!_disposed && !_updating) {
+      onNeedsDecoration();
+    }
+  }
+
+  /// Notifies the listeners of every delegate, without a plugin callback.
+  void notifyListeners() {
+    for (final TextDelegate delegate in _delegates.values.toList(growable: false)) {
+      delegate._notifyChanged();
+    }
+  }
+
+  /// Tells every plugin that the text is gone, and disposes the delegates.
+  void dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    final List<TextDelegate> delegates = _delegates.values.toList(growable: false);
+    _delegates = <TextPlugin, TextDelegate>{};
+    for (final delegate in delegates) {
+      delegate.plugin.didRemoveText(delegate);
+      delegate.dispose();
+    }
+    _host = null;
+  }
+}
+
+/// A mixin for [RenderBox] subclasses that participate in a
+/// [TextPluginScope].
+///
+/// [RenderParagraph] and [RenderEditable] use it.
+///
+/// In Option B of the inline-span experiment the render object owns the
+/// delegates: it is given [textPlugins], and it calls [applyDecoratedTextSpan]
+/// with the decorated span. In Option A a widget owns them and gives the
+/// render object a [textDelegateSet], and the span that the render object is
+/// given is already decorated.
+mixin TextDelegateHostMixin on RenderBox {
+  /// The span that this render object was given, before this render object
+  /// decorated it.
+  InlineSpan get textSpan;
+
+  /// The directionality of the text.
   ui.TextDirection get textDirection;
 
-  /// The selections that a plugin with [TextPlugin.handlesSelectionHighlight]
-  /// paints for this render object.
+  /// Whether the text can be edited.
+  bool get isTextEditable => false;
+
+  /// Whether a pointer can select in the text.
+  bool get isSelectable => false;
+
+  /// The selections that a plugin may want to decorate.
   ///
   /// Defaults to none. A render object that paints its own selection, such as
   /// [RenderEditable], keeps the default.
@@ -760,23 +751,13 @@ mixin TextDelegateHostMixin on RenderBox {
 
   /// Returns the [ui.TextBox]es bounding [selection] in local coordinates.
   ///
-  /// A custom [RenderBox] using [TextPainter] can delegate this directly to
-  /// [TextPainter.getBoxesForSelection]. A non-text [RenderBox] (such as an
-  /// image or colored badge) can return its full bounding box when [selection]
-  /// is non-empty:
-  /// `[ui.TextBox.fromLTRBD(0, 0, size.width, size.height, textDirection)]`.
+  /// The offsets are in the text that is laid out, which is the decorated
+  /// text.
   List<ui.TextBox> getBoxesForSelection(
     TextSelection selection, {
     ui.BoxHeightStyle boxHeightStyle = ui.BoxHeightStyle.tight,
     ui.BoxWidthStyle boxWidthStyle = ui.BoxWidthStyle.tight,
   });
-
-  /// Returns the [ui.TextPosition] for a local pixel [offset].
-  ui.TextPosition getPositionForOffset(Offset offset) => const ui.TextPosition(offset: 0);
-
-  /// Returns the word boundary [ui.TextRange] at [position].
-  ui.TextRange getWordBoundary(ui.TextPosition position) =>
-      ui.TextRange(start: 0, end: plainText.length);
 
   /// Returns the local caret offset for [position].
   Offset getOffsetForCaret(ui.TextPosition position, Rect caretPrototype) => Offset.zero;
@@ -784,335 +765,245 @@ mixin TextDelegateHostMixin on RenderBox {
   /// Returns the full caret height for [position].
   double getFullHeightForCaret(ui.TextPosition position) => hasSize ? size.height : 0.0;
 
-  /// The [TextPlugin]s that this render object is registered with.
+  /// Gives the text painter of this render object the decorated span.
+  ///
+  /// Option B only. The implementation compares [span] with the span that is
+  /// laid out and marks this render object as needing paint or layout.
+  @protected
+  void applyDecoratedTextSpan(InlineSpan span);
+
+  // ---- Option B: the render object owns the delegates. ----
+
+  /// The [TextPlugin]s whose decorations this render object applies itself.
   List<TextPlugin>? get textPlugins => _textPlugins;
   List<TextPlugin>? _textPlugins;
-  Map<TextPlugin, TextDelegate>? _textPluginDelegates;
-
   set textPlugins(List<TextPlugin>? value) {
     if (listEquals(_textPlugins, value)) {
       return;
     }
-    final List<TextPlugin> oldPlugins = _textPlugins ?? const <TextPlugin>[];
-    final newPlugins = value != null ? List<TextPlugin>.unmodifiable(value) : const <TextPlugin>[];
-    _textPlugins = value != null ? newPlugins : null;
-
-    if (!attached) {
-      return;
+    _textPlugins = value == null || value.isEmpty ? null : List<TextPlugin>.unmodifiable(value);
+    if (attached) {
+      _syncOwnSet();
     }
-    _syncTextPluginDelegates(oldPlugins: oldPlugins);
   }
 
-  bool _textPluginFlushScheduled = false;
-
-  void _scheduleTextPluginFlush() {
-    if (_textPluginFlushScheduled || !attached || owner == null) {
+  /// A number that the widget changes to make this render object ask its
+  /// plugins for their decorations again.
+  int get textPluginDecorationVersion => _textPluginDecorationVersion;
+  int _textPluginDecorationVersion = 0;
+  set textPluginDecorationVersion(int value) {
+    if (_textPluginDecorationVersion == value) {
       return;
     }
-    _textPluginFlushScheduled = true;
-    RendererBinding.instance.addPostLayoutCallback(_flushTextPluginNotifications);
+    _textPluginDecorationVersion = value;
+    if (_ownSet != null) {
+      _applyOwnDecorations();
+    }
   }
 
-  void _flushTextPluginNotifications() {
-    _textPluginFlushScheduled = false;
-    if (!attached || _textPluginDelegates == null || _textPluginDelegates!.isEmpty) {
-      return;
-    }
-    if (!hasSize || debugNeedsLayout) {
-      return;
-    }
-    for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
-      if (delegate._isDisposed) {
-        continue;
+  TextDelegateSet? _ownSet;
+
+  void _syncOwnSet() {
+    final List<TextPlugin>? plugins = _textPlugins;
+    if (plugins == null) {
+      final TextDelegateSet? set = _ownSet;
+      if (set != null) {
+        _ownSet = null;
+        set.dispose();
+        applyDecoratedTextSpan(textSpan);
       }
-      delegate._hasValidLayout = true;
-      if (!delegate._hasDispatchedAdd) {
-        delegate._hasDispatchedAdd = true;
-        delegate._pendingUpdate = false;
-        delegate._notifyChanged();
-        delegate.plugin.didAddText(delegate);
-      } else if (delegate._pendingUpdate) {
-        delegate._pendingUpdate = false;
-        delegate._notifyChanged();
-        delegate.plugin.didUpdateText(delegate);
-      }
+      return;
     }
-  }
-
-  void _syncTextPluginDelegates({List<TextPlugin>? oldPlugins}) {
-    final List<TextPlugin> rawPlugins = _textPlugins ?? const <TextPlugin>[];
-    final newPlugins = <TextPlugin>[...rawPlugins];
+    final sorted = <TextPlugin>[...plugins];
     mergeSort<TextPlugin>(
-      newPlugins,
+      sorted,
       compare: (TextPlugin a, TextPlugin b) => a.paintOrder.compareTo(b.paintOrder),
     );
-    if (_textPluginDelegates != null) {
-      final Set<TextPlugin> newPluginSet = newPlugins.toSet();
-      final List<TextPlugin> removedPlugins = _textPluginDelegates!.keys
-          .where((TextPlugin plugin) => !newPluginSet.contains(plugin))
-          .toList(growable: false);
-      var needsRepaint = false;
-      for (final plugin in removedPlugins) {
-        final TextDelegate delegate = _textPluginDelegates!.remove(plugin)!;
-        if (delegate.backgroundPainter != null || delegate.foregroundPainter != null) {
-          needsRepaint = true;
-        }
-        delegate._detachPainters();
-        if (delegate._hasDispatchedAdd) {
-          plugin.didRemoveText(delegate);
-        }
-        delegate.dispose();
-      }
-      if (needsRepaint) {
-        markNeedsPaint();
-      }
-    }
-
-    if (newPlugins.isEmpty) {
-      _textPluginDelegates = null;
-      return;
-    }
-
-    final Map<TextPlugin, TextDelegate> existingDelegates =
-        _textPluginDelegates ?? <TextPlugin, TextDelegate>{};
-    final orderedDelegates = <TextPlugin, TextDelegate>{};
-    final newlyAddedDelegates = <TextDelegate>[];
-    final bool currentlyHasValidLayout = hasSize && !debugNeedsLayout;
-    for (final plugin in newPlugins) {
-      if (orderedDelegates.containsKey(plugin)) {
-        continue;
-      }
-      final TextDelegate? existing = existingDelegates[plugin];
-      if (existing != null) {
-        orderedDelegates[plugin] = existing;
-      } else {
-        final delegate = TextDelegate._(this, plugin).._hasValidLayout = currentlyHasValidLayout;
-        orderedDelegates[plugin] = delegate;
-        newlyAddedDelegates.add(delegate);
-      }
-    }
-    _textPluginDelegates = orderedDelegates;
-
-    if (newlyAddedDelegates.isNotEmpty) {
-      _scheduleTextPluginFlush();
-    }
-    if (oldPlugins != null && !listEquals(oldPlugins, newPlugins)) {
-      markNeedsPaint();
-    }
+    final TextDelegateSet set = _ownSet ??= TextDelegateSet(onNeedsDecoration: _scheduleOwnDecorations)
+      .._host = this;
+    set.update(
+      plugins: sorted,
+      span: textSpan,
+      textDirection: textDirection,
+      isEditable: isTextEditable,
+    );
+    _applyOwnDecorations();
   }
 
-  /// Whether this render object currently has a [TextDelegate], which is the
-  /// case while it is attached and [textPlugins] is not empty.
+  bool _ownDecorationsScheduled = false;
+
+  // A plugin asks for new decorations from an event handler, and the code
+  // around it may still need the layout of the text: a selection that changes
+  // during a drag reads the boxes of the text right after. So the span is not
+  // replaced right away, which would mark the text as needing layout. It is
+  // replaced at the start of the next frame, before build.
+  void _scheduleOwnDecorations() {
+    if (_ownDecorationsScheduled) {
+      return;
+    }
+    _ownDecorationsScheduled = true;
+    SchedulerBinding.instance.scheduleFrameCallback((Duration timeStamp) {
+      _ownDecorationsScheduled = false;
+      if (attached) {
+        _applyOwnDecorations();
+      }
+    });
+  }
+
+  void _applyOwnDecorations() {
+    final TextDelegateSet? set = _ownSet;
+    if (set == null) {
+      return;
+    }
+    final DecoratedTextSpan decorated = set.decorate();
+    assert(
+      !decorated.changesText,
+      'A TextSpanDecoration.replacement needs TextDecorationLayer.widget. '
+      'A render object cannot create the widget of a WidgetSpan.',
+    );
+    applyDecoratedTextSpan(decorated.changesText ? textSpan : decorated.span);
+  }
+
+  /// Tells the plugins that [textSpan] changed, and applies their decorations
+  /// to the new span.
   ///
-  /// A subclass can use this to skip work that only plugins need.
+  /// Returns false if this render object has no plugins of its own. The
+  /// caller then gives the span to its text painter itself.
   @protected
-  bool get hasTextDelegates => _textPluginDelegates != null && _textPluginDelegates!.isNotEmpty;
+  bool updateTextDelegates() {
+    if (_ownSet == null) {
+      return false;
+    }
+    _syncOwnSet();
+    return true;
+  }
+
+  // ---- Option A: a widget owns the delegates. ----
+
+  /// The delegates that a widget owns for this text.
+  ///
+  /// The render object only tells the set which render object the text has,
+  /// so that a delegate can scroll to the text and compare its position.
+  TextDelegateSet? get textDelegateSet => _externalSet;
+  TextDelegateSet? _externalSet;
+  set textDelegateSet(TextDelegateSet? value) {
+    if (identical(_externalSet, value)) {
+      return;
+    }
+    if (identical(_externalSet?._host, this)) {
+      _externalSet!._host = null;
+    }
+    _externalSet = value;
+    value?._host = this;
+  }
+
+  // ---- Both. ----
+
+  TextDelegateSet? get _activeSet => _ownSet ?? _externalSet;
+
+  /// Whether a [TextPlugin] sees this text.
+  @protected
+  bool get hasTextDelegates => !(_activeSet?.isEmpty ?? true);
+
+  /// Whether a plugin with [TextPlugin.handlesSelectionHighlight] sees this
+  /// text.
+  @protected
+  bool get hasSelectionHighlightPlugin {
+    final TextDelegateSet? set = _activeSet;
+    if (set == null) {
+      return false;
+    }
+    for (final TextDelegate delegate in set.delegates) {
+      if (delegate.plugin.handlesSelectionHighlight) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   /// Notifies the listeners of every [TextDelegate] of this render object,
   /// without a [TextPlugin] callback.
   ///
   /// Call this when something that a delegate exposes changed and the text
   /// did not, for example [selections] or [selectionColor].
-  @protected
   void notifyTextDelegateListeners() {
-    if (!hasTextDelegates) {
-      return;
-    }
-    for (final TextDelegate delegate in _textPluginDelegates!.values.toList(growable: false)) {
-      delegate._notifyChanged();
-    }
+    _activeSet?.notifyListeners();
   }
 
-  /// Marks attached [TextDelegate]s as having updated [plainText] so that
-  /// [TextPlugin.didUpdateText] is dispatched after the next layout flush.
-  @protected
-  void markNeedsTextDelegateUpdate() {
-    if (_textPluginDelegates == null || _textPluginDelegates!.isEmpty) {
-      return;
-    }
-    for (final TextDelegate delegate in _textPluginDelegates!.values) {
-      delegate._pendingUpdate = true;
-    }
-    _scheduleTextPluginFlush();
-  }
+  bool _hasValidLayout = false;
 
-  /// Records that this render object has a layout, so that a pending
-  /// [TextPlugin.didAddText] or [TextPlugin.didUpdateText] is flushed at the
-  /// end of the layout pass.
+  /// Records that this render object has a layout.
   ///
-  /// The plugins are not told about the layout itself. A text that was laid
-  /// out is painted again, and a painter receives the new [TextLayout] then.
-  ///
-  /// Call this at the end of [performLayout] after setting [size].
+  /// Call this at the end of [performLayout].
   @protected
   void didLayoutTextDelegates() {
-    if (_textPluginDelegates != null && _textPluginDelegates!.isNotEmpty) {
-      var hasPendingCallback = false;
-      for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        delegate._hasValidLayout = true;
-        if (!delegate._hasDispatchedAdd || delegate._pendingUpdate) {
-          hasPendingCallback = true;
-        }
-      }
-      // The flush is only needed for a text that was added or changed before
-      // it had a layout.
-      if (hasPendingCallback) {
-        _scheduleTextPluginFlush();
-      }
-    }
+    _hasValidLayout = true;
   }
 
-  void _paintWithTextPluginPainter(
-    Canvas canvas,
-    Offset offset,
-    TextDelegate delegate,
-    TextPluginPainter painter,
-  ) {
-    late int debugPreviousCanvasSaveCount;
-    canvas.save();
-    assert(() {
-      debugPreviousCanvasSaveCount = canvas.getSaveCount();
-      return true;
-    }());
-    if (offset != Offset.zero) {
-      canvas.translate(offset.dx, offset.dy);
+  Rect? _rectForRange(TextRange range) {
+    final List<ui.TextBox> boxes = getBoxesForSelection(
+      TextSelection(baseOffset: range.start, extentOffset: range.end),
+      boxHeightStyle: ui.BoxHeightStyle.max,
+    );
+    if (boxes.isNotEmpty) {
+      Rect rect = boxes.first.toRect();
+      for (var i = 1; i < boxes.length; i += 1) {
+        rect = rect.expandToInclude(boxes[i].toRect());
+      }
+      return rect;
     }
-    delegate._paint(painter, canvas);
-    assert(() {
-      final int debugNewCanvasSaveCount = canvas.getSaveCount();
-      if (debugNewCanvasSaveCount > debugPreviousCanvasSaveCount) {
-        throw FlutterError.fromParts(<DiagnosticsNode>[
-          ErrorSummary(
-            'The $painter text plugin painter called canvas.save() or canvas.saveLayer() at least '
-            '${debugNewCanvasSaveCount - debugPreviousCanvasSaveCount} more '
-            'time${debugNewCanvasSaveCount - debugPreviousCanvasSaveCount == 1 ? '' : 's'} '
-            'than it called canvas.restore().',
-          ),
-          ErrorDescription(
-            'This leaves the canvas in an inconsistent state and will probably result in a broken display.',
-          ),
-          ErrorHint(
-            'You must pair each call to save()/saveLayer() with a later matching call to restore().',
-          ),
-        ]);
-      }
-      if (debugNewCanvasSaveCount < debugPreviousCanvasSaveCount) {
-        throw FlutterError.fromParts(<DiagnosticsNode>[
-          ErrorSummary(
-            'The $painter text plugin painter called canvas.restore() '
-            '${debugPreviousCanvasSaveCount - debugNewCanvasSaveCount} more '
-            'time${debugPreviousCanvasSaveCount - debugNewCanvasSaveCount == 1 ? '' : 's'} '
-            'than it called canvas.save() or canvas.saveLayer().',
-          ),
-          ErrorDescription(
-            'This leaves the canvas in an inconsistent state and will result in a broken display.',
-          ),
-          ErrorHint('You should only call restore() if you first called save() or saveLayer().'),
-        ]);
-      }
-      return debugNewCanvasSaveCount == debugPreviousCanvasSaveCount;
-    }());
-    canvas.restore();
+    final position = ui.TextPosition(offset: range.start);
+    final Offset caretOffset = getOffsetForCaret(position, Rect.zero);
+    return Rect.fromLTWH(caretOffset.dx, caretOffset.dy, 1.0, getFullHeightForCaret(position));
   }
 
-  /// Paints the [TextDelegate.backgroundPainter]s of all active [TextPlugin]s.
+  /// The rectangle of [range] in local coordinates, for the framework.
   ///
-  /// The painter of a plugin with [TextPlugin.handlesSelectionHighlight] is
-  /// painted after the others, so that it is right behind the text.
-  ///
-  /// This method does not clip. Clipping is the decision of the render object.
-  @protected
-  void paintTextPluginBackgrounds(PaintingContext context, Offset offset) {
-    if (_textPluginDelegates == null) {
-      return;
+  /// [range] is in the undecorated text. This is how the widgets layer reads
+  /// the geometry of a range without giving it to a plugin.
+  @internal
+  Rect? debugRectForUndecoratedRange(TextRange range) {
+    if (!_hasValidLayout || !hasSize) {
+      return null;
     }
-    var hasSelectionHighlightPlugin = false;
-    for (final TextDelegate delegate in _textPluginDelegates!.values) {
-      if (delegate.plugin.handlesSelectionHighlight) {
-        hasSelectionHighlightPlugin = true;
-        continue;
-      }
-      final TextPluginPainter? painter = delegate.backgroundPainter;
-      if (painter != null) {
-        _paintWithTextPluginPainter(context.canvas, offset, delegate, painter);
-      }
-    }
-    if (!hasSelectionHighlightPlugin) {
-      return;
-    }
-    for (final TextDelegate delegate in _textPluginDelegates!.values) {
-      if (!delegate.plugin.handlesSelectionHighlight) {
-        continue;
-      }
-      final TextPluginPainter? painter = delegate.backgroundPainter;
-      if (painter != null) {
-        _paintWithTextPluginPainter(context.canvas, offset, delegate, painter);
-      }
-    }
-  }
-
-  /// Paints the [TextDelegate.foregroundPainter]s of all active [TextPlugin]s.
-  ///
-  /// This method does not clip. Clipping is the decision of the render object.
-  @protected
-  void paintTextPluginForegrounds(PaintingContext context, Offset offset) {
-    if (_textPluginDelegates == null) {
-      return;
-    }
-    for (final TextDelegate delegate in _textPluginDelegates!.values) {
-      final TextPluginPainter? painter = delegate.foregroundPainter;
-      if (painter != null) {
-        _paintWithTextPluginPainter(context.canvas, offset, delegate, painter);
-      }
-    }
-  }
-
-  void _removeAllTextPluginDelegates() {
-    if (_textPluginDelegates == null) {
-      return;
-    }
-    final List<TextDelegate> delegates = _textPluginDelegates!.values.toList(growable: false);
-    _textPluginDelegates = null;
-    for (final delegate in delegates) {
-      delegate._detachPainters();
-      if (delegate._hasDispatchedAdd) {
-        delegate.plugin.didRemoveText(delegate);
-      }
-      delegate.dispose();
-    }
+    return _rectForRange(_activeSet?._toDecoratedRange(range) ?? range);
   }
 
   @override
   void attach(PipelineOwner owner) {
     super.attach(owner);
-    _syncTextPluginDelegates();
-    if (_textPluginDelegates != null) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        delegate._attachPainters();
-      }
-    }
+    _externalSet?._host = this;
+    _syncOwnSet();
   }
 
   @override
   void detach() {
-    _removeAllTextPluginDelegates();
+    final TextDelegateSet? set = _ownSet;
+    if (set != null) {
+      _ownSet = null;
+      set.dispose();
+    }
     super.detach();
   }
 
   @override
   void markNeedsLayout() {
-    if (_textPluginDelegates != null) {
-      for (final TextDelegate delegate in _textPluginDelegates!.values) {
-        delegate._hasValidLayout = false;
-      }
-    }
+    _hasValidLayout = false;
     super.markNeedsLayout();
   }
 
   @override
   void dispose() {
     _textPlugins = null;
-    _removeAllTextPluginDelegates();
+    final TextDelegateSet? set = _ownSet;
+    if (set != null) {
+      _ownSet = null;
+      set.dispose();
+    }
+    if (identical(_externalSet?._host, this)) {
+      _externalSet!._host = null;
+    }
+    _externalSet = null;
     super.dispose();
   }
 }
