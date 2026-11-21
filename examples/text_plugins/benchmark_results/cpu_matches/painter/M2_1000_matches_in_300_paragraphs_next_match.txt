@@ -1,0 +1,78 @@
+CPU profile of the loop "M2 1000 matches in 300 paragraphs, next match"
+3726 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+52030 rounds in the loop, 0.1349 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   53.6 %     0.072 ms  DART SIDE
+   46.4 %     0.063 ms  ENGINE SIDE
+      3.0 %     0.004 ms  Dart: the plugin
+      0.4 %     0.001 ms  Dart: text plugin machinery of the framework
+     23.2 %     0.031 ms  Dart: the rest of the framework
+     27.1 %     0.036 ms  Dart VM: allocation, GC, stubs
+      0.0 %     0.000 ms  Engine: building a paragraph (ParagraphBuilder)
+      0.0 %     0.000 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+      8.0 %     0.011 ms  Engine: drawing the text (ui.Paragraph.paint)
+      2.8 %     0.004 ms  Engine: paragraph queries (boxes of a range and others)
+     35.7 %     0.048 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+    0.1 %     0.000 ms  build
+    9.3 %     0.013 ms  layout
+   27.6 %     0.037 ms  paint
+   29.2 %     0.039 ms  composite
+    7.8 %     0.011 ms  frame start
+   26.1 %     0.035 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+    5.1 %  Native  _tlv_get_addr
+    4.1 %  Native  _xzm_free_tc
+    3.2 %  Dart  ContainerLayer.updateSubtreeNeedsAddToScene
+    3.1 %  Native  _xzm_malloc_tc
+    2.7 %  Native  dart::Utf8::Length(dart::String const&)
+    2.6 %  Native  mach_continuous_time
+    2.3 %  Dart  _Array.[]
+    1.9 %  Native  SkStrike::digestFor(skglyph::ActionType, SkPackedGlyphID)
+    1.9 %  Native  _free
+    1.8 %  Native  dart::Utf8::Encode(dart::String const&, char*, long)
+    1.7 %  Native  dart::StackResource::~StackResource()
+    1.7 %  Native  _malloc_zone_malloc
+    1.6 %  Native  dart::Instance::CheckedHandle(dart::Zone*, dart::ObjectPtr)
+    1.5 %  Native  dart::StackResource::Init(dart::ThreadState*)
+    1.4 %  Native  pthread_mutex_lock
+    1.3 %  Native  Dart_GetNativeInstanceField
+    1.3 %  Native  dart::BootstrapNatives::DN_Timeline_reportTaskEvent(dart::Thread*, dart::Zone*, dart::NativeArguments*)
+    1.3 %  Native  dart::VMHandles::AllocateHandle(dart::Zone*)
+    1.2 %  Dart  ContainerLayer.findAnnotations
+    1.1 %  Native  dart::Utf8::Length(int)
+    1.1 %  Stub  [Stub] AllocateObjectParameterized
+    1.1 %  Native  dart::Utf8::Encode(int, char*)
+    1.1 %  Native  operator new[](unsigned long, std::align_val_t)
+    1.0 %  Native  impeller::MakeTextFrameFromTextBlobSkia(sk_sp<SkTextBlob> const&)
+    1.0 %  Stub  [Stub] AllocateObject
+    1.0 %  Native  Dart_IsError
+    1.0 %  Dart  Layer.updateSubtreeNeedsAddToScene
+    0.9 %  Native  __xzm_xzone_free_to_freelist_chunk
+    0.9 %  Dart  _NativeSceneBuilder.__addRetained$Method$FfiNative
+    0.9 %  Native  dart::Zone::Reset()
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+      6.2 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+      6.0 %  TextDelegate._paint
+      5.9 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+      4.8 %  _SearchBackgroundPainter.paint
+      4.6 %  TextDelegate._getBoxesForSelection
+      3.4 %  TextLayout.getBoxesForSelection
+      2.8 %  SearchInPagePlugin.nextMatch
+      2.7 %  SearchInPagePlugin._setActiveMatchIndex
+      2.5 %  SearchInPagePlugin.scrollToActiveMatch
+      2.4 %  TextDelegate.ensureVisible
+  Text in the framework (Dart)
+     15.3 %  RenderParagraph.paint
+      8.0 %  TextPainter.paint
+      3.5 %  TextPainter.getBoxesForSelection
+  Text in the engine (native)
+      7.9 %  skia::textlayout::ParagraphImpl::paint(skia::textlayout::ParagraphPainter*, float, float)
+      7.9 %  skia::textlayout::TextLine::paint(skia::textlayout::ParagraphPainter*, float, float)
+      2.8 %  flutter::Paragraph::getRectsForRange(unsigned int, unsigned int, unsigned int, unsigned int)
+      2.1 %  skia::textlayout::ParagraphImpl::getRectsForRange(unsigned int, unsigned int, skia::textlayout::RectHeightStyl...

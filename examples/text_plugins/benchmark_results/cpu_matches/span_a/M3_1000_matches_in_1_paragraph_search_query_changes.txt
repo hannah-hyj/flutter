@@ -1,0 +1,82 @@
+CPU profile of the loop "M3 1000 matches in 1 paragraph, search query changes"
+3872 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+445 rounds in the loop, 16.8762 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   36.5 %     6.167 ms  DART SIDE
+   63.5 %    10.709 ms  ENGINE SIDE
+      0.6 %     0.105 ms  Dart: the plugin
+     33.5 %     5.662 ms  Dart: text plugin machinery of the framework
+      1.0 %     0.174 ms  Dart: the rest of the framework
+      1.3 %     0.227 ms  Dart VM: allocation, GC, stubs
+      8.4 %     1.425 ms  Engine: building a paragraph (ParagraphBuilder)
+     36.9 %     6.233 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+     12.7 %     2.144 ms  Engine: drawing the text (ui.Paragraph.paint)
+      0.6 %     0.109 ms  Engine: paragraph queries (boxes of a range and others)
+      4.7 %     0.798 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+   34.4 %     5.806 ms  build
+   49.3 %     8.312 ms  layout
+   13.1 %     2.205 ms  paint
+    2.7 %     0.449 ms  composite
+    0.6 %     0.105 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+   30.9 %  Dart  _Decorator._piece
+    3.6 %  Native  bool ComputeIndex12or13<((anonymous namespace)::SubtableFormat12or13)0, unsigned short>((anonymous namespace)::ExtGroup ...
+    3.1 %  Native  _platform_memmove
+    2.8 %  Native  apply_forward(OT::hb_ot_apply_context_t*, OT::hb_ot_layout_lookup_accelerator_t const&)
+    2.5 %  Native  icu_78::RuleBasedBreakIterator::handleNext()
+    1.7 %  Native  _xzm_free_tc
+    1.6 %  Native  SkStrike::digestFor(skglyph::ActionType, SkPackedGlyphID)
+    1.6 %  Native  _xzm_malloc_tc
+    1.4 %  Native  OT::Layout::GPOS_impl::PairPosFormat2_4<OT::Layout::SmallTypes>::apply(OT::hb_ot_apply_context_t*, void*) const
+    1.1 %  Native  OT::Layout::GPOS_impl::ValueFormat::apply_value(OT::hb_ot_apply_context_t*, OT::Layout::GPOS_impl::ValueBase const*, OT:...
+    1.1 %  Native  OT::Layout::Common::Coverage::get_coverage(unsigned int) const
+    1.1 %  Native  OT::Layout::GPOS_impl::PairSet<OT::Layout::SmallTypes>::apply(OT::hb_ot_apply_context_t*, OT::Layout::GPOS_impl::ValueFo...
+    1.0 %  Native  _free
+    1.0 %  Native  SkUTF::UTF16ToUTF8(char*, int, unsigned short const*, unsigned long)
+    0.9 %  Native  _malloc_zone_malloc
+    0.8 %  Native  OT::VarData::_get_delta(unsigned int, int const*, unsigned int, OT::VarRegionList const&, OT::hb_scalar_cache_t*) const
+    0.8 %  Native  _hb_ot_shape
+    0.7 %  Native  __xzm_xzone_free_to_freelist_chunk
+    0.7 %  Native  _tlv_get_addr
+    0.6 %  Native  skia::textlayout::ParagraphImpl::addLine(SkPoint, SkPoint, skia::textlayout::SkRange<unsigned long>, skia::textlayout::S...
+    0.6 %  Native  SkUTF::NextUTF8(char const**, char const*)
+    0.6 %  Native  skia::textlayout::TextWrapper::lookAhead(float, skia::textlayout::Cluster*, bool)
+    0.6 %  Native  (anonymous namespace)::ShaperHarfBuzz::shape(char const*, unsigned long, char const*, char const*, SkShaper::BiDiRunIter...
+    0.5 %  Native  u_getUnicodeProperties_78
+    0.5 %  Native  OT::Layout::GPOS_impl::PairPosFormat1_3<OT::Layout::SmallTypes>::apply(OT::hb_ot_apply_context_t*, void*) const
+    0.5 %  Native  wyhash(void const*, unsigned long, unsigned long long, unsigned long long const*)
+    0.5 %  Native  skia::textlayout::Cluster::run() const
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+     33.7 %  _TextPluginSpanBuilderState.build
+     33.5 %  TextDelegateSet.decorate
+     33.2 %  decorateTextSpan
+     31.8 %  _Decorator.run
+     31.7 %  _Decorator._visit
+     31.3 %  _Decorator._piece
+      1.4 %  _Decorator._Decorator
+  Text in the framework (Dart)
+     49.2 %  RenderFlex.performLayout
+     49.1 %  RenderParagraph.performLayout
+     49.1 %  TextPainter.layout
+     12.8 %  RenderParagraph.paint
+     12.7 %  TextPainter.paint
+     12.2 %  TextPainter._createParagraph
+     11.2 %  TextSpan.build
+      0.6 %  RenderParagraph._setPainterText
+  Text in the engine (native)
+     36.9 %  skia::textlayout::ParagraphImpl::layout(float)
+     21.7 %  skia::textlayout::ParagraphImpl::shapeTextIntoEndlessLine()
+     20.6 %  skia::textlayout::OneLineShaper::shape()
+     16.6 %  hb_shape_full
+     12.7 %  skia::textlayout::ParagraphImpl::paint(skia::textlayout::ParagraphPainter*, float, float)
+     12.7 %  skia::textlayout::TextLine::paint(skia::textlayout::ParagraphPainter*, float, float)
+      9.7 %  skia::textlayout::ParagraphImpl::computeCodeUnitProperties()
+      4.0 %  flutter::ParagraphBuilder::addText(std::__fl::basic_string<char16_t, std::__fl::char_traits<char16_t>, std::__...
+      3.4 %  skia::textlayout::ParagraphImpl::breakShapedTextIntoLines(float)
+      2.8 %  flutter::ParagraphBuilder::pushStyle(tonic::TypedList<(Dart_TypedData_Type)6, int> const&, std::__fl::vector<s...

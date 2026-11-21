@@ -707,6 +707,21 @@ String _longParagraph(int index) {
   });
 }
 
+/// Paragraph [index] of a page of [paragraphs] paragraphs that contains
+/// [_rare] [total] times in all.
+///
+/// With several paragraphs, each is about 500 characters, like
+/// [_longParagraph], and the matches are spread evenly. A single paragraph
+/// has a match in every second word.
+String _matchParagraph(int index, int paragraphs, int total) {
+  final int matches = total ~/ paragraphs + (index < total % paragraphs ? 1 : 0);
+  final int words = paragraphs == 1 ? total * 2 : 80;
+  final int step = words ~/ matches;
+  return _words(index + 400000, words, fixed: <int, String>{
+    for (var i = 0; i < matches; i++) i * step + step ~/ 2: _rare,
+  });
+}
+
 /// R2. An article: 300 paragraphs of about 500 characters, all mounted.
 Future<void> _runArticle(Variant? variant) async {
   final SearchInPagePlugin? search = variant == null
@@ -1099,6 +1114,42 @@ Future<void> _runProfilerLoops() async {
     });
     search.query = 'fox';
     await _loop('R2 article next match', (int run) {
+      search.nextMatch();
+    });
+    await _unmount();
+    search.dispose();
+  }
+
+  // M. By the number of matches: 300 and 1,000 matches spread over the 300
+  // paragraphs of an article, and 1,000 matches in one paragraph. The query
+  // is a different part of the planted word in every round, so every
+  // highlight is new.
+  for (final (String name, int paragraphs, int total) in <(String, int, int)>[
+    ('M1 300 matches in 300 paragraphs', 300, 300),
+    ('M2 1000 matches in 300 paragraphs', 300, 1000),
+    ('M3 1000 matches in 1 paragraph', 1, 1000),
+  ]) {
+    if (!wanted(name)) {
+      continue;
+    }
+    final SearchInPagePlugin search = makeSearch(variant);
+    await _mount(
+      _shell(
+        wrapScope(
+          plugins: <TextPlugin>[search],
+          variant: variant,
+          child: _column(paragraphs, (int i) => _matchParagraph(i, paragraphs, total)),
+        ),
+      ),
+    );
+    search.query = _rare;
+    _settle();
+    _report('MATCHES $name: ${search.matches.length} matches');
+    await _loop('$name, search query changes', (int run) {
+      search.query = _rareQuery(run);
+    });
+    search.query = _rare;
+    await _loop('$name, next match', (int run) {
       search.nextMatch();
     });
     await _unmount();

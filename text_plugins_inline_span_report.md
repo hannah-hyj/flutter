@@ -314,7 +314,7 @@ Every item points at a test, a measurement or an image.
 | # | Con | Evidence |
 | :-- | :-- | :-- |
 | S-1 | **Every change costs a new `ui.Paragraph` for that text**, and a change of ranges also a layout of its render object, 3 to 18 times the cost of a repaint for a new highlight, and the cost grows with the length of the text. About 70 µs for a sentence, 230 µs for a paragraph of 500 characters, 2.4 ms for 8,000 characters. Almost all of it is engine time. A change of color only is cheaper, about 25 µs for a sentence, because the engine finds the shaping in its cache | [Section 4](#4-performance) |
-| S-2 | **A frame is dropped when a few hundred texts change together.** 300 paragraphs: 69 ms. 1,000 short paragraphs: 82 ms. Budget: 16.6 ms | [Section 4.1](#41-every-case-time-dart-side-engine-side) |
+| S-2 | **A frame is dropped when a few hundred texts change together.** 300 paragraphs of 500 characters: 68 to 75 ms, whether they hold 300 matches or 2,400. 1,000 short paragraphs: 82 ms. One paragraph of 24,000 characters with 1,000 matches: 17 ms, also for "next match". Budget: 16.6 ms | [Section 4.1](#41-every-case-time-dart-side-engine-side) |
 | S-3 | **An animated highlight builds the paragraph again on every frame.** The render object only repaints, but `TextPainter.paint` creates a new `ui.Paragraph` and lays it out first, because there is no way to change the paint of an existing one. The engine's cache saves the shaping, not the rest. 40 texts: 1.0 ms a frame against 0.26 | [Sections 4.2](#42-the-cases-in-which-the-span-approach-is-slower-where-the-engine-time-goes) and [4.3](#43-the-frame-phases) |
 | S-4 | **Shapes are limited to what a style can say.** Flat boxes of the run height. No padding, no rounded fill, no box around a paragraph. A rounded *border* is possible with a stroked `Paint` | Images 2 and 3 |
 | S-5 | **It rewrites the app's span tree, and that has traps.** Recognizers, cursors and hover callbacks are not inherited and have to be copied to every piece. A span with a semantics label cannot be split. A list of children can be a `List<TextSpan>`. The merge handles these, and each was a bug before it did | [Section 5](#5-what-a-span-split-does-to-the-text) |
@@ -408,7 +408,9 @@ For every case there is a file with the profile, and a summary:
 - *Dart side*: Dart code (the plugin, the text plugin machinery, the rest of the framework), and the Dart VM's own work for it (allocation, garbage collection).
 - *Engine side*: native code of the engine. For text it is told apart further: building a paragraph (`ParagraphBuilder`), `ui.Paragraph.layout` (shaping the text and breaking it into lines), drawing the text (`ui.Paragraph.paint`), queries such as the boxes of a range, and everything else.
 
-The time of a case is the time of one round of its loop: the call that makes the change, and all frames that follow. The share of the samples in a group, times that, is the time in the group.
+The time of a case is the time of one round of its loop: the call that makes the change, and all frames that follow.
+
+**"Search query changes by one letter"** is the user typing one letter in the search box of find-in-page. In the benchmark it is one assignment, `search.query = 'fox'` after `'fo'`. The plugin scans every text in its scope again, the texts whose matches changed get new highlights, and a frame is produced. It is not typing in the text that is shown; that is the case "Typing in a field". The share of the samples in a group, times that, is the time in the group.
 
 > [!IMPORTANT]
 > Read these numbers with three things in mind.
@@ -424,14 +426,14 @@ Milliseconds for one round. "D" is the Dart side, "E" the engine side. Span is O
 | Case | Painter | D | E | Span B | D | E | Span / painter | Span A |
 | :-- | --: | --: | --: | --: | --: | --: | --: | --: |
 | **Lazy list of 10,000 items (about 30 on screen)** | | | | | | | | |
-| Keystroke in the search, 4 matches on screen, new highlights | 0.065 | 0.039 | 0.026 | 0.287 | 0.051 | 0.237 | 4.4 | 0.307 |
-| Keystroke, highlights that were shown before | 0.062 | 0.036 | 0.025 | 0.145 | 0.052 | 0.094 | 2.4 | 0.156 |
+| Search query changes by one letter, 4 matches on screen, new highlights | 0.065 | 0.039 | 0.026 | 0.287 | 0.051 | 0.237 | 4.4 | 0.307 |
+| Search query changes by one letter, highlights that were shown before | 0.062 | 0.036 | 0.025 | 0.145 | 0.052 | 0.094 | 2.4 | 0.156 |
 | Next match | 0.094 | 0.054 | 0.039 | 0.121 | 0.058 | 0.062 | 1.3 | 0.130 |
 | Scroll 120 px with a search active | 0.228 | 0.070 | 0.159 | 0.229 | 0.073 | 0.156 | 1.0 | 0.238 |
 | **Article: 300 paragraphs of 500 characters, all mounted** | | | | | | | | |
-| Keystroke, rare word: 15 texts change, new highlights | 0.81 | 0.64 | 0.18 | 3.45 | 0.72 | 2.73 | 4.2 | 3.83 |
-| Keystroke, rare word, highlights shown before | 0.78 | 0.58 | 0.19 | 1.42 | 0.67 | 0.75 | 1.8 | 1.48 |
-| **Keystroke, common word: all 300 texts change** | **8.26** | 2.26 | 6.00 | **68.70** | 4.53 | 64.17 | **8.3** | 72.33 |
+| Search query changes by one letter, rare word: 15 texts change, 15 matches, new highlights | 0.81 | 0.64 | 0.18 | 3.45 | 0.72 | 2.73 | 4.2 | 3.83 |
+| Search query changes by one letter, rare word, highlights shown before | 0.78 | 0.58 | 0.19 | 1.42 | 0.67 | 0.75 | 1.8 | 1.48 |
+| **Search query changes by one letter, common word: all 300 texts change, about 2,400 matches** | **8.26** | 2.26 | 6.00 | **68.70** | 4.53 | 64.17 | **8.3** | 72.33 |
 | Next match | 0.144 | 0.074 | 0.070 | 0.244 | 0.088 | 0.156 | 1.7 | 0.250 |
 | **One text, the highlighted word moves** | | | | | | | | |
 | 10 words (59 characters) | 0.018 | 0.008 | 0.010 | 0.061 | 0.013 | 0.048 | 3.4 | 0.065 |
@@ -446,20 +448,20 @@ Milliseconds for one round. "D" is the Dart side, "E" the engine side. Span is O
 | Selection drag across 40 paragraphs, one pointer move | 0.069 | 0.038 | 0.030 | 0.091 | 0.042 | 0.049 | 1.3 | 0.096 |
 | Typing in a field of 1,800 characters with 40 matches | 0.696 | 0.060 | 0.635 | 0.786 | 0.080 | 0.707 | 1.1 | 0.809 |
 | **Stress: N short paragraphs, all mounted, 10 % match** | | | | | | | | |
-| N=1,000, keystroke: 100 texts change | 1.38 | 0.83 | 0.54 | 6.94 | 1.24 | 5.70 | 5.0 | 7.73 |
+| N=1,000, search query changes by one letter: 100 texts change, 100 matches | 1.38 | 0.83 | 0.54 | 6.94 | 1.24 | 5.70 | 5.0 | 7.73 |
 | N=1,000, next match | 0.220 | 0.127 | 0.093 | 0.262 | 0.126 | 0.136 | 1.2 | 0.270 |
-| N=1,000, keystroke that matches nothing | 0.331 | 0.327 | 0.004 | 0.336 | 0.332 | 0.003 | 1.0 | 0.339 |
-| **N=10,000, keystroke: 1,000 texts change** | **23.2** | 15.6 | 7.5 | **82.3** | 19.3 | 63.0 | **3.6** | 91.6 |
+| N=1,000, search query change that matches nothing | 0.331 | 0.327 | 0.004 | 0.336 | 0.332 | 0.003 | 1.0 | 0.339 |
+| **N=10,000, search query changes by one letter: 1,000 texts change, 1,000 matches** | **23.2** | 15.6 | 7.5 | **82.3** | 19.3 | 63.0 | **3.6** | 91.6 |
 | N=10,000, next match | 1.35 | 0.82 | 0.54 | 1.36 | 0.74 | 0.62 | 1.0 | 1.51 |
-| N=10,000, keystroke that matches nothing | 5.53 | 5.52 | 0.01 | 3.35 | 3.35 | 0.01 | 0.6 | 3.61 |
+| N=10,000, search query change that matches nothing | 5.53 | 5.52 | 0.01 | 3.35 | 3.35 | 0.01 | 0.6 | 3.61 |
 | N=1,000, every paragraph widget is rebuilt, plugin does nothing | 1.55 | 1.54 | 0.01 | 1.59 | 1.58 | 0.01 | 1.0 | 1.98 |
 | N=1,000, the first plugin is added to a scope, or removed | 3.78 | 1.62 | 2.15 | 1.68 | 1.67 | 0.01 | 0.4 | 67.03 |
 
 What the table says:
 
-- **Where the span approach is slower, the extra time is on the engine side.** In the common-word keystroke on the article the Dart side grows by 2.3 ms and the engine side by 58 ms. In the moving word of 2,000 words the Dart side grows by 0.02 ms and the engine side by 4.7 ms.
-- **Where little changes, or the text is laid out anyway, the two are level**: scrolling, typing, the next match, a keystroke that matches nothing, a rebuild.
-- **The painter's cost is mostly Dart for a keystroke** (the plugin scanning the text and sorting its matches), and that part is the same in both prototypes.
+- **Where the span approach is slower, the extra time is on the engine side.** In the common-word query change on the article the Dart side grows by 2.3 ms and the engine side by 58 ms. In the moving word of 2,000 words the Dart side grows by 0.02 ms and the engine side by 4.7 ms.
+- **Where little changes, or the text is laid out anyway, the two are level**: scrolling, typing, the next match, a search query change that matches nothing, a rebuild.
+- **The painter's cost is mostly Dart for a query change** (the plugin scanning the text and sorting its matches), and that part is the same in both prototypes.
 - **Option A and Option B are within 10 % of each other**, except for the first plugin added to a scope, where Option A re-creates every text.
 
 ### 4.2 The cases in which the span approach is slower: where the engine time goes
@@ -473,19 +475,19 @@ Milliseconds for one round, by the kind of work. "Other engine" is the display l
 | Article, rare word, painter | 0.59 | 0.00 | 0.05 | 0 | 0 | 0.11 | 0.01 | 0.06 |
 | Article, rare word, span | 0.59 | 0.02 | 0.10 | 0.17 | **2.18** | 0.26 | 0.02 | 0.11 |
 | Article, rare word, shown before, span | 0.53 | 0.02 | 0.11 | 0.18 | 0.19 | 0.27 | 0.02 | 0.09 |
-| Lazy list keystroke, painter | 0.024 | 0.001 | 0.015 | 0 | 0 | 0.004 | 0.002 | 0.019 |
-| Lazy list keystroke, span | 0.020 | 0.004 | 0.026 | 0.044 | **0.150** | 0.016 | 0.005 | 0.021 |
-| Lazy list keystroke, shown before, span | 0.020 | 0.005 | 0.027 | 0.040 | 0.014 | 0.015 | 0.003 | 0.022 |
+| Lazy list query change, painter | 0.024 | 0.001 | 0.015 | 0 | 0 | 0.004 | 0.002 | 0.019 |
+| Lazy list query change, span | 0.020 | 0.004 | 0.026 | 0.044 | **0.150** | 0.016 | 0.005 | 0.021 |
+| Lazy list query change, shown before, span | 0.020 | 0.005 | 0.027 | 0.040 | 0.014 | 0.015 | 0.003 | 0.022 |
 | Moving word, 2,000 words, painter | 0.001 | 0.000 | 0.012 | 0 | 0 | 0.216 | 0.001 | 0.038 |
 | Moving word, 2,000 words, span | 0.000 | 0.009 | 0.023 | 0.114 | **4.282** | 0.463 | 0.006 | 0.056 |
 | Animated highlight, 40 texts, painter | 0.019 | 0.011 | 0.056 | 0 | 0 | 0.058 | 0.019 | 0.101 |
 | Animated highlight, 40 texts, span | 0.004 | 0.036 | 0.123 | **0.382** | 0.138 | 0.183 | 0.024 | 0.131 |
-| Stress N=10,000, keystroke, painter | 11.35 | 0.80 | 3.50 | 0 | 0 | 2.03 | 1.43 | 4.07 |
-| Stress N=10,000, keystroke, span | 7.81 | 1.18 | 10.33 | 11.02 | **37.02** | 7.04 | 3.11 | 4.83 |
+| Stress N=10,000, query change, painter | 11.35 | 0.80 | 3.50 | 0 | 0 | 2.03 | 1.43 | 4.07 |
+| Stress N=10,000, query change, span | 7.81 | 1.18 | 10.33 | 11.02 | **37.02** | 7.04 | 3.11 | 4.83 |
 
 Four things stand out.
 
-**1. `ui.Paragraph.layout` is the cost of a new highlight.** In the common-word keystroke it is 44 of the 69 ms, in the long text 4.3 of 4.95 ms. The functions with the most samples are HarfBuzz and ICU: the character map lookup, `apply_forward` and the `GPOS` pair positioning of OpenType, and the break iterator. In the article case the engine spends 39 % of all samples shaping the text again and 14 % finding character properties again, although no character changed.
+**1. `ui.Paragraph.layout` is the cost of a new highlight.** In the common-word query change it is 44 of the 69 ms, in the long text 4.3 of 4.95 ms. The functions with the most samples are HarfBuzz and ICU: the character map lookup, `apply_forward` and the `GPOS` pair positioning of OpenType, and the break iterator. In the article case the engine spends 39 % of all samples shaping the text again and 14 % finding character properties again, although no character changed.
 
 **2. The painter never builds or lays out a paragraph.** Those two columns are zero in every painter row. Its engine time is drawing the same glyphs again and asking for the boxes of the matches.
 
@@ -495,7 +497,7 @@ Four things stand out.
 
 ### 4.3 The frame phases
 
-A keystroke and a color change take different paths through the framework.
+A query change and a color change take different paths through the framework.
 
 | Milliseconds in | Layout phase | Paint phase | Composite | Outside of a frame |
 | :-- | --: | --: | --: | --: |
@@ -525,17 +527,17 @@ The third property is why the first runs of this benchmark were too slow for col
 | Animated highlight, 40 texts | 1.91 (layout 1.00) | 1.02 (layout 0.14) | 0.26 |
 | Animated highlight, 10 texts | 0.48 (layout 0.25) | 0.26 (layout 0.03) | 0.08 |
 | Article, next match | 0.38 | 0.24 | 0.14 |
-| Article, common-word keystroke | 67.5 (layout 41.5) | 68.7 (layout 44.0) | 8.3 |
-| Stress N=10,000, keystroke | 85.7 (layout 37.9) | 82.3 (layout 37.0) | 23.2 |
+| Article, common-word query change | 67.5 (layout 41.5) | 68.7 (layout 44.0) | 8.3 |
+| Stress N=10,000, query change | 85.7 (layout 37.9) | 82.3 (layout 37.0) | 23.2 |
 | Moving word, 200 words | 0.51 | 0.48 | 0.04 |
 
 So the earlier numbers for a color-only change were about twice too high, and the numbers for a new highlight were right.
 
-The first property is why a keystroke is expensive. It also shows in the rows "highlights shown before" of Section 4.1: when the user types a letter and deletes it, both highlights are in the cache, and the keystroke costs 1.8 to 2.4 times the painter instead of 4.2 to 4.4. A page with more than 128 texts that change gets nothing from the cache at all.
+The first property is why a query change is expensive. It also shows in the rows "highlights shown before" of Section 4.1: when the user types a letter and deletes it, both highlights are in the cache, and the query change costs 1.8 to 2.4 times the painter instead of 4.2 to 4.4. A page with more than 128 texts that change gets nothing from the cache at all.
 
 ### 4.5 What each part of the cost would take to remove
 
-| Part | Share in the common-word keystroke | What would remove it | Where |
+| Part | Share in the common-word query change | What would remove it | Where |
 | :-- | :-- | :-- | :-- |
 | Shaping a text whose characters and fonts did not change | 44 of 69 ms | A cache key that ignores where runs with the same font begin and end. The range change then costs what "shown before" costs | Engine, `ParagraphCache` |
 | The same, when more than 128 texts change | | A larger cache, or one per paragraph object | Engine |
@@ -547,7 +549,7 @@ None of this exists today. With all of it, a highlight through a span would be a
 
 ### 4.6 When does it matter?
 
-The span approach misses a 60 Hz frame when roughly 70 paragraphs of 500 characters, or 250 short ones, get a *new* highlight in the same frame. On a lazy list that cannot happen, because only what is on screen exists. It can happen in two ways:
+The span approach misses a 60 Hz frame when roughly 70 paragraphs of 500 characters, or 250 short ones, get a *new* highlight in the same frame. What counts is the number of texts and their length, not the number of matches ([Section 4.8](#48-by-the-number-of-matches)). On a lazy list that cannot happen, because only what is on screen exists. It can happen in two ways:
 
 1. The page is a `Column` in a `SingleChildScrollView`, which is how short and medium pages are usually written.
 2. The search plugin asked for offscreen content (`needsOffscreenContent`), which makes lazy lists build up to a million pixels of content. Find-in-page does this on purpose, so that it can count and reach matches that are off screen. So the feature that the MVP exists for is the one that turns a lazy page into a fully mounted one.
@@ -566,7 +568,43 @@ No frame is dropped, and the highlights arrive over 0.1 to 0.2 seconds. The plug
 
 ### 4.7 The decision rule of the plan, as recorded
 
-The rule was the keystroke on the page of 10,000 paragraphs inside 16.6 ms of `drawFrame`. Per round, with the plugin's scan included: painter 23.2 ms, span 82.3 ms (B) and 91.6 ms (A). Without the scan, which is not in `drawFrame`, the painter is at about 12 ms and passes, and the span options are at about 75 ms and do not. The reviewer's judgement is that 1,000 highlights changing in one frame is not a case to decide on. It is recorded here as the upper end of the scale, not as the verdict.
+The rule was the query change on the page of 10,000 paragraphs inside 16.6 ms of `drawFrame`. Per round, with the plugin's scan included: painter 23.2 ms, span 82.3 ms (B) and 91.6 ms (A). Without the scan, which is not in `drawFrame`, the painter is at about 12 ms and passes, and the span options are at about 75 ms and do not. The reviewer's judgement is that 1,000 highlights changing in one frame is not a case to decide on. It is recorded here as the upper end of the scale, not as the verdict.
+
+### 4.8 By the number of matches
+
+The article above has 300 paragraphs and about 2,400 matches, eight in a paragraph. These cases ask what the number of matches does. Painter and Option A only. Option B was not run, because the two options are within 10 % of each other everywhere else.
+
+- **300 matches in 300 paragraphs**: the article, with one match in every paragraph.
+- **1,000 matches in 300 paragraphs**: the article, with three or four matches in every paragraph.
+- **1,000 matches in 1 paragraph**: one text of 2,000 words, about 24,000 characters, in which every second word matches.
+
+The query is a different part of the matching word in every round, so every highlight is new. Files: [cpu_matches](./examples/text_plugins/benchmark_results/cpu_matches/).
+
+| Case | Painter | D | E | Span A | D | E | Span / painter |
+| :-- | --: | --: | --: | --: | --: | --: | --: |
+| **300 matches in 300 paragraphs**, search query changes by one letter | **5.02** | 1.47 | 3.55 | **68.27** | 3.70 | 64.57 | **14** |
+| 300 matches in 300 paragraphs, next match | 0.144 | 0.076 | 0.068 | 0.430 | 0.094 | 0.337 | 3.0 |
+| **1,000 matches in 300 paragraphs**, search query changes by one letter | **6.47** | 1.78 | 4.69 | **74.60** | 4.05 | 70.55 | **12** |
+| 1,000 matches in 300 paragraphs, next match | 0.135 | 0.072 | 0.063 | 0.222 | 0.053 | 0.169 | 1.6 |
+| **1,000 matches in 1 paragraph**, search query changes by one letter | **1.78** | 0.44 | 1.34 | **16.88** | 6.17 | 10.71 | **9.5** |
+| **1,000 matches in 1 paragraph, next match** | **1.77** | 0.39 | 1.38 | **15.74** | 4.82 | 10.93 | **8.9** |
+
+Where the time of the span rows goes, in milliseconds:
+
+| Span A | Text plugin machinery (Dart) | Build paragraph | `Paragraph.layout` | Draw text | Layout phase | Paint phase |
+| :-- | --: | --: | --: | --: | --: | --: |
+| 300 matches in 300 paragraphs, query change | 0.51 | 4.39 | **50.96** | 6.23 | 56.98 | 7.48 |
+| 1,000 matches in 300 paragraphs, query change | 0.94 | 5.62 | **52.46** | 8.61 | 60.09 | 9.55 |
+| 1,000 matches in 1 paragraph, query change | **5.66** | 1.43 | **6.23** | 2.14 | 8.31 | 2.21 |
+| 1,000 matches in 1 paragraph, next match | **4.16** | 1.54 | **6.20** | 2.15 | 0.00 | 10.73 |
+
+What this says:
+
+- **The cost of the span approach follows the number of texts that change and their length, not the number of matches.** 300 matches, 1,000 matches and 2,400 matches in the same 300 paragraphs cost 68, 75 and 72 ms. Each paragraph is shaped again once, whether it has one match or eight. So 300 matches is as bad as 2,400 if they are in 300 different paragraphs of this length, and it is bad: four frames at 60 Hz.
+- **The painter's cost follows the number of matches a little** (5.0, 6.5 and 8.3 ms), because it asks for the boxes of every match and draws one shape for each.
+- **One paragraph with 1,000 matches costs 17 ms, one frame.** It is one text, so the engine shapes 24,000 characters once (6.2 ms). The rest is building and drawing a paragraph of about 2,000 style runs.
+- **In that paragraph, "next match" costs the same 16 ms as a new query.** Only two matches change color, but the unit of work is the whole text: all of its decorations are merged again and the paragraph is created again. The layout phase is 0, the time is in the paint phase, where `TextPainter.paint` creates the paragraph. The engine shaped the text again each time, so its cache did not help. The likely reason is the third rule of [Section 4.4](#44-the-engines-paragraph-cache): the paragraph begins with the same 40 characters as the one stored last, which is itself. This was read from the code, not tested. With the painter the same click costs 1.8 ms, and in the article, where the two matches are in short paragraphs, it costs 0.2 to 0.4 ms with spans.
+- **A third of the 17 ms is a defect of the prototype, not of the approach.** `_Decorator._piece` in the merge looks at every decoration of the text for every piece of it, which is quadratic in the number of decorations in one text: 2,000 pieces times 1,000 decorations. That is the 4.2 to 5.7 ms in the first column. A merge that walks the sorted decorations once would remove most of it. It was not fixed. It does not show in the other cases, which have at most eight decorations in a text. The engine part, 10.7 ms, would stay.
 
 ---
 
@@ -631,7 +669,7 @@ Defects that these tests found. Each is a trap of the approach, and each is fixe
 
 | | A, widget layer | B, render layer |
 | :-- | :-- | :-- |
-| Keystroke, article of 300 paragraphs, common word | 72 ms | 69 ms |
+| Search query changes by one letter, article of 300 paragraphs, common word | 72 ms | 69 ms |
 | First plugin added to 1,000 texts, or removed | 67 ms, every text is re-created | 1.7 ms |
 | First plugin added to 10,000 texts (stopwatch, earlier run) | 804 ms, every text is re-created | 51 ms |
 | Cost on a rebuild without changes | About 1 µs per text | None measured |
@@ -769,6 +807,7 @@ Not done, against the plan:
 
 Where it can be wrong:
 
+- **The cases by number of matches (Section 4.8) were run for the painter and Option A only**, once each. The quadratic step of the merge that they found was not fixed, so the numbers for one paragraph with 1,000 matches are about a third too high for the span approach.
 - **One run per number**, with the variance stated in [Section 4](#4-performance). No low-end device, no web, no mobile.
 - **The profiler sees the UI thread only.** Time on the raster thread is not in any number of Section 4. A text with highlights is more draw calls, so the raster side may differ too. It was not measured.
 - **The split into Dart side and engine side is by the function at the top of the stack.** A sample in `malloc` that the engine called counts as engine. A sample in a VM stub counts as Dart. The sampling period is 1 ms, so a case of 0.02 ms a round is resolved only because the loop runs it many thousands of times.
@@ -835,12 +874,13 @@ On the painter branch: check out `text-plugin-mvp`, copy `lib/benchmark.dart`, `
 
 ## Appendix B: time log
 
-The plan set a timebox of 10 hours. The work was done by an agent in three sittings on 2026-11-20. Wall-clock times:
+The plan set a timebox of 10 hours. The work was done by an agent in four sittings on 2026-11-20. Wall-clock times:
 
 | Work | From | To |
 | :-- | :-- | :-- |
 | M1 to M7 of the plan: the merge, both options, ports, stress benchmark, stages 2 and 3, first report | 15:14 | 16:10 |
 | Second round: app-size benchmark on both branches, images, shaping tests, batching, second revision | 16:16 | 17:00 |
-| Third round: where the time of a change goes, CPU samples of every case on both branches, the paragraph cache, this revision | 19:10 | 20:30 |
+| Third round: where the time of a change goes, CPU samples of every case on both branches, the paragraph cache, third revision | 19:10 | 20:30 |
+| The API section, the cases by number of matches | 20:31 | 21:05 |
 
-About three hours in total. What is missing in [Section 12](#12-what-was-not-done-and-where-this-report-can-be-wrong) was not attempted, not cut for time.
+About three and a half hours in total. What is missing in [Section 12](#12-what-was-not-done-and-where-this-report-can-be-wrong) was not attempted, not cut for time.
