@@ -1,0 +1,69 @@
+CPU profile of the loop "P2 N=10000 next match"
+3758 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+4960 rounds in the loop, 1.3519 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   60.4 %     0.816 ms  DART SIDE
+   39.6 %     0.536 ms  ENGINE SIDE
+      0.7 %     0.009 ms  Dart: the plugin
+      0.1 %     0.001 ms  Dart: text plugin machinery of the framework
+     37.8 %     0.511 ms  Dart: the rest of the framework
+     21.8 %     0.295 ms  Dart VM: allocation, GC, stubs
+      0.0 %     0.000 ms  Engine: building a paragraph (ParagraphBuilder)
+      0.0 %     0.000 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+      0.4 %     0.005 ms  Engine: drawing the text (ui.Paragraph.paint)
+      0.3 %     0.004 ms  Engine: paragraph queries (boxes of a range and others)
+     38.9 %     0.526 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+    0.9 %     0.012 ms  layout
+    5.5 %     0.074 ms  paint
+   88.4 %     1.195 ms  composite
+    0.8 %     0.011 ms  frame start
+    4.4 %     0.059 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+   12.0 %  Dart  ContainerLayer.updateSubtreeNeedsAddToScene
+    7.7 %  Native  _tlv_get_addr
+    6.2 %  Dart  ContainerLayer.findAnnotations
+    6.1 %  Native  flutter::ClipShapeLayer<impeller::TRect<float>>::~ClipShapeLayer()
+    4.8 %  Native  Dart_GetNativeInstanceField
+    3.4 %  Native  dart::StackResource::Init(dart::ThreadState*)
+    3.1 %  Dart  Layer.updateSubtreeNeedsAddToScene
+    3.0 %  Native  dart::StackResource::~StackResource()
+    3.0 %  Dart  _NativeSceneBuilder.__addRetained$Method$FfiNative
+    2.8 %  Native  dart::Zone::Reset()
+    2.7 %  Native  Dart_IsNull
+    2.6 %  Native  tonic::FfiDispatcher<flutter::SceneBuilder, void (flutter::SceneBuilder::*)(fml::RefPtr<flutter::EngineLayer> const&), &...
+    2.3 %  Dart  OffsetLayer.findAnnotations
+    2.2 %  Native  Dart_IsError
+    2.0 %  Native  flutter::SceneBuilder::addRetained(fml::RefPtr<flutter::EngineLayer> const&)
+    1.9 %  Native  dart::Thread::ExitApiScope()
+    1.9 %  Native  dart::Thread::EnterApiScope()
+    1.6 %  Native  dart::ThreadStackResource::~ThreadStackResource()
+    1.5 %  Stub  [Stub] AllocateObject
+    1.4 %  Dart  ContainerLayer.attach
+    1.4 %  Native  DLRT_EnterHandleScope
+    1.4 %  Native  tonic::DartConverterWrappable::FromDart(_Dart_Handle*)
+    1.4 %  Native  flutter::ContainerLayer::Add(std::__fl::shared_ptr<flutter::Layer>)
+    1.3 %  Native  DLRT_ExitHandleScope
+    1.2 %  Stub  [Stub] AllocateObjectParameterized
+    1.1 %  Dart  ContainerLayer.addChildrenToScene
+    0.9 %  Stub  [Stub] CallNativeThroughSafepoint
+    0.9 %  Native  _xzm_malloc_tc
+    0.9 %  Dart  Offset.-
+    0.7 %  Dart  Layer.alwaysNeedsAddToScene
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+      0.8 %  SearchInPagePlugin.nextMatch
+      0.8 %  SearchInPagePlugin._setActiveMatchIndex
+      0.8 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+      0.6 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+      0.6 %  TextDelegate._paint
+      0.6 %  SearchInPagePlugin.scrollToActiveMatch
+      0.6 %  TextDelegate.ensureVisible
+      0.5 %  TextDelegate._getBoxesForSelection
+  Text in the framework (Dart)
+      1.4 %  RenderParagraph.paint
+  Text in the engine (native)

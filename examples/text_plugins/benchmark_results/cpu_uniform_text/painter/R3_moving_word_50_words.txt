@@ -1,0 +1,77 @@
+CPU profile of the loop "R3 moving word 50 words"
+3187 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+236475 rounds in the loop, 0.0285 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   39.7 %     0.011 ms  DART SIDE
+   60.3 %     0.017 ms  ENGINE SIDE
+      1.8 %     0.001 ms  Dart: the plugin
+      1.0 %     0.000 ms  Dart: text plugin machinery of the framework
+     15.2 %     0.004 ms  Dart: the rest of the framework
+     21.7 %     0.006 ms  Dart VM: allocation, GC, stubs
+      0.0 %     0.000 ms  Engine: building a paragraph (ParagraphBuilder)
+      0.0 %     0.000 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+     18.2 %     0.005 ms  Engine: drawing the text (ui.Paragraph.paint)
+      2.1 %     0.001 ms  Engine: paragraph queries (boxes of a range and others)
+     40.0 %     0.011 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+    5.4 %     0.002 ms  layout
+   41.2 %     0.012 ms  paint
+   28.8 %     0.008 ms  composite
+    0.0 %     0.000 ms  semantics
+    2.9 %     0.001 ms  frame start
+   21.7 %     0.006 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+    5.2 %  Native  SkStrike::digestFor(skglyph::ActionType, SkPackedGlyphID)
+    4.8 %  Native  _tlv_get_addr
+    4.1 %  Native  _xzm_free_tc
+    2.9 %  Native  _xzm_malloc_tc
+    2.1 %  Stub  [Stub] AllocateObjectParameterized
+    2.0 %  Native  impeller::MakeTextFrameFromTextBlobSkia(sk_sp<SkTextBlob> const&)
+    1.9 %  Native  _free
+    1.8 %  Native  _malloc_zone_malloc
+    1.7 %  Native  operator new[](unsigned long, std::align_val_t)
+    1.7 %  Native  mach_continuous_time
+    1.7 %  Native  dart::Utf8::Length(dart::String const&)
+    1.6 %  Native  pthread_mutex_lock
+    1.5 %  Native  write
+    1.5 %  Native  dart::StackResource::~StackResource()
+    1.3 %  Dart  _Array.[]
+    1.3 %  Native  dart::SafepointHandler::ExitSafepointLocked(dart::Thread*, dart::MonitorLocker*, dart::SafepointLevel)
+    1.3 %  Native  dart::VMHandles::AllocateHandle(dart::Zone*)
+    1.2 %  Native  SkGlyph::setPath(SkArenaAlloc*, SkScalerContext*)
+    1.2 %  Stub  [Stub] AllocateObject
+    1.1 %  Native  SkStrike::internalPrepare(SkSpan<unsigned short const>, SkStrike::PathDetail, SkGlyph const**)
+    1.1 %  Native  mach_msg2_trap
+    0.9 %  Native  pthread_mutex_unlock
+    0.9 %  Native  dart::Utf8::Length(int)
+    0.8 %  Native  dart::Utf8::Encode(dart::String const&, char*, long)
+    0.8 %  Native  dart::StackResource::Init(dart::ThreadState*)
+    0.8 %  Native  dart::Instance::CheckedHandle(dart::Zone*, dart::ObjectPtr)
+    0.8 %  Native  SkGlyph::path() const
+    0.8 %  Native  Dart_IsError
+    0.8 %  Stub  [Stub] AllocateArray
+    0.7 %  Native  _platform_memmove
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+     10.5 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+      7.1 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+      6.8 %  TextDelegate._paint
+      6.7 %  _KaraokePainter.paint
+      3.5 %  TextLayout.getBoxesForSelection
+      3.4 %  TextDelegate._getBoxesForSelection
+      0.7 %  KaraokePlugin.step
+      0.6 %  TextDelegate.backgroundPainter=
+      0.6 %  TextDelegate._didUpdatePainter
+  Text in the framework (Dart)
+     29.5 %  RenderParagraph.paint
+     18.4 %  TextPainter.paint
+      2.7 %  TextPainter.getBoxesForSelection
+  Text in the engine (native)
+     18.2 %  skia::textlayout::ParagraphImpl::paint(skia::textlayout::ParagraphPainter*, float, float)
+     18.2 %  skia::textlayout::TextLine::paint(skia::textlayout::ParagraphPainter*, float, float)
+      2.1 %  flutter::Paragraph::getRectsForRange(unsigned int, unsigned int, unsigned int, unsigned int)
+      1.6 %  skia::textlayout::ParagraphImpl::getRectsForRange(unsigned int, unsigned int, skia::textlayout::RectHeightStyl...

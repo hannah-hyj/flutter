@@ -1,0 +1,40 @@
+CPU profile of the loop "P3 N=10000 keystroke no match"
+3861 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+1605 rounds in the loop, 4.6603 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   99.7 %     4.648 ms  DART SIDE
+    0.3 %     0.012 ms  ENGINE SIDE
+     99.2 %     4.622 ms  Dart: the plugin
+      0.0 %     0.000 ms  Dart: text plugin machinery of the framework
+      0.3 %     0.012 ms  Dart: the rest of the framework
+      0.3 %     0.014 ms  Dart VM: allocation, GC, stubs
+      0.0 %     0.000 ms  Engine: building a paragraph (ParagraphBuilder)
+      0.0 %     0.000 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+      0.0 %     0.000 ms  Engine: drawing the text (ui.Paragraph.paint)
+      0.0 %     0.000 ms  Engine: paragraph queries (boxes of a range and others)
+      0.3 %     0.012 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+    0.1 %     0.004 ms  layout
+    0.1 %     0.004 ms  paint
+    0.1 %     0.002 ms  frame start
+   99.8 %     4.651 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+   33.1 %  Dart  _StringBase._substringMatches
+   29.0 %  Dart  _OneByteString.toLowerCase
+   21.4 %  Dart  _StringBase.indexOf
+    9.1 %  Dart  __Map&_LinkedHashBase&MapMixin&_HashBase&_OperatorEqualsAndHashCode&_LinkedHashMapMixin._getValueOrData
+    1.1 %  Dart  SearchInPagePlugin._computeMatchesForDelegate
+    1.1 %  Dart  Object.hashCode
+    1.0 %  Dart  _CompactIterator.moveNext
+    0.7 %  Dart  SearchInPagePlugin._rescanAllDelegates
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+     99.4 %  SearchInPagePlugin.query=
+     99.4 %  SearchInPagePlugin._rescanAllDelegates
+     86.9 %  SearchInPagePlugin._computeMatchesForDelegate
+  Text in the framework (Dart)
+  Text in the engine (native)

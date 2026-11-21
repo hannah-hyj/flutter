@@ -8,6 +8,8 @@
 // the `text-plugin-mvp` branch only for the duration of a benchmark run; it
 // is kept in `benchmark_compat_painter.dart.txt` next to this file.
 
+import 'dart:ui' show PictureRecorder;
+
 import 'package:flutter/widgets.dart';
 
 import 'plugins/search_in_page_plugin.dart';
@@ -177,4 +179,124 @@ final List<(String, VoidCallback)> selectionModes = <(String, VoidCallback)>[
 /// one frame.
 SearchInPagePlugin makeBatchedSearch(int perFrame) {
   return SearchInPagePlugin(decorationsPerFrame: perFrame);
+}
+
+/// Where the time of one decoration change goes, for one text, outside of any
+/// widget or render object. Returns lines for the report.
+List<String> runBreakdown(String text) {
+  const iterations = 3000;
+  const base = TextStyle(fontSize: 14, color: Color(0xFF000000));
+  const width = 780.0;
+  final plain = TextSpan(text: text, style: base);
+  List<TextSpanDecoration> decorations(String word, Color color) =>
+      <TextSpanDecoration>[
+        for (final Match match in word.allMatches(text))
+          TextSpanDecoration(
+            range: TextRange(start: match.start, end: match.end),
+            style: TextStyle(backgroundColor: color),
+          ),
+      ];
+  final List<TextSpanDecoration> foxYellow = decorations(
+    'fox',
+    const Color(0x66FFEB3B),
+  );
+  final InlineSpan spanFoxYellow = decorateTextSpan(plain, foxYellow).span;
+  final InlineSpan spanFoxOrange = decorateTextSpan(
+    plain,
+    decorations('fox', const Color(0x99FF9800)),
+  ).span;
+  final InlineSpan spanFoYellow = decorateTextSpan(
+    plain,
+    decorations('fo', const Color(0x66FFEB3B)),
+  ).span;
+
+  double time(void Function(int i) body) {
+    // Warm up.
+    for (var i = 0; i < 200; i++) {
+      body(i);
+    }
+    final watch = Stopwatch()..start();
+    for (var i = 0; i < iterations; i++) {
+      body(i);
+    }
+    watch.stop();
+    return watch.elapsedMicroseconds / iterations;
+  }
+
+  final painter = TextPainter(
+    text: spanFoxYellow,
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: width);
+  void paintOnce() {
+    final recorder = PictureRecorder();
+    painter.paint(Canvas(recorder), Offset.zero);
+    recorder.endRecording().dispose();
+  }
+
+  final lines = <String>[];
+  String us(double value) => '${value.toStringAsFixed(1)} us';
+  lines.add(
+    'BREAKDOWN one text of ${text.length} characters with ${foxYellow.length} matches, '
+    '$iterations iterations each',
+  );
+  lines.add(
+    'BREAKDOWN merge (decorateTextSpan, Dart only): '
+    '${us(time((int i) => decorateTextSpan(plain, foxYellow)))}',
+  );
+  lines.add(
+    'BREAKDOWN paint, nothing changed: ${us(time((int i) => paintOnce()))}',
+  );
+  final double boxes = time((int i) {
+    for (final TextSpanDecoration decoration in foxYellow) {
+      painter.getBoxesForSelection(
+        TextSelection(
+          baseOffset: decoration.range.start,
+          extentOffset: decoration.range.end,
+        ),
+      );
+    }
+  });
+  lines.add(
+    'BREAKDOWN getBoxesForSelection for every match (what a painter plugin asks): ${us(boxes)}',
+  );
+  lines.add(
+    'BREAKDOWN color-only change (compareTo says paint), then paint: '
+    '${us(time((int i) {
+      painter.text = i.isEven ? spanFoxOrange : spanFoxYellow;
+      paintOnce();
+    }))}',
+  );
+  lines.add(
+    'BREAKDOWN range change (compareTo says layout), then layout and paint: '
+    '${us(time((int i) {
+      painter.text = i.isEven ? spanFoYellow : spanFoxYellow;
+      painter.layout(maxWidth: width);
+      paintOnce();
+    }))}',
+  );
+  lines.add(
+    'BREAKDOWN layout only, of a text that was marked as needing layout: '
+    '${us(time((int i) {
+      painter.markNeedsLayout();
+      painter.layout(maxWidth: width);
+    }))}',
+  );
+  final plainPainter = TextPainter(
+    text: plain,
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: width);
+  lines.add(
+    'BREAKDOWN layout only, same text without any decoration: '
+    '${us(time((int i) {
+      plainPainter.markNeedsLayout();
+      plainPainter.layout(maxWidth: width);
+    }))}',
+  );
+  lines.add(
+    'BREAKDOWN compareTo of the two spans that differ in color: '
+    '${spanFoxYellow.compareTo(spanFoxOrange)}, in range: ${spanFoxYellow.compareTo(spanFoYellow)}',
+  );
+  painter.dispose();
+  plainPainter.dispose();
+  return lines;
 }

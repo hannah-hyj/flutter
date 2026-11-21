@@ -1,0 +1,12 @@
+prototype: span, mode: profile, macOS
+each frame time is the average of 20 frames unless it says otherwise
+BREAKDOWN one text of 512 characters with 8 matches, 3000 iterations each
+BREAKDOWN merge (decorateTextSpan, Dart only): 2.4 us
+BREAKDOWN paint, nothing changed: 20.7 us
+BREAKDOWN getBoxesForSelection for every match (what a painter plugin asks): 4.3 us
+BREAKDOWN color-only change (compareTo says paint), then paint: 75.8 us
+BREAKDOWN range change (compareTo says layout), then layout and paint: 141.7 us
+BREAKDOWN layout only, of a text that was marked as needing layout: 38.0 us
+BREAKDOWN layout only, same text without any decoration: 143.1 us
+BREAKDOWN compareTo of the two spans that differ in color: RenderComparison.paint, in range: RenderComparison.layout
+done

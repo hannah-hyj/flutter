@@ -1,0 +1,49 @@
+CPU profile of the loop "P3 N=1000 keystroke no match"
+3787 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+18800 rounds in the loop, 0.3940 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   98.7 %     0.389 ms  DART SIDE
+    1.3 %     0.005 ms  ENGINE SIDE
+     96.9 %     0.382 ms  Dart: the plugin
+      0.0 %     0.000 ms  Dart: text plugin machinery of the framework
+      0.6 %     0.002 ms  Dart: the rest of the framework
+      1.2 %     0.005 ms  Dart VM: allocation, GC, stubs
+      0.0 %     0.000 ms  Engine: building a paragraph (ParagraphBuilder)
+      0.0 %     0.000 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+      0.0 %     0.000 ms  Engine: drawing the text (ui.Paragraph.paint)
+      0.0 %     0.000 ms  Engine: paragraph queries (boxes of a range and others)
+      1.3 %     0.005 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+    0.3 %     0.001 ms  layout
+    0.4 %     0.002 ms  paint
+    0.3 %     0.001 ms  frame start
+   99.0 %     0.390 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+   43.6 %  Dart  _StringBase._substringMatches
+   20.2 %  Dart  _StringBase.indexOf
+   19.3 %  Dart  _OneByteString.toLowerCase
+    1.0 %  Dart  StringBuffer.write
+    1.0 %  Dart  dart._internal.allocateOneByteString
+    0.9 %  Dart  _GrowableList._allocateData
+    0.9 %  Dart  StringBuffer._addPart
+    0.9 %  Dart  SearchInPagePlugin._computeMatchesForDelegate
+    0.9 %  Stub  [Stub] AllocateArray
+    0.9 %  Dart  _CompactIterator.moveNext
+    0.7 %  Stub  [Stub] AllocateGrowableArray
+    0.7 %  Dart  TextSpan.computeToPlainText
+    0.6 %  Stub  [Stub] AllocateObject
+    0.6 %  Dart  _GrowableList._GrowableList
+    0.5 %  Dart  _OneByteString.indexOf
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+     97.1 %  SearchInPagePlugin.query=
+     96.9 %  SearchInPagePlugin._rescanAllDelegates
+     95.3 %  SearchInPagePlugin._computeMatchesForDelegate
+      8.5 %  TextDelegate.text
+  Text in the framework (Dart)
+      7.6 %  InlineSpan.toPlainText
+  Text in the engine (native)

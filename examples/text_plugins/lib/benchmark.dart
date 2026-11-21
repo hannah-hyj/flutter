@@ -61,10 +61,146 @@ class _BenchmarkBinding extends WidgetsFlutterBinding {
 
 class _NoopPlugin extends TextPlugin {}
 
+/// With `--dart-define=TEXT=uniform` every paragraph is the same sentence
+/// with a number in front, as in the first runs of this benchmark. That text
+/// is unlike real text in a way that matters: the engine does not keep the
+/// shaping of a paragraph in its cache if the paragraph starts or ends with
+/// the same 40 characters as the one it cached before. The default is text in
+/// which every paragraph is different.
+const bool _uniformText = String.fromEnvironment('TEXT') == 'uniform';
+
+const List<String> _vocabulary = <String>[
+  'time',
+  'people',
+  'water',
+  'music',
+  'garden',
+  'window',
+  'river',
+  'bright',
+  'small',
+  'quiet',
+  'market',
+  'letter',
+  'summer',
+  'winter',
+  'forest',
+  'silver',
+  'yellow',
+  'simple',
+  'travel',
+  'listen',
+  'moment',
+  'number',
+  'family',
+  'friend',
+  'school',
+  'street',
+  'animal',
+  'plant',
+  'light',
+  'sound',
+  'paper',
+  'stone',
+  'cloud',
+  'ocean',
+  'bridge',
+  'castle',
+  'orange',
+  'purple',
+  'mirror',
+  'candle',
+  'pocket',
+  'basket',
+  'button',
+  'carpet',
+  'dinner',
+  'engine',
+  'guitar',
+  'hammer',
+  'island',
+  'jacket',
+  'kitten',
+  'ladder',
+  'magnet',
+  'needle',
+  'pencil',
+  'rabbit',
+  'saddle',
+  'ticket',
+  'violin',
+]; // dart format off
+
+/// [count] words that are different for every [seed]. [fixed] puts given words
+/// at given positions.
+String _words(int seed, int count, {Map<int, String> fixed = const <int, String>{}}) {
+  int state = (seed * 2654435761 + 97) & 0x7fffffff;
+  final buffer = StringBuffer();
+  for (var i = 0; i < count; i++) {
+    state = (state * 1103515245 + 12345) & 0x7fffffff;
+    if (i > 0) {
+      buffer.write(' ');
+    }
+    buffer.write(fixed[i] ?? _vocabulary[(state >> 8) % _vocabulary.length]);
+  }
+  return buffer.toString();
+}
+
+/// A short paragraph of the stress page. One in ten contains the query.
 String _paragraph(int index, int version) {
-  final word = index % 10 == 0 ? _query : 'Nothing';
-  return 'Paragraph $index, version $version: the quick brown fox jumps over '
-      'the lazy dog. $word appears in this sentence.';
+  if (_uniformText) {
+    final word = index % 10 == 0 ? _query : 'Nothing';
+    return 'Paragraph $index, version $version: the quick brown fox jumps over '
+        'the lazy dog. $word appears in this sentence.';
+  }
+  return _words(index, 14, fixed: <int, String>{
+    3: 'v$version',
+    if (index % 10 == 0) 9: _rare,
+  });
+}
+
+/// The word that one text in ten contains (one in twenty of the long ones).
+const String _rare = _uniformText ? _query : 'counterclockwise';
+
+/// Every part of [_rare] of four letters or more that is in no other word.
+/// These are the queries of a user who types, corrects and types again: each
+/// gives the same texts a different highlight.
+final List<String> _rareQueries = <String>[
+  for (var start = 0; start < _rare.length; start++)
+    for (var end = start + 4; end <= _rare.length; end++)
+      if (!_vocabulary.any((String word) => word.contains(_rare.substring(start, end))))
+        _rare.substring(start, end),
+];
+
+/// A query that the texts with [_rare] match, different for every [run].
+///
+/// The engine keeps the shaping of the last 128 paragraphs that it laid out,
+/// and a paragraph with a highlight that it has seen before is found there.
+/// A user who types a new query produces highlights that it has not seen. So
+/// the queries here do not come back before the cache has forgotten them.
+String _rareQuery(int run) {
+  if (_uniformText) {
+    return run.isEven ? 'Flutte' : _query;
+  }
+  return _rareQueries[run % _rareQueries.length];
+}
+
+/// Two queries that alternate, as when a user types a letter and deletes it.
+/// The engine has seen both highlights of every text.
+String _rareQuerySeenBefore(int run) {
+  if (_uniformText) {
+    return run.isEven ? 'Flutte' : _query;
+  }
+  return run.isEven ? _rare.substring(0, _rare.length - 1) : _rare;
+}
+
+/// A query that every long paragraph matches about eight times.
+String _commonQuery(int run) {
+  if (_uniformText) {
+    return run.isEven ? 'fo' : 'fox';
+  }
+  const queries = <String>['fo', 'fox', 'ox'];
+  return queries[run % queries.length];
 }
 
 Widget _shell(Widget child) {
@@ -489,9 +625,12 @@ Future<void> _runTyping(Variant? variant) async {
 // ---------------------------------------------------------------------------
 
 String _sentence(int index) {
-  final word = index % 10 == 0 ? _query : 'Nothing';
-  return 'Item $index: the quick brown fox jumps over the lazy dog. '
-      '$word appears in this sentence.';
+  if (_uniformText) {
+    final word = index % 10 == 0 ? _query : 'Nothing';
+    return 'Item $index: the quick brown fox jumps over the lazy dog. '
+        '$word appears in this sentence.';
+  }
+  return _words(index + 100000, 14, fixed: <int, String>{if (index % 10 == 0) 7: _rare});
 }
 
 /// R1. A lazy list of 10,000 items. Only the items on screen are built, which
@@ -552,15 +691,20 @@ Future<void> _runLazyList(Variant? variant) async {
 }
 
 String _longParagraph(int index) {
-  final word = index % 20 == 0 ? _query : 'Nothing';
-  final buffer = StringBuffer('Section $index. ');
-  for (var i = 0; i < 8; i++) {
-    buffer.write(
-      'The quick brown fox jumps over the lazy dog and then rests. ',
-    );
+  if (_uniformText) {
+    final word = index % 20 == 0 ? _query : 'Nothing';
+    final buffer = StringBuffer('Section $index. ');
+    for (var i = 0; i < 8; i++) {
+      buffer.write('The quick brown fox jumps over the lazy dog and then rests. ');
+    }
+    buffer.write('$word appears here.');
+    return buffer.toString();
   }
-  buffer.write('$word appears here.');
-  return buffer.toString();
+  // About 500 characters, with "fox" eight times.
+  return _words(index + 200000, 80, fixed: <int, String>{
+    for (var i = 5; i < 80; i += 10) i: 'fox',
+    if (index % 20 == 0) 40: _rare,
+  });
 }
 
 /// R2. An article: 300 paragraphs of about 500 characters, all mounted.
@@ -826,6 +970,380 @@ Future<void> _runArticleBatched(int perFrame, Variant variant) async {
   search.dispose();
 }
 
+// ---------------------------------------------------------------------------
+// Loops for a CPU profiler. Each runs one case over and over for a fixed time
+// and prints a marker when it starts and ends, so that a profiler can be
+// attached for exactly that time. See tool/cpu_profile.dart.
+// ---------------------------------------------------------------------------
+
+const Duration _loopTime = Duration(milliseconds: 7500);
+
+Future<void> _loop(String name, void Function(int run) change) async {
+  _settle();
+  _report('LOOP START $name');
+  final total = Stopwatch()..start();
+  final work = Stopwatch();
+  var run = 0;
+  while (total.elapsed < _loopTime) {
+    work.start();
+    for (var i = 0; i < 5; i++) {
+      change(run);
+      run += 1;
+      _pumpFrame();
+      _settle();
+    }
+    work.stop();
+    // Let the event loop run, so that the profiler can be talked to.
+    await Future<void>.delayed(Duration.zero);
+  }
+  _report(
+    'LOOP END $name, $run iterations, '
+    '${(work.elapsedMicroseconds / run / 1000.0).toStringAsFixed(4)} ms each',
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 500));
+}
+
+Widget _column(int count, String Function(int index) text) {
+  return SingleChildScrollView(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (var i = 0; i < count; i++) RepaintBoundary(child: Text(text(i))),
+      ],
+    ),
+  );
+}
+
+Future<void> _runProfilerLoops() async {
+  // Which way of running a plugin: on the span branch 0 is the widget layer
+  // and 1 is the render layer. The painter branch has one.
+  const index = int.fromEnvironment('LOOP_VARIANT', defaultValue: 1);
+  final Variant variant =
+      variants[index < variants.length ? index : variants.length - 1];
+  const only = String.fromEnvironment('LOOP_ONLY');
+  bool wanted(String name) => only.isEmpty || name.startsWith(only);
+
+  // R1. The lazy list.
+  if (wanted('R1')) {
+    final SearchInPagePlugin search = makeSearch(variant);
+    final controller = ScrollController();
+    await _mount(
+      _shell(
+        wrapScope(
+          plugins: <TextPlugin>[search],
+          variant: variant,
+          child: ListView.builder(
+            controller: controller,
+            itemCount: 10000,
+            itemBuilder: (BuildContext context, int index) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                child: Text(_sentence(index)),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    search.query = _rare;
+    await _loop('R1 lazy list keystroke', (int run) {
+      search.query = _rareQuery(run);
+    });
+    search.query = _rare;
+    await _loop('R1 lazy list keystroke, highlights seen before', (int run) {
+      search.query = _rareQuerySeenBefore(run);
+    });
+    search.query = _rare;
+    await _loop('R1 lazy list next match', (int run) {
+      search.nextMatch();
+    });
+    search.query = _rare;
+    _settle();
+    var offset = 0.0;
+    var direction = 120.0;
+    await _loop('R1 lazy list scroll', (int run) {
+      if (offset > 500000 || offset + direction < 0) {
+        direction = -direction;
+      }
+      offset += direction;
+      controller.jumpTo(offset);
+    });
+    await _unmount();
+    search.dispose();
+    controller.dispose();
+  }
+
+  // R2. The article.
+  if (wanted('R2')) {
+    final SearchInPagePlugin search = makeSearch(variant);
+    await _mount(
+      _shell(
+        wrapScope(
+          plugins: <TextPlugin>[search],
+          variant: variant,
+          child: _column(300, _longParagraph),
+        ),
+      ),
+    );
+    search.query = _rare;
+    await _loop('R2 article keystroke rare word', (int run) {
+      search.query = _rareQuery(run);
+    });
+    search.query = _rare;
+    await _loop('R2 article keystroke rare word, highlights seen before', (int run) {
+      search.query = _rareQuerySeenBefore(run);
+    });
+    search.query = 'fox';
+    await _loop('R2 article keystroke common word', (int run) {
+      search.query = _commonQuery(run);
+    });
+    search.query = 'fox';
+    await _loop('R2 article next match', (int run) {
+      search.nextMatch();
+    });
+    await _unmount();
+    search.dispose();
+  }
+
+  // R3 and P4. One text whose highlighted word moves.
+  for (final words in <int>[10, 50, 200, 1000, 2000]) {
+    final name = 'R3 moving word $words words';
+    if (!wanted(name)) {
+      continue;
+    }
+    final String text = List<String>.generate(
+      words,
+      (int i) => 'word$i',
+    ).join(' ');
+    final plugin = KaraokePlugin();
+    await _mount(
+      _shell(
+        wrapScope(
+          plugins: <TextPlugin>[plugin],
+          variant: variant,
+          child: SingleChildScrollView(
+            child: RepaintBoundary(child: Text(text)),
+          ),
+        ),
+      ),
+    );
+    await _loop(name, (int run) {
+      plugin.step();
+    });
+    await _unmount();
+  }
+
+  // R5. The animated highlight.
+  for (final count in <int>[10, 40]) {
+    final name = 'R5 animated highlight $count texts';
+    if (!wanted(name)) {
+      continue;
+    }
+    final pulse = PulsePlugin();
+    await _mount(
+      _shell(
+        wrapScope(
+          plugins: <TextPlugin>[pulse],
+          variant: variant,
+          child: _column(count, _sentence),
+        ),
+      ),
+    );
+    await _loop(name, (int run) {
+      pulse.tick();
+    });
+    await _unmount();
+  }
+
+  // R6. The selection drag.
+  if (wanted('R6')) {
+    final int mode = index + 1 < selectionModes.length
+        ? index + 1
+        : selectionModes.length - 1;
+    selectionModes[mode].$2();
+    final focusNode = FocusNode();
+    await _mount(
+      _shell(
+        Overlay(
+          initialEntries: <OverlayEntry>[
+            OverlayEntry(
+              builder: (BuildContext context) {
+                return SelectableRegion(
+                  focusNode: focusNode,
+                  selectionControls: emptyTextSelectionControls,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      for (var i = 0; i < 40; i++)
+                        RepaintBoundary(child: Text(_sentence(i))),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+    const start = Offset(20, 8);
+    var time = Duration.zero;
+    Offset last = start;
+    GestureBinding.instance.handlePointerEvent(
+      const PointerAddedEvent(
+        pointer: 7,
+        kind: PointerDeviceKind.mouse,
+        position: start,
+      ),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      const PointerDownEvent(
+        pointer: 7,
+        kind: PointerDeviceKind.mouse,
+        position: start,
+        buttons: kPrimaryButton,
+      ),
+    );
+    _pumpFrame();
+    await _loop('R6 selection drag (${selectionModes[mode].$1})', (int run) {
+      // Back and forth over 100 steps.
+      final int step = run % 200 < 100 ? run % 200 : 200 - run % 200;
+      final Offset position = start + Offset(3.0 * (step + 1), 5.0 * (step + 1));
+      final Offset delta = position - last;
+      last = position;
+      time += const Duration(milliseconds: 16);
+      GestureBinding.instance.handlePointerEvent(
+        PointerMoveEvent(
+          pointer: 7,
+          kind: PointerDeviceKind.mouse,
+          timeStamp: time,
+          position: position,
+          delta: delta,
+          buttons: kPrimaryButton,
+        ),
+      );
+    });
+    GestureBinding.instance.handlePointerEvent(
+      PointerUpEvent(
+        pointer: 7,
+        kind: PointerDeviceKind.mouse,
+        timeStamp: time,
+        position: last,
+      ),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      const PointerRemovedEvent(pointer: 7, kind: PointerDeviceKind.mouse),
+    );
+    await _unmount();
+    focusNode.dispose();
+    selectionModes.first.$2();
+  }
+
+  // P5. Typing in a text field with matches.
+  if (wanted('P5')) {
+    // About 1800 characters with "fox" 40 times.
+    final String initial = _uniformText
+        ? List<String>.filled(40, 'The quick brown fox jumps over the lazy dog.').join(' ')
+        : _words(7, 280, fixed: <int, String>{for (var i = 3; i < 280; i += 7) i: 'fox'});
+    final controller = TextEditingController(text: initial);
+    final focusNode = FocusNode();
+    final SearchInPagePlugin search = makeSearch(variant);
+    await _mount(
+      _shell(
+        wrapScope(
+          plugins: <TextPlugin>[search],
+          variant: variant,
+          child: EditableText(
+            controller: controller,
+            focusNode: focusNode,
+            maxLines: null,
+            style: const TextStyle(fontSize: 14, color: Color(0xFF000000)),
+            cursorColor: const Color(0xFF000000),
+            backgroundCursorColor: const Color(0xFF888888),
+          ),
+        ),
+      ),
+    );
+    search.query = 'fox';
+    await _loop('P5 typing in a field', (int run) {
+      // A text that the engine has not seen, and that does not grow.
+      controller.text = '$initial ${run % 100000}';
+    });
+    await _unmount();
+    search.dispose();
+    controller.dispose();
+    focusNode.dispose();
+  }
+
+  // P2, P2b, P3. The stress page: N short paragraphs, all mounted.
+  for (final count in <int>[1000, 10000]) {
+    if (!wanted('P2 N=$count') && !wanted('P3 N=$count')) {
+      continue;
+    }
+    final SearchInPagePlugin search = makeSearch(variant);
+    await _mount(
+      _shell(
+        wrapScope(
+          plugins: <TextPlugin>[search],
+          variant: variant,
+          child: _column(count, (int i) => _paragraph(i, 0)),
+        ),
+      ),
+    );
+    search.query = _rare;
+    await _loop('P2 N=$count keystroke', (int run) {
+      search.query = _rareQuery(run);
+    });
+    search.query = _rare;
+    await _loop('P2 N=$count next match', (int run) {
+      search.nextMatch();
+    });
+    search.query = 'qqqq';
+    await _loop('P3 N=$count keystroke no match', (int run) {
+      search.query = run.isEven ? 'qqqqq' : 'qqqq';
+    });
+    await _unmount();
+    search.dispose();
+  }
+
+  // P1. A rebuild of every paragraph widget, with a plugin that does nothing.
+  if (wanted('P1')) {
+    final pageKey = GlobalKey<_PageState>();
+    await _mount(
+      _Page(
+        key: pageKey,
+        count: 1000,
+        plugins: <TextPlugin>[_NoopPlugin()],
+        variant: variant,
+      ),
+    );
+    final _PageState page = pageKey.currentState!;
+    page.rebuildAll = true;
+    await _loop('P1 N=1000 rebuild all, no-op plugin', (int run) {
+      page.rebuild();
+    });
+    await _unmount();
+  }
+
+  // P8. The first plugin is added to a scope, and removed again.
+  if (wanted('P8')) {
+    final pageKey = GlobalKey<_PageState>();
+    await _mount(
+      _Page(
+        key: pageKey,
+        count: 1000,
+        plugins: const <TextPlugin>[],
+        variant: variant,
+      ),
+    );
+    final _PageState page = pageKey.currentState!;
+    final plugin = _NoopPlugin();
+    await _loop('P8 N=1000 first plugin added and removed', (int run) {
+      page.setPlugins(run.isEven ? <TextPlugin>[plugin] : const <TextPlugin>[]);
+    });
+    await _unmount();
+  }
+}
+
 Future<void> _runRealistic() async {
   final List<Variant> precise = variants.take(2).toList();
   await _runLazyList(null);
@@ -865,6 +1383,18 @@ Future<void> _runAll() async {
     'each frame time is the average of $_runs frames unless it says otherwise',
   );
   const which = String.fromEnvironment('BENCH');
+  if (which == 'loops') {
+    await _runProfilerLoops();
+    _report('done');
+    return;
+  }
+  if (which == 'breakdown') {
+    for (final String line in runBreakdown(_longParagraph(0))) {
+      _report(line);
+    }
+    _report('done');
+    return;
+  }
   if (which != 'stress') {
     await _runRealistic();
   }

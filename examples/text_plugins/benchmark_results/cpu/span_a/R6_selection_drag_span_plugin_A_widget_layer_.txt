@@ -1,0 +1,82 @@
+CPU profile of the loop "R6 selection drag (span plugin, A widget layer)"
+3734 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+74190 rounds in the loop, 0.0962 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   46.1 %     0.044 ms  DART SIDE
+   53.9 %     0.052 ms  ENGINE SIDE
+      0.1 %     0.000 ms  Dart: the plugin
+      1.5 %     0.001 ms  Dart: text plugin machinery of the framework
+     36.2 %     0.035 ms  Dart: the rest of the framework
+      8.3 %     0.008 ms  Dart VM: allocation, GC, stubs
+     11.0 %     0.011 ms  Engine: building a paragraph (ParagraphBuilder)
+      4.7 %     0.005 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+      5.8 %     0.006 ms  Engine: drawing the text (ui.Paragraph.paint)
+     16.7 %     0.016 ms  Engine: paragraph queries (boxes of a range and others)
+     15.7 %     0.015 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+    4.7 %     0.004 ms  build
+   22.3 %     0.021 ms  layout
+   14.5 %     0.014 ms  paint
+    9.5 %     0.009 ms  composite
+    0.0 %     0.000 ms  semantics
+    1.1 %     0.001 ms  frame start
+   47.9 %     0.046 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+    4.8 %  Native  _tlv_get_addr
+    2.1 %  Native  _xzm_free_tc
+    1.8 %  Stub  [Stub] AllocateObject
+    1.7 %  Native  _xzm_malloc_tc
+    1.6 %  Dart  __Set&_LinkedHashBase&SetMixin&_HashBase&_OperatorEqualsAndHashCode&_LinkedHashSetMixin.remove
+    1.6 %  Native  dart::VMHandles::AllocateHandle(dart::Zone*)
+    1.4 %  Native  _platform_memmove
+    1.3 %  Dart  _GrowableList.[]
+    1.2 %  Stub  [Stub] AllocateObjectParameterized
+    1.2 %  Native  operator new[](unsigned long, std::align_val_t)
+    1.2 %  Native  dart::Object::HandleImpl(dart::Zone*, dart::ObjectPtr, long)
+    1.1 %  Native  SkStrike::digestFor(skglyph::ActionType, SkPackedGlyphID)
+    1.1 %  Native  dart::StackResource::~StackResource()
+    1.0 %  Dart  RenderObject.getTransformTo
+    0.9 %  Native  dart::StackResource::Init(dart::ThreadState*)
+    0.8 %  Native  _free
+    0.8 %  Stub  [Stub] AllocateArray
+    0.8 %  Native  _malloc_zone_malloc
+    0.7 %  Dart  _GrowableList._grow
+    0.7 %  Native  mach_continuous_time
+    0.7 %  Dart  Object.==
+    0.6 %  Dart  Element.renderObject
+    0.6 %  Native  Dart_IsError
+    0.6 %  Native  dart::Class::IsSubtypeOf(dart::Class const&, dart::TypeArguments const&, dart::Nullability, dart::AbstractType const&, d...
+    0.6 %  Dart  _GrowableList.add
+    0.5 %  Native  write
+    0.5 %  Native  unsigned long& skia_private::TArray<unsigned long, true>::emplace_back<unsigned long&>(unsigned long&)
+    0.5 %  Dart  Object.hash
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+      0.9 %  _TextPluginSpanBuilderState.build
+      0.6 %  TextDelegateSet.decorate
+  Text in the framework (Dart)
+     20.4 %  RenderFlex.performLayout
+     19.1 %  RenderParagraph.performLayout
+     19.0 %  TextPainter.layout
+     13.8 %  TextPainter._createParagraph
+      7.8 %  RenderParagraph.paint
+      5.9 %  TextPainter.paint
+      3.7 %  TextSpan.build
+      2.1 %  RenderParagraph._setPainterText
+      0.9 %  TextPainter.getBoxesForSelection
+      0.6 %  InlineSpan.toPlainText
+  Text in the engine (native)
+      7.8 %  flutter::ParagraphBuilder::Create(_Dart_Handle*, _Dart_Handle*, _Dart_Handle*, std::__fl::basic_string<char, s...
+      5.8 %  skia::textlayout::ParagraphImpl::paint(skia::textlayout::ParagraphPainter*, float, float)
+      5.8 %  skia::textlayout::TextLine::paint(skia::textlayout::ParagraphPainter*, float, float)
+      4.7 %  skia::textlayout::ParagraphImpl::layout(float)
+      1.8 %  skia::textlayout::ParagraphImpl::breakShapedTextIntoLines(float)
+      1.6 %  flutter::Paragraph::getRectsForRange(unsigned int, unsigned int, unsigned int, unsigned int)
+      1.3 %  flutter::ParagraphBuilder::build(_Dart_Handle*)
+      1.0 %  skia::textlayout::ParagraphImpl::getRectsForRange(unsigned int, unsigned int, skia::textlayout::RectHeightStyl...
+      0.9 %  flutter::ParagraphBuilder::pushStyle(tonic::TypedList<(Dart_TypedData_Type)6, int> const&, std::__fl::vector<s...
+      0.7 %  flutter::ParagraphBuilder::addText(std::__fl::basic_string<char16_t, std::__fl::char_traits<char16_t>, std::__...

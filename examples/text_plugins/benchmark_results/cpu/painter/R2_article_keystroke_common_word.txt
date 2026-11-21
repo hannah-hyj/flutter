@@ -1,0 +1,78 @@
+CPU profile of the loop "R2 article keystroke common word"
+3266 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+910 rounds in the loop, 8.2591 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   27.3 %     2.256 ms  DART SIDE
+   72.7 %     6.003 ms  ENGINE SIDE
+     16.4 %     1.358 ms  Dart: the plugin
+      2.1 %     0.172 ms  Dart: text plugin machinery of the framework
+      1.8 %     0.147 ms  Dart: the rest of the framework
+      7.0 %     0.579 ms  Dart VM: allocation, GC, stubs
+      0.0 %     0.000 ms  Engine: building a paragraph (ParagraphBuilder)
+      0.0 %     0.000 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+     26.9 %     2.223 ms  Engine: drawing the text (ui.Paragraph.paint)
+     24.6 %     2.033 ms  Engine: paragraph queries (boxes of a range and others)
+     21.2 %     1.747 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+    0.0 %     0.003 ms  layout
+   80.2 %     6.620 ms  paint
+    8.5 %     0.706 ms  composite
+   11.3 %     0.931 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+    6.9 %  Native  SkStrike::digestFor(skglyph::ActionType, SkPackedGlyphID)
+    4.2 %  Native  _xzm_free_tc
+    3.8 %  Native  impeller::MakeTextFrameFromTextBlobSkia(sk_sp<SkTextBlob> const&)
+    3.7 %  Dart  _StringBase._substringMatches
+    3.3 %  Native  _tlv_get_addr
+    3.2 %  Native  operator delete(void*, unsigned long)
+    2.5 %  Native  _xzm_malloc_tc
+    2.1 %  Native  SkStrike::internalPrepare(SkSpan<unsigned short const>, SkStrike::PathDetail, SkGlyph const**)
+    2.0 %  Native  SkString::SkString()
+    1.9 %  Native  skia::textlayout::ParagraphImpl::getRectsForRange(unsigned int, unsigned int, skia::textlayout::RectHeightStyle, skia::t...
+    1.8 %  Native  _malloc_zone_malloc
+    1.8 %  Native  operator new[](unsigned long, std::align_val_t)
+    1.7 %  Dart  _StringBase.indexOf
+    1.5 %  Native  SkGlyph::path() const
+    1.4 %  Native  SkPaint::SkPaint()
+    1.4 %  Native  SkGlyph::setPath(SkArenaAlloc*, SkScalerContext*)
+    1.2 %  Dart  _OneByteString.toLowerCase
+    1.1 %  Native  _free
+    1.1 %  Native  _platform_memmove
+    1.0 %  Native  dart::StackResource::Init(dart::ThreadState*)
+    1.0 %  Native  std::__fl::__function::__func<skia::textlayout::TextLine::getRectsForRange(skia::textlayout::SkRange<unsigned long>, ski...
+    0.9 %  Native  skia::textlayout::TextLine::measureTextInsideOneRun(skia::textlayout::SkRange<unsigned long>, skia::textlayout::Run cons...
+    0.9 %  Dart  _CompactValuesIterable.iterator
+    0.9 %  Native  __xzm_xzone_free_to_freelist_chunk
+    0.9 %  Native  dart::StackResource::~StackResource()
+    0.8 %  Native  flutter::AccumulationRect::accumulate(impeller::TRect<float>)
+    0.8 %  Native  skia::textlayout::TextStyle::~TextStyle()
+    0.8 %  Native  Dart_TypedDataAcquireData
+    0.8 %  Native  operator new(unsigned long)
+    0.8 %  Dart  TextDelegate._getBoxesForSelection
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+     46.7 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+     43.3 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+     43.1 %  TextDelegate._paint
+     42.7 %  _SearchBackgroundPainter.paint
+     31.3 %  TextLayout.getBoxesForSelection
+     31.2 %  TextDelegate._getBoxesForSelection
+     11.0 %  SearchInPagePlugin.query=
+     11.0 %  SearchInPagePlugin._rescanAllDelegates
+      7.7 %  SearchInPagePlugin._computeMatchesForDelegate
+      1.5 %  TextDelegate.sortInDocumentOrder
+  Text in the framework (Dart)
+     74.3 %  RenderParagraph.paint
+     27.4 %  TextPainter.getBoxesForSelection
+     27.0 %  TextPainter.paint
+      1.3 %  TextPainter.layout
+      1.0 %  InlineSpan.toPlainText
+  Text in the engine (native)
+     26.9 %  skia::textlayout::ParagraphImpl::paint(skia::textlayout::ParagraphPainter*, float, float)
+     26.9 %  skia::textlayout::TextLine::paint(skia::textlayout::ParagraphPainter*, float, float)
+     24.1 %  flutter::Paragraph::getRectsForRange(unsigned int, unsigned int, unsigned int, unsigned int)
+     20.2 %  skia::textlayout::ParagraphImpl::getRectsForRange(unsigned int, unsigned int, skia::textlayout::RectHeightStyl...

@@ -1,12 +1,14 @@
 # Composable Text Plugins: the inline-span prototype (report)
 
-**Date:** 2026-11-20, second revision
+**Date:** 2026-11-20, third revision
 **Branch:** `text-plugin-mvp-inline-span`, cut from `text-plugin-mvp` at `0d2e3bd20d2`
 **Plan:** [text_plugins_inline_span_plan.md](./text_plugins_inline_span_plan.md)
 **Compared against:** the painter prototype (the MVP), [text_plugins_design_doc.md](./text_plugins_design_doc.md)
 
 > [!NOTE]
 > The first revision of this report ended with "keep the painter", because the span approach missed the performance budget of the plan on a page of 10,000 paragraphs. The reviewer judged that case too far from real use to decide the question. This revision keeps those numbers as data, adds measurements at the size of a real app, adds rendered images of both approaches, adds tests for what a span split does to hard text, and replaces the verdict with pros and cons.
+>
+> The third revision measures every benchmark case again with a CPU profiler, split into Dart side and engine side ([Section 4](#4-performance)). It also corrects the numbers for color-only changes, which were about twice too high because of the text the benchmark used.
 
 ---
 
@@ -14,6 +16,7 @@
 
 - [0. Summary](#0-summary)
 - [1. The two approaches, and what was built](#1-the-two-approaches-and-what-was-built)
+  - [1.1 What the API looks like](#11-what-the-api-looks-like)
 - [2. Pros and cons](#2-pros-and-cons)
 - [3. What it looks like](#3-what-it-looks-like)
 - [4. Performance](#4-performance)
@@ -42,15 +45,16 @@ Both approaches work. Neither is wrong. They differ in what they are good at, an
 | Can it change the text itself (color of the glyphs, weight, size, hide characters) | No | Yes |
 | Does it touch the app's text | Never | Yes, it splits the app's spans |
 | Cost when a decoration changes | A repaint of the text | A new paragraph and a layout of the text |
-| At the size of a screen (4 to 40 texts change) | 0.04 to 0.24 ms | 0.2 to 2.0 ms |
-| At the size of a page (300 to 1,000 texts change at once) | 9 to 13 ms | 58 to 89 ms |
+| At the size of a screen (4 to 40 texts change) | 0.06 to 0.26 ms | 0.12 to 1.0 ms |
+| At the size of a page (300 to 1,000 texts change at once) | 8 to 23 ms | 69 to 82 ms |
+| Where the extra time is | | On the engine side: `ui.Paragraph.layout`, building the paragraph, drawing it |
 | Tap, cursor, link semantics on a range | Needs new machinery (stage 2) | Free in static text, impossible in an editable field |
 | Widgets on a range | Needs a host (stage 3) | Inline chips and anchors in static text; a host for the rest |
 
 The short version of the trade:
 
 - **The span approach is the smaller idea with the larger reach.** A plugin author learns one data class. The same mechanism restyles glyphs, makes a range tappable and puts a chip in the line. It reuses what the framework already does for the composing underline and for spell check.
-- **The painter is the safer and cheaper mechanism for decoration.** It cannot break the app's text, it draws any shape, and it costs 5 to 20 times less per change. It does nothing beyond decoration, so stages 2 and 3 are separate designs.
+- **The painter is the safer and cheaper mechanism for decoration.** It cannot break the app's text, it draws any shape, and it costs 3 to 18 times less for a new highlight, and 1.3 to 4 times less for a change of color only. It does nothing beyond decoration, so stages 2 and 3 are separate designs.
 
 At the size of what is on a screen, the cost difference is real in ratio and small in milliseconds. It becomes a dropped frame when a few hundred texts change in the same frame. For find-in-page that happens in one situation: the whole page is mounted (the page is not lazy, or the search turned on eager loading of offscreen text) *and* the query is common, as it is after the first one or two typed letters. [Section 4](#4-performance) has the numbers and one measured way to soften it.
 
@@ -75,7 +79,7 @@ On this branch, 134 new or ported tests pass.
 | Stage 2 plugins: links, spoiler. Stage 3 plugins: mention chip, suggestion menu, frosted spoiler | same |
 | A benchmark and an image test that run on both branches | `benchmark.dart`, `test/visual_test.dart` |
 
-Two ways of building the span were compared throughout. **Option A** builds it in the widget layer, **Option B** in the render object ([Section 7](#7-the-two-span-options-a-and-b)).
+Two ways of building the span were compared throughout. **Option A** builds it in the widget layer, **Option B** in the render object ([Section 7](#7-the-two-span-options-a-and-b)). [Section 1.1](#11-what-the-api-looks-like) shows the API of all three side by side.
 
 Framework code against the common base, `packages/flutter/lib` only:
 
@@ -87,6 +91,201 @@ Framework code against the common base, `packages/flutter/lib` only:
 | `text-plugin-mvp-inline-span` | 1, 2 and a small 3, with both options | 3,023 |
 
 The last row is not a fair total against the first three. It carries two options and a switch that a real change would not, its stage 3 host is a small rebuild, and its stage 2 does less ([Sections 9](#9-stage-2-interaction) and [10](#10-stage-3-widgets)).
+
+### 1.1 What the API looks like
+
+The three are the painter prototype (the MVP), span Option A and span Option B. **Option A and Option B have the same plugin API.** They differ in where the framework applies the decorations, which shows in a few places listed at the end.
+
+#### What an app writes
+
+The same in all three:
+
+```dart
+TextPluginScope(
+  plugin: SpellcheckLinterPlugin(),
+  child: const Text('We recieve mail.'),
+)
+```
+
+`TextPluginScope.multiple`, `.exclude`, `.none` and `TextPluginSuspension` are the same too. On this branch a scope also has `decorationLayer: TextDecorationLayer.widget` (A) or `.render` (B). That switch exists so that one build can run both options. It is not a proposed API.
+
+#### What a plugin author sees
+
+| | Painter (MVP) | Span, Option A and Option B |
+| :-- | :-- | :-- |
+| `TextPlugin`, lifecycle | `didAddText`, `didUpdateText`, `didRemoveText` | The same three |
+| When the lifecycle runs | After the layout phase of the frame | While the text is built, before layout |
+| `TextPlugin`, how it decorates | Nothing on the plugin. It sets painters on the delegate | `List<TextSpanDecoration> buildDecorations(TextDelegate delegate)` |
+| `TextPlugin`, other | `needsOffscreenContent`, `paintOrder` | The same, and `notifiesDecorationChanges`, and the static `deferToEndOfFrame` |
+| `TextDelegate`, reading | `text`, `textSpan`, `placeholderRanges`, `selections`, `selectionColor`, `textDirection`, `attached` | The same, and `isEditable`, `isSelectable` |
+| `TextDelegate`, decorating | `backgroundPainter`, `foregroundPainter` (settable) | `markNeedsDecoration()` |
+| `TextDelegate`, other | `ensureVisible`, `compareTo`, `sortInDocumentOrder`, `addListener` | The same |
+| Classes that a plugin implements | `TextPlugin` and a `TextPluginPainter` (`paint(Canvas, TextLayout)`, `shouldRepaint`, a `repaint` listenable) | `TextPlugin` |
+| Classes that a plugin is given | `TextDelegate`, and `TextLayout` while it paints (`size`, `getBoxesForSelection`, `getPositionForOffset`, `getWordBoundary`, `getOffsetForCaret`, `getFullHeightForCaret`) | `TextDelegate` |
+| Classes that a plugin creates | `Paint`, `Path` and whatever it draws with | `TextSpanDecoration` |
+| Does a plugin see the layout of the text | Yes, during `paint` only | No |
+
+The data class of the span API:
+
+```dart
+class TextSpanDecoration {
+  const TextSpanDecoration({
+    required this.range,     // In the plain text that the app wrote.
+    this.style,              // Merged onto the style of the range.
+    this.recognizer,         // Stage 2: tap and other gestures.
+    this.mouseCursor,        // Stage 2.
+    this.onEnter,            // Stage 2: hover.
+    this.onExit,
+    this.semanticsLabel,     // Stage 2: what a screen reader says instead.
+    this.replacement,        // Stage 3: a WidgetSpan in place of the range.
+  });
+}
+```
+
+A range is always in the text that the app wrote, whatever other plugins do to the same text. The framework merges the decorations of all plugins into one span tree with `decorateTextSpan`.
+
+#### The same plugin, written twice
+
+The spell check plugin of the example app. Finding the misspelled words is the same code in both and is left out.
+
+Painter (MVP), from `text-plugin-mvp`:
+
+```dart
+class SpellcheckLinterPlugin extends TextPlugin {
+  @override
+  void didAddText(TextDelegate delegate) => _lintDelegate(delegate);
+
+  @override
+  void didUpdateText(TextDelegate delegate) => _lintDelegate(delegate);
+
+  @override
+  void didRemoveText(TextDelegate delegate) {
+    delegate.foregroundPainter = null;
+    _issuesByDelegate.remove(delegate);
+  }
+
+  void _lintDelegate(TextDelegate delegate) {
+    final List<SpellcheckIssue> issues = _findIssues(delegate.text);
+    _issuesByDelegate[delegate] = issues;
+    delegate.foregroundPainter = issues.isEmpty
+        ? null
+        : _SpellcheckSquigglePainter(delegate: delegate, issues: issues);
+  }
+}
+
+class _SpellcheckSquigglePainter extends TextPluginPainter {
+  _SpellcheckSquigglePainter({required this.delegate, required this.issues});
+
+  final TextDelegate delegate;
+  final List<SpellcheckIssue> issues;
+
+  @override
+  void paint(Canvas canvas, TextLayout layout) {
+    final paint = Paint()
+      ..color = const Color(0xFFD32F2F)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    for (final SpellcheckIssue issue in issues) {
+      final List<ui.TextBox> boxes = layout.getBoxesForSelection(
+        TextSelection(baseOffset: issue.range.start, extentOffset: issue.range.end),
+      );
+      for (final box in boxes) {
+        final Rect rect = box.toRect();
+        final double baseY = rect.bottom - 0.5;
+        final path = Path()..moveTo(rect.left, baseY);
+        var up = true;
+        for (double x = rect.left + 3; x <= rect.right; x += 3) {
+          path.lineTo(x, baseY + (up ? -1.6 : 1.6));
+          up = !up;
+        }
+        canvas.drawPath(path, paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SpellcheckSquigglePainter oldDelegate) => oldDelegate.issues != issues;
+}
+```
+
+Span (Option A and Option B, the same file), from this branch:
+
+```dart
+class SpellcheckLinterPlugin extends TextPlugin {
+  static const TextStyle _errorStyle = TextStyle(
+    decoration: TextDecoration.underline,
+    decorationStyle: TextDecorationStyle.wavy,
+    decorationColor: Color(0xFFD32F2F),
+  );
+
+  @override
+  void didAddText(TextDelegate delegate) => _lintDelegate(delegate);
+
+  @override
+  void didUpdateText(TextDelegate delegate) => _lintDelegate(delegate);
+
+  @override
+  void didRemoveText(TextDelegate delegate) => _issuesByDelegate.remove(delegate);
+
+  @override
+  List<TextSpanDecoration> buildDecorations(TextDelegate delegate) {
+    return <TextSpanDecoration>[
+      for (final SpellcheckIssue issue in issuesFor(delegate))
+        TextSpanDecoration(range: issue.range, style: _errorStyle),
+    ];
+  }
+
+  void _lintDelegate(TextDelegate delegate) {
+    _issuesByDelegate[delegate] = _findIssues(delegate.text);
+  }
+}
+```
+
+Both listings are shortened from the real files (one severity instead of two, the scan in a helper). The real files are 213 lines (painter) and 184 lines (span).
+
+What the pair shows: the painter plugin decides how the wave looks and draws it, and the span plugin can only ask for the wave that the engine has. The painter plugin has to know about boxes, paints and `shouldRepaint`. The span plugin does not.
+
+#### A decoration that changes later
+
+A search plugin whose query changes, in both APIs:
+
+```dart
+// Painter: give the texts that changed a new painter.
+// The framework calls shouldRepaint and repaints the text.
+delegate.backgroundPainter = _MatchPainter(matches, activeIndex);
+
+// Or keep one painter and give it a Listenable (a sketch). Nothing is created per change.
+_MatchPainter(...) : super(repaint: animation);
+
+// Span: say which texts changed. The framework calls buildDecorations
+// for each of them again.
+delegate.markNeedsDecoration();
+
+// Or, the simple way: the plugin is a ChangeNotifier with
+// notifiesDecorationChanges, and every text in the scope is asked again.
+notifyListeners();
+```
+
+#### Stage 2 and stage 3
+
+| | Painter (MVP and its follow-up branches) | Span |
+| :-- | :-- | :-- |
+| A tappable range | A separate annotation API, on `text-plugin-annotations-rebased` | `TextSpanDecoration(range: ..., recognizer: ..., mouseCursor: ...)`, static text only |
+| A label for a screen reader | The annotation API | `TextSpanDecoration(range: ..., semanticsLabel: ...)` |
+| A widget in the line | Not possible | `TextSpanDecoration(range: ..., replacement: WidgetSpan(...))`, Option A, static text only |
+| A widget over or behind a range | A host API, on `text-plugin-with-widget-rebased` | `mixin TextWidgetPlugin on TextPlugin` with `buildTextWidgets(context, delegate, layer)` that returns `TextPositioned(range: ..., child: ...)`, Option A only |
+
+#### Where Option A and Option B differ for someone who uses them
+
+| | Option A, widget layer | Option B, render layer |
+| :-- | :-- | :-- |
+| Who applies the decorations | `Text` and `EditableText`, in `build`, through a `TextPluginSpanBuilder` around the render object widget | `RenderParagraph` and `RenderEditable`, through `TextDelegateHostMixin` |
+| What the app sees in `RichText.text` and `RenderParagraph.text` | The decorated span | The span that the app made |
+| A `RichText` that the app creates directly | Not decorated | Decorated |
+| `markNeedsDecoration()` | Rebuilds the widget of that text | The render object applies the new decorations at the start of the next frame, with no rebuild |
+| `replacement` and `TextWidgetPlugin` | Work | An assertion fails: a render object cannot create widgets |
+| An extra widget for each text | Yes, when a plugin is in scope | No |
+| Adding the first plugin to a scope | Every text below is created again | Nothing is created again |
 
 ---
 
@@ -107,16 +306,16 @@ Every item points at a test, a measurement or an image.
 | S+7 | **Inline widgets are one more field.** A ticker becomes a badge, a mention becomes a chip, in static text | Image 3; [Section 10](#10-stage-3-widgets) |
 | S+8 | **No new phase in the frame.** The post-layout callback phase and its assertion in `RenderObject` are not needed. That is PR 1 of the 16 in the implementation plan | [Section 8](#8-the-lifecycle-at-build-time) |
 | S+9 | **There is prior art in the framework.** The composing underline and spell check already split spans this way. A plugin decoration, the composing underline and the caret coexist | `H9` |
-| S+10 | **Typing in a field costs the same.** The span is rebuilt on every keystroke anyway | P5: 0.87 against 0.73 ms |
+| S+10 | **Typing in a field costs the same.** The span is rebuilt on every keystroke anyway | Typing in a field: 0.79 against 0.70 ms |
 | S+11 | **In Option B the app does not see it.** `RichText.text` and `RenderParagraph.text` stay the span the app made | `what code outside of the plugin sees` |
 
 ### 2.2 Inline span: cons
 
 | # | Con | Evidence |
 | :-- | :-- | :-- |
-| S-1 | **Every change costs a new paragraph and a layout of that text**, 5 to 20 times the cost of a repaint, and the cost grows with the length of the text. About 55 µs for a sentence, 190 µs for a paragraph of 500 characters, 2.5 ms for 8,000 characters | [Section 4](#4-performance) |
-| S-2 | **A frame is dropped when a few hundred texts change together.** 300 paragraphs: 58 ms. 1,000 short paragraphs: 79 ms. Budget: 16.6 ms | R2, P2 |
-| S-3 | **An animated highlight lays the text out on every frame.** 40 texts: 2.0 ms a frame against 0.24 | R5 |
+| S-1 | **Every change costs a new `ui.Paragraph` for that text**, and a change of ranges also a layout of its render object, 3 to 18 times the cost of a repaint for a new highlight, and the cost grows with the length of the text. About 70 µs for a sentence, 230 µs for a paragraph of 500 characters, 2.4 ms for 8,000 characters. Almost all of it is engine time. A change of color only is cheaper, about 25 µs for a sentence, because the engine finds the shaping in its cache | [Section 4](#4-performance) |
+| S-2 | **A frame is dropped when a few hundred texts change together.** 300 paragraphs: 69 ms. 1,000 short paragraphs: 82 ms. Budget: 16.6 ms | [Section 4.1](#41-every-case-time-dart-side-engine-side) |
+| S-3 | **An animated highlight builds the paragraph again on every frame.** The render object only repaints, but `TextPainter.paint` creates a new `ui.Paragraph` and lays it out first, because there is no way to change the paint of an existing one. The engine's cache saves the shaping, not the rest. 40 texts: 1.0 ms a frame against 0.26 | [Sections 4.2](#42-the-cases-in-which-the-span-approach-is-slower-where-the-engine-time-goes) and [4.3](#43-the-frame-phases) |
 | S-4 | **Shapes are limited to what a style can say.** Flat boxes of the run height. No padding, no rounded fill, no box around a paragraph. A rounded *border* is possible with a stroked `Paint` | Images 2 and 3 |
 | S-5 | **It rewrites the app's span tree, and that has traps.** Recognizers, cursors and hover callbacks are not inherited and have to be copied to every piece. A span with a semantics label cannot be split. A list of children can be a `List<TextSpan>`. The merge handles these, and each was a bug before it did | [Section 5](#5-what-a-span-split-does-to-the-text) |
 | S-6 | **A subclass of `TextSpan` is lost in the pieces.** An app that finds its spans by type, or overrides a method, loses that for decorated text | `a subclass of TextSpan is not kept` |
@@ -134,11 +333,11 @@ Every item points at a test, a measurement or an image.
 
 | # | Pro | Evidence |
 | :-- | :-- | :-- |
-| P+1 | **The cheapest change there is: a repaint.** About 6 µs for a sentence, 29 µs for a paragraph with eight matches. It stays inside one frame for 1,000 texts | [Section 4](#4-performance) |
+| P+1 | **The cheapest change there is: a repaint.** About 7 µs for a sentence, 28 µs for a paragraph with eight matches. 300 paragraphs change in 8 ms. 1,000 short ones change in about 12 ms of frame time, next to 11 ms of the plugin's own scan | [Section 4](#4-performance) |
 | P+2 | **Any shape.** Rounded boxes with padding, a border around the active match, a hand-drawn wave, a rounded tint around a whole paragraph | [Image 1](#31-the-painter-prototype) |
 | P+3 | **It cannot break the text.** Shaping, line breaks, selection, semantics, the app's own spans and recognizers are untouched by construction. None of S-5 to S-9 can happen | By design |
 | P+4 | **Text fields are the same as static text.** Same API, same result | Image 1, third row |
-| P+5 | **Animation is cheap.** 40 animated highlights cost 0.24 ms a frame | R5 |
+| P+5 | **Animation is cheap.** 40 animated highlights cost 0.26 ms a frame | Section 4.1 |
 | P+6 | **The document order is valid in a callback**, so a plugin can keep its matches sorted as texts arrive | Design doc 7.2 |
 | P+7 | **It covers every text**, also a `RichText` created directly, with no widget added to the tree | Design doc 3.5 |
 
@@ -197,83 +396,177 @@ Neither picture is "right". The painter's shapes are what a designer would ask f
 
 ## 4. Performance
 
-Profile mode, macOS, Apple M1 Pro, the same harness on both branches. Raw output is in [benchmark_results](./examples/text_plugins/benchmark_results/).
+Profile mode, macOS, Apple M1 Pro. The same benchmark runs on both branches. Each case runs in a loop for 7.5 seconds while the CPU profiler of the Dart VM samples the UI thread for 5 of them, about 3,800 samples a case. The profiler names Dart functions and the native functions of the engine.
 
-"Change" is the time of the call that changes something, such as setting the query, which scans the text. "Frame" is the time in `drawFrame` for the frames that follow. Milliseconds.
+For every case there is a file with the profile, and a summary:
+
+- [cpu/painter](./examples/text_plugins/benchmark_results/cpu/painter/), [cpu/span_b](./examples/text_plugins/benchmark_results/cpu/span_b/), [cpu/span_a](./examples/text_plugins/benchmark_results/cpu/span_a/): one file for each case, and `summary.tsv`.
+- [tool/cpu_profile.dart](./examples/text_plugins/tool/cpu_profile.dart) takes the samples and sorts them.
+
+**Dart side and engine side.** Every sample is put in one of two groups by the function that was running:
+
+- *Dart side*: Dart code (the plugin, the text plugin machinery, the rest of the framework), and the Dart VM's own work for it (allocation, garbage collection).
+- *Engine side*: native code of the engine. For text it is told apart further: building a paragraph (`ParagraphBuilder`), `ui.Paragraph.layout` (shaping the text and breaking it into lines), drawing the text (`ui.Paragraph.paint`), queries such as the boxes of a range, and everything else.
+
+The time of a case is the time of one round of its loop: the call that makes the change, and all frames that follow. The share of the samples in a group, times that, is the time in the group.
 
 > [!IMPORTANT]
-> Each number is from one run of the app. Between two runs of the same code, small numbers moved by up to a factor of two (the same case gave 0.106 and 0.061 ms) and larger ones by up to 25 %. Read the table for orders of magnitude. The ratios between painter and span are 4 to 20 and are stable across the runs.
+> Read these numbers with three things in mind.
+>
+> 1. **One run per number.** Repeated runs of the same case differ by up to 25 %, small ones by more. The differences that matter here are factors of 2 to 20.
+> 2. **The text matters, because the engine has a cache** ([Section 4.4](#44-the-engines-paragraph-cache)). The first runs of this benchmark used paragraphs that all end with the same sentence, and the engine does not cache such text. The numbers in this section are from text in which every paragraph is different. The runs with the old text are kept in [cpu_uniform_text](./examples/text_plugins/benchmark_results/cpu_uniform_text/) and compared in Section 4.4. The stopwatch files of the earlier revisions (`*_2026-11-20.txt`) used the old text.
+> 3. **macOS slowed the app down when its window was not visible** (App Nap): ten times slower, with a twentieth of the samples. The example app now tells macOS not to. Every case in the tables has its full number of samples.
 
-### 4.1 At the size of an app
+### 4.1 Every case: time, Dart side, engine side
 
-| Case | Painter | Span A | Span B |
+Milliseconds for one round. "D" is the Dart side, "E" the engine side. Span is Option B (the render layer). Option A is in the last column.
+
+| Case | Painter | D | E | Span B | D | E | Span / painter | Span A |
+| :-- | --: | --: | --: | --: | --: | --: | --: | --: |
+| **Lazy list of 10,000 items (about 30 on screen)** | | | | | | | | |
+| Keystroke in the search, 4 matches on screen, new highlights | 0.065 | 0.039 | 0.026 | 0.287 | 0.051 | 0.237 | 4.4 | 0.307 |
+| Keystroke, highlights that were shown before | 0.062 | 0.036 | 0.025 | 0.145 | 0.052 | 0.094 | 2.4 | 0.156 |
+| Next match | 0.094 | 0.054 | 0.039 | 0.121 | 0.058 | 0.062 | 1.3 | 0.130 |
+| Scroll 120 px with a search active | 0.228 | 0.070 | 0.159 | 0.229 | 0.073 | 0.156 | 1.0 | 0.238 |
+| **Article: 300 paragraphs of 500 characters, all mounted** | | | | | | | | |
+| Keystroke, rare word: 15 texts change, new highlights | 0.81 | 0.64 | 0.18 | 3.45 | 0.72 | 2.73 | 4.2 | 3.83 |
+| Keystroke, rare word, highlights shown before | 0.78 | 0.58 | 0.19 | 1.42 | 0.67 | 0.75 | 1.8 | 1.48 |
+| **Keystroke, common word: all 300 texts change** | **8.26** | 2.26 | 6.00 | **68.70** | 4.53 | 64.17 | **8.3** | 72.33 |
+| Next match | 0.144 | 0.074 | 0.070 | 0.244 | 0.088 | 0.156 | 1.7 | 0.250 |
+| **One text, the highlighted word moves** | | | | | | | | |
+| 10 words (59 characters) | 0.018 | 0.008 | 0.010 | 0.061 | 0.013 | 0.048 | 3.4 | 0.065 |
+| 50 words (339 characters) | 0.023 | 0.009 | 0.014 | 0.148 | 0.014 | 0.134 | 6.4 | 0.156 |
+| 200 words (1,489 characters) | 0.037 | 0.008 | 0.029 | 0.481 | 0.014 | 0.467 | 13 | 0.505 |
+| 1,000 words (7,889 characters) | 0.144 | 0.012 | 0.133 | 2.35 | 0.021 | 2.33 | 16 | 2.43 |
+| 2,000 words (16,889 characters) | 0.269 | 0.013 | 0.256 | 4.95 | 0.032 | 4.92 | 18 | 5.15 |
+| **Animated highlight: only the color changes, every frame** | | | | | | | | |
+| 10 texts | 0.081 | 0.027 | 0.054 | 0.255 | 0.045 | 0.210 | 3.1 | 0.259 |
+| 40 texts | 0.263 | 0.085 | 0.178 | 1.02 | 0.16 | 0.86 | 3.9 | 1.05 |
+| **Other** | | | | | | | | |
+| Selection drag across 40 paragraphs, one pointer move | 0.069 | 0.038 | 0.030 | 0.091 | 0.042 | 0.049 | 1.3 | 0.096 |
+| Typing in a field of 1,800 characters with 40 matches | 0.696 | 0.060 | 0.635 | 0.786 | 0.080 | 0.707 | 1.1 | 0.809 |
+| **Stress: N short paragraphs, all mounted, 10 % match** | | | | | | | | |
+| N=1,000, keystroke: 100 texts change | 1.38 | 0.83 | 0.54 | 6.94 | 1.24 | 5.70 | 5.0 | 7.73 |
+| N=1,000, next match | 0.220 | 0.127 | 0.093 | 0.262 | 0.126 | 0.136 | 1.2 | 0.270 |
+| N=1,000, keystroke that matches nothing | 0.331 | 0.327 | 0.004 | 0.336 | 0.332 | 0.003 | 1.0 | 0.339 |
+| **N=10,000, keystroke: 1,000 texts change** | **23.2** | 15.6 | 7.5 | **82.3** | 19.3 | 63.0 | **3.6** | 91.6 |
+| N=10,000, next match | 1.35 | 0.82 | 0.54 | 1.36 | 0.74 | 0.62 | 1.0 | 1.51 |
+| N=10,000, keystroke that matches nothing | 5.53 | 5.52 | 0.01 | 3.35 | 3.35 | 0.01 | 0.6 | 3.61 |
+| N=1,000, every paragraph widget is rebuilt, plugin does nothing | 1.55 | 1.54 | 0.01 | 1.59 | 1.58 | 0.01 | 1.0 | 1.98 |
+| N=1,000, the first plugin is added to a scope, or removed | 3.78 | 1.62 | 2.15 | 1.68 | 1.67 | 0.01 | 0.4 | 67.03 |
+
+What the table says:
+
+- **Where the span approach is slower, the extra time is on the engine side.** In the common-word keystroke on the article the Dart side grows by 2.3 ms and the engine side by 58 ms. In the moving word of 2,000 words the Dart side grows by 0.02 ms and the engine side by 4.7 ms.
+- **Where little changes, or the text is laid out anyway, the two are level**: scrolling, typing, the next match, a keystroke that matches nothing, a rebuild.
+- **The painter's cost is mostly Dart for a keystroke** (the plugin scanning the text and sorting its matches), and that part is the same in both prototypes.
+- **Option A and Option B are within 10 % of each other**, except for the first plugin added to a scope, where Option A re-creates every text.
+
+### 4.2 The cases in which the span approach is slower: where the engine time goes
+
+Milliseconds for one round, by the kind of work. "Other engine" is the display list, layers and memory.
+
+| | Plugin (Dart) | Text plugin machinery (Dart) | Framework and VM (Dart) | Build paragraph | **`Paragraph.layout`** | Draw text | Range queries | Other engine |
+| :-- | --: | --: | --: | --: | --: | --: | --: | --: |
+| **Article, common word, painter** | 1.36 | 0.17 | 0.73 | 0 | 0 | 2.22 | 2.03 | 1.75 |
+| **Article, common word, span** | 0.93 | 1.14 | 2.46 | 6.08 | **44.04** | 9.49 | 1.10 | 3.47 |
+| Article, rare word, painter | 0.59 | 0.00 | 0.05 | 0 | 0 | 0.11 | 0.01 | 0.06 |
+| Article, rare word, span | 0.59 | 0.02 | 0.10 | 0.17 | **2.18** | 0.26 | 0.02 | 0.11 |
+| Article, rare word, shown before, span | 0.53 | 0.02 | 0.11 | 0.18 | 0.19 | 0.27 | 0.02 | 0.09 |
+| Lazy list keystroke, painter | 0.024 | 0.001 | 0.015 | 0 | 0 | 0.004 | 0.002 | 0.019 |
+| Lazy list keystroke, span | 0.020 | 0.004 | 0.026 | 0.044 | **0.150** | 0.016 | 0.005 | 0.021 |
+| Lazy list keystroke, shown before, span | 0.020 | 0.005 | 0.027 | 0.040 | 0.014 | 0.015 | 0.003 | 0.022 |
+| Moving word, 2,000 words, painter | 0.001 | 0.000 | 0.012 | 0 | 0 | 0.216 | 0.001 | 0.038 |
+| Moving word, 2,000 words, span | 0.000 | 0.009 | 0.023 | 0.114 | **4.282** | 0.463 | 0.006 | 0.056 |
+| Animated highlight, 40 texts, painter | 0.019 | 0.011 | 0.056 | 0 | 0 | 0.058 | 0.019 | 0.101 |
+| Animated highlight, 40 texts, span | 0.004 | 0.036 | 0.123 | **0.382** | 0.138 | 0.183 | 0.024 | 0.131 |
+| Stress N=10,000, keystroke, painter | 11.35 | 0.80 | 3.50 | 0 | 0 | 2.03 | 1.43 | 4.07 |
+| Stress N=10,000, keystroke, span | 7.81 | 1.18 | 10.33 | 11.02 | **37.02** | 7.04 | 3.11 | 4.83 |
+
+Four things stand out.
+
+**1. `ui.Paragraph.layout` is the cost of a new highlight.** In the common-word keystroke it is 44 of the 69 ms, in the long text 4.3 of 4.95 ms. The functions with the most samples are HarfBuzz and ICU: the character map lookup, `apply_forward` and the `GPOS` pair positioning of OpenType, and the break iterator. In the article case the engine spends 39 % of all samples shaping the text again and 14 % finding character properties again, although no character changed.
+
+**2. The painter never builds or lays out a paragraph.** Those two columns are zero in every painter row. Its engine time is drawing the same glyphs again and asking for the boxes of the matches.
+
+**3. Drawing costs more too.** The same glyphs take 9.5 ms to draw in the span row and 2.2 ms in the painter row. A paragraph that was just created has to prepare its glyph runs again, and a text with highlights is more runs.
+
+**4. A color-only change is a different profile.** In the animated highlight `Paragraph.layout` is small (0.14 ms), because the engine finds the shaping in its cache. What is left is creating a `ParagraphBuilder` and giving it the text and the styles again (0.38 ms, the largest item), breaking the lines again, and drawing. That is 3.9 times the painter instead of 8.
+
+### 4.3 The frame phases
+
+A keystroke and a color change take different paths through the framework.
+
+| Milliseconds in | Layout phase | Paint phase | Composite | Outside of a frame |
+| :-- | --: | --: | --: | --: |
+| Article, common word, painter | 0.00 | 6.62 | 0.71 | 0.93 |
+| Article, common word, span | **53.10** | 10.88 | 1.65 | 0.83 |
+| Animated highlight, 40 texts, painter | 0.00 | 0.20 | 0.05 | 0.02 |
+| Animated highlight, 40 texts, span | 0.00 | **0.91** | 0.06 | 0.01 |
+| Typing in a field, painter | 0.52 | 0.13 | 0.01 | 0.02 |
+| Typing in a field, span | 0.59 | 0.12 | 0.02 | 0.01 |
+
+- **A color-only change is a repaint.** The render object is not laid out. The paragraph is built again inside `TextPainter.paint`, which finds `_rebuildParagraphForPaint` set. The comment in `text_painter.dart` says that there is no API to make only that update.
+- **A change of ranges is a layout pass.** When a query goes from `fo` to `fox`, the pieces of the span have different strings, and `TextSpan.compareTo` returns `layout` whenever the text of a child or the number of children differs. `InlineSpan` has no normal form, so it cannot see that the plain text and the fonts are the same. The render object is laid out, and its parent with it. On the page of 10,000 paragraphs that is also 7 ms more on the Dart side.
+- **Typing is a layout pass in both prototypes**, of the same size.
+
+### 4.4 The engine's paragraph cache
+
+SkParagraph keeps the result of shaping in a cache (`ParagraphCache.cpp`). Three properties of it decide what a decoration costs:
+
+1. **The key includes the style runs.** Two paragraphs are the same entry if they have the same text, and the same runs with the same fonts *at the same positions*. A color-only change keeps the runs, so the shaping is found. A highlight that covers different characters is different runs, so it is not, although the fonts of all runs are the same and the shaping would be identical.
+2. **It holds 128 paragraphs.**
+3. **It does not store a paragraph that begins or ends with the same 40 characters as the one it stored last.** The engine takes that for a user who is typing.
+
+The third property is why the first runs of this benchmark were too slow for color-only changes. Every paragraph ended with the same sentence, so almost none were stored. With different paragraphs:
+
+| Span B, milliseconds | Old text (not cached) | Different paragraphs | Painter |
+| :-- | --: | --: | --: |
+| Animated highlight, 40 texts | 1.91 (layout 1.00) | 1.02 (layout 0.14) | 0.26 |
+| Animated highlight, 10 texts | 0.48 (layout 0.25) | 0.26 (layout 0.03) | 0.08 |
+| Article, next match | 0.38 | 0.24 | 0.14 |
+| Article, common-word keystroke | 67.5 (layout 41.5) | 68.7 (layout 44.0) | 8.3 |
+| Stress N=10,000, keystroke | 85.7 (layout 37.9) | 82.3 (layout 37.0) | 23.2 |
+| Moving word, 200 words | 0.51 | 0.48 | 0.04 |
+
+So the earlier numbers for a color-only change were about twice too high, and the numbers for a new highlight were right.
+
+The first property is why a keystroke is expensive. It also shows in the rows "highlights shown before" of Section 4.1: when the user types a letter and deletes it, both highlights are in the cache, and the keystroke costs 1.8 to 2.4 times the painter instead of 4.2 to 4.4. A page with more than 128 texts that change gets nothing from the cache at all.
+
+### 4.5 What each part of the cost would take to remove
+
+| Part | Share in the common-word keystroke | What would remove it | Where |
 | :-- | :-- | :-- | :-- |
-| **R1. Lazy list of 10,000 items; only the items on screen exist.** Keystroke in the search field, 4 matches on screen | 0.06 | 0.25 | 0.22 |
-| R1. Next match | 0.07 | 0.12 | 0.13 |
-| R1. Scroll by 120 px in a frame with a search active (without a plugin: 0.5) | 0.70 | 0.47 | 0.50 |
-| **R2. Article: 300 paragraphs of 500 characters, all mounted.** Keystroke, a rare word: 15 texts change | 0.90 | 3.38 | 3.08 |
-| R2. Keystroke, a common word: all 300 texts change, 2,400 matches | **9.7** | **63.4** | **59.1** |
-| R2. Next match | 0.09 | 0.20 | 0.19 |
-| **R3. One text, the highlighted word moves.** 59 characters | 0.016 | 0.061 | 0.060 |
-| R3. 339 characters | 0.020 | 0.155 | 0.141 |
-| R3. 1,489 characters | 0.039 | 0.500 | 0.528 |
-| R3. 7,889 characters | 0.133 | 2.56 | 2.53 |
-| **R5. Animated highlight, a new color every frame.** 10 texts | 0.07 | 0.49 | 0.49 |
-| R5. 40 texts | 0.24 | 2.05 | 2.03 |
-| **R6. Selection drag across 40 paragraphs**, one pointer move. Built-in highlight on the span branch: 0.07 | 0.07 (painter plugin) | 0.15 (span plugin) | 0.12 (span plugin) |
-| **P5. Typing** one character in a field of 1,800 characters with 40 matches (without a plugin: 0.6 to 0.7) | 0.73 | 0.87 | 0.87 |
+| Shaping a text whose characters and fonts did not change | 44 of 69 ms | A cache key that ignores where runs with the same font begin and end. The range change then costs what "shown before" costs | Engine, `ParagraphCache` |
+| The same, when more than 128 texts change | | A larger cache, or one per paragraph object | Engine |
+| Building the paragraph and breaking its lines again for a change of paint | 6 ms, and most of the animated highlight | A way to change the paint of a range of an existing paragraph. SkParagraph has `updateForegroundPaint(from, to, paint)` and `updateBackgroundPaint(from, to, paint)` in `Paragraph.h`. Nothing in Flutter's engine calls them and `dart:ui` does not expose them. There is no such function for underlines | Engine and `dart:ui` |
+| A layout pass of the render tree for a change that is paint only | 2 ms here, 7 ms at N=10,000 | A comparison that knows the decoration did not change text or fonts. The `AttributedText` proposal has a normal form. The prototype could also say so itself, since it knows what it added | Framework |
+| Drawing a new paragraph costs more than drawing the same one again | 7 ms | Follows from the two above | |
 
-What this says:
+None of this exists today. With all of it, a highlight through a span would be a change of paint on an existing paragraph, which is what a painter is. Without it, the costs in Section 4.1 are what a plugin gets.
 
-- **What is on a screen is cheap either way.** A keystroke with a handful of visible matches, the next match, scrolling, typing, dragging a selection: all are a fraction of a millisecond in both approaches. The span approach is several times slower in ratio and 0.1 to 0.2 ms slower in fact.
-- **Scrolling a lazy list is a tie.** A new item is laid out once in both approaches. The decoration is part of that layout.
-- **The selection highlight as a span plugin costs about twice the built-in highlight**, and is still 0.12 to 0.15 ms a pointer move.
-- **The cost of one change grows with the length of the text** (R3). A span costs about 40 µs plus 0.3 µs per character. A painter costs about 15 µs plus 0.015 µs per character. For an ordinary sentence the ratio is 4. For a page-long text it is 20.
-- **One realistic case drops frames: R2 with a common word.** An article-sized page that is fully mounted, and a query that matches every paragraph. That is what the first one or two letters typed into a search field do. 59 ms is three to four frames.
+### 4.6 When does it matter?
 
-### 4.2 When is the whole page mounted?
-
-The span approach misses a frame when roughly 100 long paragraphs or 300 sentences change in one frame. On a lazy list that cannot happen, because only what is on screen exists. It can happen in two ways:
+The span approach misses a 60 Hz frame when roughly 70 paragraphs of 500 characters, or 250 short ones, get a *new* highlight in the same frame. On a lazy list that cannot happen, because only what is on screen exists. It can happen in two ways:
 
 1. The page is a `Column` in a `SingleChildScrollView`, which is how short and medium pages are usually written.
 2. The search plugin asked for offscreen content (`needsOffscreenContent`), which makes lazy lists build up to a million pixels of content. Find-in-page does this on purpose, so that it can count and reach matches that are off screen. So the feature that the MVP exists for is the one that turns a lazy page into a fully mounted one.
 
-Whether that is "likely" depends on the app. It is the honest boundary of the span approach: fine on what is visible, expensive on everything at once.
+And the query has to match most of the page, which is what the first one or two typed letters do.
 
-### 4.3 One way to soften it, measured
+The work can be spread. The span search plugin has an option to give new decorations to at most N texts in a frame. This was measured with the old text, which for this case gives the same times:
 
-The cost can be spread. The span search plugin got an option to give new decorations to at most N texts in a frame and the rest in the next frames.
-
-| R2, common word, 300 texts change, Option B | Longest frame | Frames until every highlight is there | Total |
+| Article, common word, 300 texts change, Option B | Longest frame | Frames until every highlight is there | Total |
 | :-- | :-- | :-- | :-- |
 | All at once | 58 ms | 1 | 58 ms |
 | At most 50 texts a frame | 11.7 ms | 7 | 62 ms |
 | At most 25 texts a frame | 5.9 ms | 13 | 60 ms |
 
-No frame is dropped, and the highlights arrive over about 0.1 to 0.2 seconds. The plugin does not know which texts are on screen, so it cannot do the visible ones first. That would need a new piece of information on the delegate. This is 30 lines in the plugin. It is also work that the painter approach does not need.
+No frame is dropped, and the highlights arrive over 0.1 to 0.2 seconds. The plugin does not know which texts are on screen, so it cannot do the visible ones first. This is 30 lines in the plugin, and work that the painter approach does not need.
 
-### 4.4 The stress cases, as recorded
+### 4.7 The decision rule of the plan, as recorded
 
-These are the cases of the first revision: N short paragraphs, all mounted, 10 % of them match.
-
-| Case | Painter | Span A | Span B |
-| :-- | :-- | :-- | :-- |
-| P2. Keystroke, N=1,000 (100 texts change): change + frame | 0.95 + 1.85 | 0.72 + 7.86 | 0.73 + 6.54 |
-| **P2. Keystroke, N=10,000 (1,000 texts change): change + frame** | **12.6 + 13.3** | **9.5 + 89.4** | **9.2 + 78.7** |
-| P6. First search, N=10,000: change + frame | 17.3 + 14.8 | 9.8 + 85.3 | 9.8 + 80.9 |
-| P2b. Next match, N=10,000 | 1.70 | 1.59 | 2.00 |
-| P3. Keystroke that matches nothing, N=10,000 | 8.2 | 5.4 | 5.6 |
-| P4. Moving word in a paragraph of 2,000 words | 0.26 | 5.07 | 5.05 |
-| P8. First plugin added to a scope, N=10,000: added / removed | 108 / 16 | 804 / 704 | 51 / 43 |
-| P1. Frame that rebuilds all 10,000 paragraph widgets, no-op plugin (without a scope: 34) | 33.7 | 44.1 | 36.8 |
-
-The decision rule of the plan was P2 at N=10,000 inside 16.6 ms of `drawFrame`. The painter passes (13.3). Both span options miss it (89.4 and 78.7). With the scan of the text included, the painter's keystroke is 25.9 ms, which is also more than a frame. The reviewer's judgement is that 1,000 highlights changing in one frame is not a case to decide on. It is recorded here as the upper end of the scale, not as the verdict.
-
-A plugin can change its decorations by notifying, so that every text in the scope asks again, or by naming the texts that changed. The numbers above are for naming. Notifying costs 36 to 45 ms at N=10,000 even when nothing matches, because every text is asked. Both options support both ways.
-
-### 4.5 Why
-
-`TextPainter` has no way to change only the paint of a laid-out paragraph. A new highlight splits a span, which is a layout change of the span tree. Even a color-only change creates the `ui.Paragraph` again (fact F3 of the plan, in `text_painter.dart`). An engine API to restyle a range of a laid-out paragraph would remove most of S-1 to S-3. Nothing in the framework can.
+The rule was the keystroke on the page of 10,000 paragraphs inside 16.6 ms of `drawFrame`. Per round, with the plugin's scan included: painter 23.2 ms, span 82.3 ms (B) and 91.6 ms (A). Without the scan, which is not in `drawFrame`, the painter is at about 12 ms and passes, and the span options are at about 75 ms and do not. The reviewer's judgement is that 1,000 highlights changing in one frame is not a case to decide on. It is recorded here as the upper end of the scale, not as the verdict.
 
 ---
 
@@ -338,8 +631,9 @@ Defects that these tests found. Each is a trap of the approach, and each is fixe
 
 | | A, widget layer | B, render layer |
 | :-- | :-- | :-- |
-| Keystroke, article of 300 paragraphs, common word | 63 ms | 59 ms |
-| First plugin added to 10,000 texts | 804 ms, every text is re-created | 51 ms |
+| Keystroke, article of 300 paragraphs, common word | 72 ms | 69 ms |
+| First plugin added to 1,000 texts, or removed | 67 ms, every text is re-created | 1.7 ms |
+| First plugin added to 10,000 texts (stopwatch, earlier run) | 804 ms, every text is re-created | 51 ms |
 | Cost on a rebuild without changes | About 1 µs per text | None measured |
 | Decorates a `RichText` created directly | No | Yes |
 | What `RichText.text` holds | The decorated span | The app's span |
@@ -476,10 +770,15 @@ Not done, against the plan:
 Where it can be wrong:
 
 - **One run per number**, with the variance stated in [Section 4](#4-performance). No low-end device, no web, no mobile.
+- **The profiler sees the UI thread only.** Time on the raster thread is not in any number of Section 4. A text with highlights is more draw calls, so the raster side may differ too. It was not measured.
+- **The split into Dart side and engine side is by the function at the top of the stack.** A sample in `malloc` that the engine called counts as engine. A sample in a VM stub counts as Dart. The sampling period is 1 ms, so a case of 0.02 ms a round is resolved only because the loop runs it many thousands of times.
+- **The benchmark text changed the result once already.** The first text defeated the engine's paragraph cache and made color-only changes look twice as expensive ([Section 4.4](#44-the-engines-paragraph-cache)). The current text has paragraphs that are all different, which is closer to a real page, but a real page may hit or miss the cache in ways this text does not. The stopwatch files of the earlier revisions (`*_2026-11-20.txt`, the breakdown, the batching table) were made with the first text and were not run again.
+- **macOS App Nap spoiled several runs** before it was found: the app ran ten times slower when its window was covered or the display was asleep. Those runs were thrown away. A run is trusted here only if its `summary.tsv` shows about 3,000 samples or more for every case.
+- **The loops repeat the same change many times.** A loop that alternates between two queries would have everything in the cache after the first round. The "new highlights" cases therefore walk through a list of different queries, and the "shown before" cases alternate on purpose. The stress cases alternate between two queries and rely on changing more texts than the cache holds. At N=1,000 that is 200 paragraphs against 128 entries, so a part of them may have been found in the cache and that number may be somewhat low. A real session is somewhere between the two.
 - **The images are from the test engine**, not from the demo app on a screen. They are real font rendering, at one size, on a white background.
 - **The painter stage 2 and stage 3 columns are from the design doc**, not from running those branches.
 - **The lines-of-code comparison is rough.**
-- **The batching in Section 4.3 is a sketch.** It does not order the work by what is visible.
+- **The batching in Section 4.6 is a sketch.** It does not order the work by what is visible.
 - **A pre-existing failure.** `text_field_test.dart`, "text selection style 1", fails a golden comparison by 7.04 % on this branch and identically on `text-plugin-mvp`. It was not investigated.
 
 ---
@@ -488,7 +787,7 @@ Where it can be wrong:
 
 These are proposals. The design doc was not edited.
 
-- **A new section "Why not decorate through `InlineSpan`?"**, with the summary table of [Section 0](#0-summary), the two images, the app-size numbers of [Section 4.1](#41-at-the-size-of-an-app) and the table of [Section 5](#5-what-a-span-split-does-to-the-text). It answers the most likely first question of a reviewer, in both directions.
+- **A new section "Why not decorate through `InlineSpan`?"**, with the summary table of [Section 0](#0-summary), the two images, the app-size numbers of [Section 4.1](#41-every-case-time-dart-side-engine-side) and the table of [Section 5](#5-what-a-span-split-does-to-the-text). It answers the most likely first question of a reviewer, in both directions.
 - **Section 3.6 (search plugin), a note on P-5**: a match across styled runs is painted box by box, and the plugin should merge adjacent boxes on a line before it draws a border. The image shows why.
 - **Section 8 (stage 2)**: add the two cases that are tests here and not yet on the annotation branch (the second tap on a spoiler over a link; an ordinary tap recognizer taking the double click in a `SelectionArea`), and the open question whether an annotation in static text could be implemented by giving the span a recognizer, cursor and label.
 - **Section 9 (stage 3)**: a paragraph "Why not `WidgetSpan`?" with the table of [Section 10](#10-stage-3-widgets); the anchor with an `OverlayPortal` as a way to get a floating menu in static text with no framework change; and per-text invalidation as the fix for the first defect of 9.4.
@@ -521,15 +820,27 @@ cd examples/text_plugins
 ../../bin/flutter run --profile -d macos -t lib/benchmark.dart --dart-define=BENCH=realistic
 ```
 
-On the painter branch: check out `text-plugin-mvp`, copy `lib/benchmark.dart` and `test/visual_test.dart` from this branch, copy `lib/benchmark_compat_painter.dart.txt` from this branch to `lib/benchmark_compat.dart`, and run the same commands with `VISUAL_PREFIX=painter`.
+CPU samples of every case (Section 4). The first command runs the loops and waits in each for the profiler. The second, in another terminal, connects to the VM service that the log names, and writes one file per case and `summary.tsv`:
+
+```bash
+cd examples/text_plugins
+../../bin/flutter run --profile -d macos -t lib/benchmark.dart \
+    --dart-define=BENCH=loops --dart-define=LOOP_VARIANT=1 > /tmp/bench.log
+dart tool/cpu_profile.dart /tmp/bench.log benchmark_results/cpu/span_b
+```
+
+`LOOP_VARIANT=0` is Option A. `--dart-define=TEXT=uniform` is the first benchmark text. `--dart-define=LOOP_ONLY=R2` runs only the cases whose name starts with `R2`. Keep the window of the app visible.
+
+On the painter branch: check out `text-plugin-mvp`, copy `lib/benchmark.dart`, `tool/cpu_profile.dart`, `macos/Runner/MainFlutterWindow.swift` and `test/visual_test.dart` from this branch, copy `lib/benchmark_compat_painter.dart.txt` from this branch to `lib/benchmark_compat.dart`, and run the same commands with `VISUAL_PREFIX=painter`.
 
 ## Appendix B: time log
 
-The plan set a timebox of 10 hours. The work was done by an agent in two sittings on 2026-11-20. Wall-clock times:
+The plan set a timebox of 10 hours. The work was done by an agent in three sittings on 2026-11-20. Wall-clock times:
 
 | Work | From | To |
 | :-- | :-- | :-- |
 | M1 to M7 of the plan: the merge, both options, ports, stress benchmark, stages 2 and 3, first report | 15:14 | 16:10 |
-| Second round: app-size benchmark on both branches, images, shaping tests, batching, this revision | 16:16 | 17:00 |
+| Second round: app-size benchmark on both branches, images, shaping tests, batching, second revision | 16:16 | 17:00 |
+| Third round: where the time of a change goes, CPU samples of every case on both branches, the paragraph cache, this revision | 19:10 | 20:30 |
 
-About an hour and three quarters in total. What is missing in [Section 12](#12-what-was-not-done-and-where-this-report-can-be-wrong) was not attempted, not cut for time.
+About three hours in total. What is missing in [Section 12](#12-what-was-not-done-and-where-this-report-can-be-wrong) was not attempted, not cut for time.

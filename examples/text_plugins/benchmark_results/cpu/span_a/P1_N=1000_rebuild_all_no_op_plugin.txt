@@ -1,0 +1,69 @@
+CPU profile of the loop "P1 N=1000 rebuild all, no-op plugin"
+3746 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+3765 rounds in the loop, 1.9797 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   99.3 %     1.965 ms  DART SIDE
+    0.7 %     0.015 ms  ENGINE SIDE
+      0.0 %     0.000 ms  Dart: the plugin
+     29.9 %     0.592 ms  Dart: text plugin machinery of the framework
+     68.7 %     1.361 ms  Dart: the rest of the framework
+      0.6 %     0.012 ms  Dart VM: allocation, GC, stubs
+      0.0 %     0.000 ms  Engine: building a paragraph (ParagraphBuilder)
+      0.0 %     0.000 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+      0.0 %     0.000 ms  Engine: drawing the text (ui.Paragraph.paint)
+      0.0 %     0.000 ms  Engine: paragraph queries (boxes of a range and others)
+      0.7 %     0.015 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+   98.7 %     1.954 ms  build
+    0.1 %     0.002 ms  layout
+    0.2 %     0.003 ms  paint
+    0.1 %     0.002 ms  frame start
+    1.0 %     0.020 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+   13.1 %  Dart  _HashSet.add
+    8.6 %  Dart  _HashMap.[]=
+    6.3 %  Dart  _OneByteString.==
+    4.1 %  Stub  [Stub] Subtype6TestCache
+    3.6 %  Dart  PersistentHashMap.[]
+    3.4 %  Dart  _CompressedNode.get
+    3.3 %  Dart  Element.dependOnInheritedElement
+    2.9 %  Dart  Element.dependOnInheritedWidgetOfExactType
+    2.6 %  Dart  InheritedModel._findModels
+    2.2 %  Dart  Object.hashCode
+    2.0 %  Stub  [Stub] SlowTypeTest
+    1.9 %  Dart  _HashMap.[]
+    1.8 %  Dart  Element.updateChildren
+    1.7 %  Dart  Element.==
+    1.7 %  Dart  ListBase.any
+    1.6 %  Stub  [Stub] AllocateArray
+    1.6 %  Dart  InheritedModel.inheritFrom
+    1.5 %  Stub  [Stub] AllocateObject
+    1.3 %  Stub  [Stub] AllocateObjectParameterized
+    1.3 %  Dart  InheritedModelElement.updateDependencies
+    1.1 %  Dart  _GrowableList._allocateData
+    1.1 %  Dart  ComponentElement.performRebuild
+    1.1 %  Dart  _CompactIterator.moveNext
+    1.1 %  Stub  [Stub] Type Test Type: InheritedElement
+    1.0 %  Dart  _GrowableList._GrowableList
+    0.9 %  Dart  Object._haveSameRuntimeType
+    0.8 %  Dart  TextSpan.compareTo
+    0.8 %  Stub  [Stub] Type Test Type: Element
+    0.7 %  Dart  _Type.==
+    0.7 %  Dart  _GrowableList._grow
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+     14.8 %  _TextPluginSpanBuilderState.build
+     10.9 %  TextPluginSpanBuilder.wrap
+      7.1 %  TextPluginScope.decorationVersionOf
+      6.2 %  TextDelegateSet.update
+      5.8 %  TextDelegateSet._update
+      3.4 %  TextPluginScope.maybeOf
+      2.8 %  TextPluginScope.decorationLayerOf
+      2.3 %  TextDelegateSet.decorate
+  Text in the framework (Dart)
+      1.0 %  TextSpan.compareTo
+  Text in the engine (native)

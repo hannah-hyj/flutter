@@ -145,3 +145,6 @@ final List<(String, VoidCallback)> selectionModes = <(String, VoidCallback)>[
 
 /// Not available on the painter branch.
 SearchInPagePlugin? makeBatchedSearch(int perFrame) => null;
+
+/// Not available on the painter branch.
+List<String> runBreakdown(String text) => const <String>[];

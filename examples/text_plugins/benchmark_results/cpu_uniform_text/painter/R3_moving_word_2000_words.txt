@@ -1,0 +1,60 @@
+CPU profile of the loop "R3 moving word 2000 words"
+3884 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+27700 rounds in the loop, 0.2643 ms a round
+
+Dart side and engine side. Every sample is in one line.
+    3.8 %     0.010 ms  DART SIDE
+   96.2 %     0.254 ms  ENGINE SIDE
+      0.2 %     0.000 ms  Dart: the plugin
+      0.2 %     0.000 ms  Dart: text plugin machinery of the framework
+      1.6 %     0.004 ms  Dart: the rest of the framework
+      1.9 %     0.005 ms  Dart VM: allocation, GC, stubs
+      0.0 %     0.000 ms  Engine: building a paragraph (ParagraphBuilder)
+      0.0 %     0.000 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+     85.5 %     0.226 ms  Engine: drawing the text (ui.Paragraph.paint)
+      0.5 %     0.001 ms  Engine: paragraph queries (boxes of a range and others)
+     10.2 %     0.027 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+    0.6 %     0.002 ms  layout
+   88.7 %     0.235 ms  paint
+    8.0 %     0.021 ms  composite
+    0.3 %     0.001 ms  frame start
+    2.4 %     0.006 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+   26.8 %  Native  SkStrike::digestFor(skglyph::ActionType, SkPackedGlyphID)
+   11.1 %  Native  impeller::MakeTextFrameFromTextBlobSkia(sk_sp<SkTextBlob> const&)
+    7.0 %  Native  SkStrike::internalPrepare(SkSpan<unsigned short const>, SkStrike::PathDetail, SkGlyph const**)
+    6.5 %  Native  SkGlyph::setPath(SkArenaAlloc*, SkScalerContext*)
+    5.7 %  Native  SkGlyph::path() const
+    2.7 %  Native  _xzm_free_tc
+    2.1 %  Native  _xzm_malloc_tc
+    1.9 %  Native  _malloc_zone_malloc
+    1.7 %  Native  _platform_memmove
+    1.7 %  Native  _xzm_xzone_malloc_tiny
+    1.5 %  Native  __xzm_xzone_free_to_freelist_chunk
+    1.2 %  Native  _free
+    1.2 %  Native  SkDescriptor::operator==(SkDescriptor const&) const
+    1.0 %  Native  operator new[](unsigned long, std::align_val_t)
+    0.9 %  Native  wyhash(void const*, unsigned long, unsigned long long, unsigned long long const*)
+    0.8 %  Native  SkScalerContext::MakeRecAndEffects(SkFont const&, SkPaint const&, SkSurfaceProps const&, SkScalerContextFlags, SkMatrix ...
+    0.7 %  Native  impeller::TRect<float>::TransformBounds(impeller::Matrix const&) const
+    0.6 %  Native  SkPaintPriv::ComputeLuminanceColor(SkPaint const&)
+    0.6 %  Native  std::__fl::vector<impeller::TextRun, std::__fl::allocator<impeller::TextRun>>::__swap_out_circular_buffer(std::__fl::__s...
+    0.5 %  Native  impeller::TextRun* std::__fl::vector<impeller::TextRun, std::__fl::allocator<impeller::TextRun>>::__emplace_back_slow_pa...
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+      1.5 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+      1.1 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+      1.1 %  TextDelegate._paint
+      1.1 %  _KaraokePainter.paint
+      0.6 %  TextLayout.getBoxesForSelection
+      0.6 %  TextDelegate._getBoxesForSelection
+  Text in the framework (Dart)
+     87.1 %  RenderParagraph.paint
+     85.5 %  TextPainter.paint
+  Text in the engine (native)
+     85.4 %  skia::textlayout::ParagraphImpl::paint(skia::textlayout::ParagraphPainter*, float, float)
+     85.4 %  skia::textlayout::TextLine::paint(skia::textlayout::ParagraphPainter*, float, float)

@@ -1,0 +1,64 @@
+CPU profile of the loop "R2 article keystroke rare word"
+3267 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+9120 rounds in the loop, 0.8140 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   78.5 %     0.639 ms  DART SIDE
+   21.5 %     0.175 ms  ENGINE SIDE
+     72.3 %     0.589 ms  Dart: the plugin
+      0.3 %     0.002 ms  Dart: text plugin machinery of the framework
+      2.9 %     0.023 ms  Dart: the rest of the framework
+      3.1 %     0.025 ms  Dart VM: allocation, GC, stubs
+      0.0 %     0.000 ms  Engine: building a paragraph (ParagraphBuilder)
+      0.0 %     0.000 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+     13.0 %     0.106 ms  Engine: drawing the text (ui.Paragraph.paint)
+      1.4 %     0.012 ms  Engine: paragraph queries (boxes of a range and others)
+      7.1 %     0.058 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+    0.3 %     0.003 ms  layout
+   20.3 %     0.165 ms  paint
+    6.4 %     0.052 ms  composite
+    0.1 %     0.001 ms  frame start
+   72.8 %     0.593 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+   37.9 %  Dart  _StringBase._substringMatches
+   16.3 %  Dart  _StringBase.indexOf
+   13.0 %  Dart  _OneByteString.toLowerCase
+    3.2 %  Native  SkStrike::digestFor(skglyph::ActionType, SkPackedGlyphID)
+    1.9 %  Native  impeller::MakeTextFrameFromTextBlobSkia(sk_sp<SkTextBlob> const&)
+    1.0 %  Native  SkStrike::internalPrepare(SkSpan<unsigned short const>, SkStrike::PathDetail, SkGlyph const**)
+    0.9 %  Native  _tlv_get_addr
+    0.8 %  Dart  __Set&_LinkedHashBase&SetMixin&_HashBase&_OperatorEqualsAndHashCode&_LinkedHashSetMixin._getKeyOrData
+    0.8 %  Native  SkGlyph::setPath(SkArenaAlloc*, SkScalerContext*)
+    0.8 %  Native  SkGlyph::path() const
+    0.6 %  Native  __xzm_xzone_free_to_freelist_chunk
+    0.6 %  Native  _free
+    0.6 %  Native  _xzm_free_tc
+    0.6 %  Native  _platform_memmove
+    0.5 %  Native  _xzm_malloc_tc
+    0.5 %  Dart  ContainerLayer.updateSubtreeNeedsAddToScene
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+     71.9 %  SearchInPagePlugin.query=
+     71.8 %  SearchInPagePlugin._rescanAllDelegates
+     69.0 %  SearchInPagePlugin._computeMatchesForDelegate
+      4.1 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+      3.4 %  _MixinApplication87&RenderBox&ContainerRenderObjectMixin&RenderInlineChildrenContainerDefaults&RelayoutWhenSys...
+      3.2 %  TextDelegate._paint
+      3.0 %  _SearchBackgroundPainter.paint
+      2.0 %  TextLayout.getBoxesForSelection
+      2.0 %  TextDelegate._getBoxesForSelection
+      2.0 %  TextDelegate.sortInDocumentOrder
+  Text in the framework (Dart)
+     17.7 %  RenderParagraph.paint
+     13.1 %  TextPainter.paint
+      1.5 %  TextPainter.getBoxesForSelection
+      1.3 %  InlineSpan.toPlainText
+  Text in the engine (native)
+     13.0 %  skia::textlayout::ParagraphImpl::paint(skia::textlayout::ParagraphPainter*, float, float)
+     13.0 %  skia::textlayout::TextLine::paint(skia::textlayout::ParagraphPainter*, float, float)
+      1.4 %  flutter::Paragraph::getRectsForRange(unsigned int, unsigned int, unsigned int, unsigned int)
+      1.1 %  skia::textlayout::ParagraphImpl::getRectsForRange(unsigned int, unsigned int, skia::textlayout::RectHeightStyl...

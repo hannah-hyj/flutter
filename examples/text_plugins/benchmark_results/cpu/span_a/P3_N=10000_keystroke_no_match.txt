@@ -1,0 +1,42 @@
+CPU profile of the loop "P3 N=10000 keystroke no match"
+3881 samples of the UI thread, one every 1000 microseconds, from the CPU profiler of the Dart VM
+2075 rounds in the loop, 3.6082 ms a round
+
+Dart side and engine side. Every sample is in one line.
+   99.9 %     3.604 ms  DART SIDE
+    0.1 %     0.005 ms  ENGINE SIDE
+     99.5 %     3.591 ms  Dart: the plugin
+      0.0 %     0.000 ms  Dart: text plugin machinery of the framework
+      0.2 %     0.006 ms  Dart: the rest of the framework
+      0.2 %     0.007 ms  Dart VM: allocation, GC, stubs
+      0.0 %     0.000 ms  Engine: building a paragraph (ParagraphBuilder)
+      0.0 %     0.000 ms  Engine: ui.Paragraph.layout (shaping, line breaking)
+      0.0 %     0.000 ms  Engine: drawing the text (ui.Paragraph.paint)
+      0.0 %     0.000 ms  Engine: paragraph queries (boxes of a range and others)
+      0.1 %     0.005 ms  Engine: everything else (display list, layers, memory)
+
+The phases of a frame
+    0.1 %     0.003 ms  layout
+    0.1 %     0.003 ms  paint
+    0.1 %     0.002 ms  frame start
+   99.8 %     3.601 ms  outside of a frame (the call that makes the change, and the loop itself)
+
+Exclusive: the sample was in this function itself
+   35.8 %  Dart  _StringBase._substringMatches
+   25.2 %  Dart  _OneByteString.toLowerCase
+   20.9 %  Dart  _StringBase.indexOf
+   10.4 %  Dart  __Map&_LinkedHashBase&MapMixin&_HashBase&_OperatorEqualsAndHashCode&_LinkedHashMapMixin._getValueOrData
+    1.4 %  Dart  SearchInPagePlugin._computeMatchesForDelegate
+    1.2 %  Dart  Object.hashCode
+    1.1 %  Dart  SearchInPagePlugin._rescanAllDelegates
+    0.7 %  Dart  _CompactIterator.moveNext
+    0.6 %  Dart  ListBase.isEmpty
+
+Inclusive: this function was on the stack. Selected functions.
+  The plugin and the text plugin machinery (Dart)
+     99.5 %  SearchInPagePlugin.query=
+     99.5 %  SearchInPagePlugin._rescanAllDelegates
+     85.2 %  SearchInPagePlugin._computeMatchesForDelegate
+      0.8 %  TextDelegate.text
+  Text in the framework (Dart)
+  Text in the engine (native)
