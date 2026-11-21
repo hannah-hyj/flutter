@@ -234,7 +234,9 @@ void main() {
         expect(plugin.buildCount, 2);
       });
 
-      testWidgets('two plugins: the higher paintOrder wins an overlap', (WidgetTester tester) async {
+      testWidgets('two plugins: the higher paintOrder wins an overlap', (
+        WidgetTester tester,
+      ) async {
         final low = _WordPlugin('hello world');
         final high = _OtherWordPlugin('lo wo', order: 1, color: _orange);
         await tester.pumpWidget(
@@ -342,7 +344,10 @@ void main() {
         await gesture.moveTo(origin + const Offset(81, 5));
         await tester.pump();
         // The selection is on top of the match of the other plugin.
-        expect(_highlighted(paragraph.debugDecoratedText, selectionColor), <String>['hello ', 'wo']);
+        expect(_highlighted(paragraph.debugDecoratedText, selectionColor), <String>[
+          'hello ',
+          'wo',
+        ]);
         expect(_highlighted(paragraph.debugDecoratedText), <String>['rld']);
         expect(TextDelegateSet.debugDecorateCount - decorated, 2);
         await gesture.up();
@@ -380,32 +385,33 @@ void main() {
         expect(taps, 3);
       });
 
-      testWidgets('H7: a decoration that depends on state set in didAddText is in the first frame', (
-        WidgetTester tester,
-      ) async {
-        final plugin = _SeenPlugin();
-        final controller = ScrollController();
-        addTearDown(controller.dispose);
-        await tester.pumpWidget(
-          _app(
-            TextPluginScope(
-              plugin: plugin,
-              child: ListView.builder(
-                controller: controller,
-                itemExtent: 100,
-                itemCount: 100,
-                itemBuilder: (BuildContext context, int index) => Text('item $index'),
+      testWidgets(
+        'H7: a decoration that depends on state set in didAddText is in the first frame',
+        (WidgetTester tester) async {
+          final plugin = _SeenPlugin();
+          final controller = ScrollController();
+          addTearDown(controller.dispose);
+          await tester.pumpWidget(
+            _app(
+              TextPluginScope(
+                plugin: plugin,
+                child: ListView.builder(
+                  controller: controller,
+                  itemExtent: 100,
+                  itemCount: 100,
+                  itemBuilder: (BuildContext context, int index) => Text('item $index'),
+                ),
               ),
             ),
-          ),
-        );
-        expect(find.text('item 50', skipOffstage: false), findsNothing);
-        controller.jumpTo(5000);
-        // One frame. The item is built during layout of this frame.
-        await tester.pump();
-        expect(plugin.seen.any((TextDelegate d) => d.text == 'item 50'), isTrue);
-        expect(_highlightedIn(tester, 'item 50'), <String>['item 50']);
-      });
+          );
+          expect(find.text('item 50', skipOffstage: false), findsNothing);
+          controller.jumpTo(5000);
+          // One frame. The item is built during layout of this frame.
+          await tester.pump();
+          expect(plugin.seen.any((TextDelegate d) => d.text == 'item 50'), isTrue);
+          expect(_highlightedIn(tester, 'item 50'), <String>['item 50']);
+        },
+      );
 
       testWidgets('H8: a match in the part that maxLines cuts off', (WidgetTester tester) async {
         final plugin = _WordPlugin('');
@@ -589,12 +595,10 @@ void main() {
         final SemanticsHandle handle = tester.ensureSemantics();
         final plugin = _WordPlugin('');
         const text = 'one two three two one';
-        await tester.pumpWidget(
-          _app(TextPluginScope(plugin: plugin, child: const Text(text))),
-        );
+        await tester.pumpWidget(_app(TextPluginScope(plugin: plugin, child: const Text(text))));
         String describe() => tester
             .getSemantics(find.byType(RichText))
-            .toStringDeep(childOrder: DebugSemanticsDumpOrder.traversalOrder)
+            .toStringDeep()
             .replaceAll(RegExp(r'#\d+'), '');
         final String none = describe();
         expect(none, contains(text));
@@ -649,9 +653,7 @@ void main() {
         final plugin = _CountingPlugin()
           ..defer = false
           ..redecorate = true;
-        await tester.pumpWidget(
-          _app(TextPluginScope(plugin: plugin, child: const Text('one'))),
-        );
+        await tester.pumpWidget(_app(TextPluginScope(plugin: plugin, child: const Text('one'))));
         final Object? exception = tester.takeException();
         expect(exception, isFlutterError);
         expect(exception.toString(), contains('TextPlugin.deferToEndOfFrame'));
@@ -690,12 +692,8 @@ void main() {
 
       testWidgets('H15: adding the first plugin to a scope', (WidgetTester tester) async {
         final plugin = _WordPlugin('hello');
-        Widget build(List<TextPlugin> plugins) => _app(
-          TextPluginScope.multiple(
-            plugins: plugins,
-            child: const Text('hello world'),
-          ),
-        );
+        Widget build(List<TextPlugin> plugins) =>
+            _app(TextPluginScope.multiple(plugins: plugins, child: const Text('hello world')));
         await tester.pumpWidget(build(const <TextPlugin>[]));
         final RenderParagraph before = _paragraph(tester, 'hello world');
         await tester.pumpWidget(build(<TextPlugin>[plugin]));

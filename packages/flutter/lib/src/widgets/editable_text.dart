@@ -6041,7 +6041,8 @@ class EditableTextState extends State<EditableText>
                                   child: TextPluginSpanBuilder.wrap(
                                     context,
                                     enabled: !widget.obscureText && widget.textPlugins == null,
-                                    isEditable: true,
+                                    isEditable: !widget.readOnly,
+                                    allowReplacements: false,
                                     textDirection: _textDirection,
                                     text:
                                         _OverridingTextStyleTextSpanUtils.applyTextSpacingOverrides(

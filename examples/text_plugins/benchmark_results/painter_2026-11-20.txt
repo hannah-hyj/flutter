@@ -1,0 +1,67 @@
+prototype: painter, mode: profile, macOS
+each frame time is the average of 20 frames unless it says otherwise
+N=1000, no scope: P1 mount the page: 74.859 ms
+N=1000, no scope: P1 frame with 0 changed paragraphs: 0.005 ms
+N=1000, no scope: P1 frame with 1 changed paragraphs: 0.501 ms
+N=1000, no scope: P1 frame with 10 changed paragraphs: 1.060 ms
+N=1000, no scope: P1 frame with 100 changed paragraphs: 7.345 ms
+N=1000, no scope: P1 frame that rebuilds all paragraphs: 1.803 ms
+N=1000, scope without plugins: P1 mount the page: 66.698 ms
+N=1000, scope without plugins: P1 frame with 0 changed paragraphs: 0.005 ms
+N=1000, scope without plugins: P1 frame with 1 changed paragraphs: 0.371 ms
+N=1000, scope without plugins: P1 frame with 10 changed paragraphs: 1.141 ms
+N=1000, scope without plugins: P1 frame with 100 changed paragraphs: 7.782 ms
+N=1000, scope without plugins: P1 frame that rebuilds all paragraphs: 2.293 ms
+N=1000, no-op plugin [painter]: P1 mount the page: 136.635 ms
+N=1000, no-op plugin [painter]: P1 frame with 0 changed paragraphs: 0.004 ms
+N=1000, no-op plugin [painter]: P1 frame with 1 changed paragraphs: 0.478 ms
+N=1000, no-op plugin [painter]: P1 frame with 10 changed paragraphs: 1.583 ms
+N=1000, no-op plugin [painter]: P1 frame with 100 changed paragraphs: 8.403 ms
+N=1000, no-op plugin [painter]: P1 frame that rebuilds all paragraphs: 2.221 ms
+N=1000, search plugin [painter]: P1 mount the page: 75.969 ms
+N=1000, search plugin [painter]: P6 first search, 100 matches: 2.639 ms (1.047 change + 1.592 frame) []
+N=1000, search plugin [painter]: P1 frame with 0 changed paragraphs: 0.004 ms
+N=1000, search plugin [painter]: P1 frame with 1 changed paragraphs: 0.493 ms
+N=1000, search plugin [painter]: P1 frame with 10 changed paragraphs: 1.578 ms
+N=1000, search plugin [painter]: P1 frame with 100 changed paragraphs: 9.069 ms
+N=1000, search plugin [painter]: P1 frame that rebuilds all paragraphs: 2.300 ms
+N=1000, search plugin [painter]: P2 query change, 10% of the texts match: 2.803 ms (0.950 change + 1.853 frame) [per run:  / 20]
+N=1000, search plugin [painter]: P2b next match: 0.178 ms (0.008 change + 0.170 frame) [per run:  / 20]
+N=1000, search plugin [painter]: P3 query change, no text matches: 0.496 ms (0.450 change + 0.046 frame) [per run:  / 20]
+N=1000, search plugin [painter]: P1 frame that appends one paragraph: 3.434 ms
+N=10000, no scope: P1 mount the page: 804.883 ms
+N=10000, no scope: P1 frame with 0 changed paragraphs: 0.004 ms
+N=10000, no scope: P1 frame with 1 changed paragraphs: 7.813 ms
+N=10000, no scope: P1 frame with 10 changed paragraphs: 9.910 ms
+N=10000, no scope: P1 frame with 100 changed paragraphs: 15.668 ms
+N=10000, no scope: P1 frame that rebuilds all paragraphs: 33.915 ms
+N=10000, scope without plugins: P1 mount the page: 716.300 ms
+N=10000, scope without plugins: P1 frame with 0 changed paragraphs: 0.005 ms
+N=10000, scope without plugins: P1 frame with 1 changed paragraphs: 7.881 ms
+N=10000, scope without plugins: P1 frame with 10 changed paragraphs: 8.405 ms
+N=10000, scope without plugins: P1 frame with 100 changed paragraphs: 16.305 ms
+N=10000, scope without plugins: P1 frame that rebuilds all paragraphs: 34.867 ms
+N=10000, no-op plugin [painter]: P1 mount the page: 725.449 ms
+N=10000, no-op plugin [painter]: P1 frame with 0 changed paragraphs: 0.004 ms
+N=10000, no-op plugin [painter]: P1 frame with 1 changed paragraphs: 7.750 ms
+N=10000, no-op plugin [painter]: P1 frame with 10 changed paragraphs: 7.671 ms
+N=10000, no-op plugin [painter]: P1 frame with 100 changed paragraphs: 15.012 ms
+N=10000, no-op plugin [painter]: P1 frame that rebuilds all paragraphs: 33.681 ms
+N=10000, search plugin [painter]: P1 mount the page: 691.240 ms
+N=10000, search plugin [painter]: P6 first search, 1000 matches: 32.136 ms (17.296 change + 14.840 frame) []
+N=10000, search plugin [painter]: P1 frame with 0 changed paragraphs: 0.004 ms
+N=10000, search plugin [painter]: P1 frame with 1 changed paragraphs: 6.984 ms
+N=10000, search plugin [painter]: P1 frame with 10 changed paragraphs: 7.125 ms
+N=10000, search plugin [painter]: P1 frame with 100 changed paragraphs: 15.684 ms
+N=10000, search plugin [painter]: P1 frame that rebuilds all paragraphs: 38.425 ms
+N=10000, search plugin [painter]: P2 query change, 10% of the texts match: 25.930 ms (12.596 change + 13.334 frame) [per run:  / 20]
+N=10000, search plugin [painter]: P2b next match: 1.700 ms (0.023 change + 1.677 frame) [per run:  / 20]
+N=10000, search plugin [painter]: P3 query change, no text matches: 8.198 ms (8.135 change + 0.063 frame) [per run:  / 20]
+N=10000, search plugin [painter]: P1 frame that appends one paragraph: 47.745 ms
+N=1000, [painter]: P8 first plugin added to the scope: 13.333 ms, removed: 0.881 ms
+N=10000, [painter]: P8 first plugin added to the scope: 107.784 ms, removed: 16.371 ms
+P4 moving word in a paragraph of 2000 words, no plugin (idle frame): 0.004 ms (0.000 change + 0.004 frame)
+P4 moving word in a paragraph of 2000 words, [painter]: 0.259 ms (0.001 change + 0.258 frame)
+P5 typing one character in a field of 1800 characters with 40 matches, no plugin: 0.599 ms
+P5 typing one character in a field of 1800 characters with 40 matches, [painter]: 0.732 ms
+done

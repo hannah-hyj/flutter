@@ -14,6 +14,7 @@ import 'package:flutter/rendering.dart';
 
 import 'basic.dart';
 import 'framework.dart';
+import 'overlay.dart';
 import 'viewport.dart';
 
 /// A widget that installs one or more [TextPlugin]s for all [Text],
@@ -425,6 +426,7 @@ class TextPluginSpanBuilder extends StatefulWidget {
     required this.text,
     required this.textDirection,
     this.isEditable = false,
+    this.allowReplacements = true,
     required this.decorationVersion,
     required this.builder,
   });
@@ -440,6 +442,7 @@ class TextPluginSpanBuilder extends StatefulWidget {
     required InlineSpan text,
     required TextDirection? textDirection,
     bool isEditable = false,
+    bool allowReplacements = true,
     bool enabled = true,
     required Widget Function(InlineSpan text, TextDelegateSet? delegates) builder,
   }) {
@@ -453,6 +456,7 @@ class TextPluginSpanBuilder extends StatefulWidget {
       text: text,
       textDirection: textDirection ?? Directionality.of(context),
       isEditable: isEditable,
+      allowReplacements: allowReplacements,
       decorationVersion: TextPluginScope.decorationVersionOf(context),
       builder: builder,
     );
@@ -472,6 +476,10 @@ class TextPluginSpanBuilder extends StatefulWidget {
 
   /// Whether the text is editable.
   final bool isEditable;
+
+  /// Whether a [TextSpanDecoration.replacement] is applied. False for a text
+  /// field, whose text has to stay the same string.
+  final bool allowReplacements;
 
   /// See [TextPluginScope.decorationVersionOf]. It is only here so that the
   /// widget is different when the version is.
@@ -513,11 +521,375 @@ class _TextPluginSpanBuilderState extends State<TextPluginSpanBuilder> {
         span: widget.text,
         textDirection: widget.textDirection,
         isEditable: widget.isEditable,
+        allowReplacements: widget.allowReplacements,
       );
       final DecoratedTextSpan decorated = _set.decorate();
-      return widget.builder(decorated.span, _set);
+      final Widget text = widget.builder(decorated.span, _set);
+      // Stage 3, way S3: widgets on the text, without changing the text.
+      if (!widget.plugins.any((TextPlugin plugin) => plugin is TextWidgetPlugin)) {
+        return text;
+      }
+      return _buildWidgetHost(context, text);
     } finally {
       _building = false;
     }
+  }
+
+  final LayerLink _overlayLink = LayerLink();
+  final OverlayPortalController _overlayController = OverlayPortalController();
+  final GlobalKey _hostKey = GlobalKey();
+
+  List<Widget> _widgetsFor(BuildContext context, TextWidgetLayer layer) {
+    return <Widget>[
+      for (final TextPlugin plugin in widget.plugins)
+        if (plugin is TextWidgetPlugin)
+          ...plugin.buildTextWidgets(context, _set.delegateFor(plugin)!, layer),
+    ];
+  }
+
+  Widget _buildWidgetHost(BuildContext context, Widget text) {
+    final Widget host = _TextWidgetHostBody(
+      key: _hostKey,
+      delegates: _set,
+      background: _widgetsFor(context, TextWidgetLayer.background),
+      text: text,
+      foreground: _widgetsFor(context, TextWidgetLayer.foreground),
+    );
+    if (Overlay.maybeOf(context) == null) {
+      return host;
+    }
+    // The overlay layer is always there, also without a widget in it, so that
+    // the text is not created again when the first menu opens.
+    if (!_overlayController.isShowing) {
+      _overlayController.show();
+    }
+    return OverlayPortal(
+      controller: _overlayController,
+      overlayChildBuilder: (BuildContext overlayContext) {
+        return CompositedTransformFollower(
+          link: _overlayLink,
+          showWhenUnlinked: false,
+          child: _TextWidgetOverlayBody(
+            delegates: _set,
+            hostKey: _hostKey,
+            children: _widgetsFor(overlayContext, TextWidgetLayer.overlay),
+          ),
+        );
+      },
+      child: CompositedTransformTarget(link: _overlayLink, child: host),
+    );
+  }
+}
+
+/// Where a widget of a [TextWidgetPlugin] is, relative to the text.
+enum TextWidgetLayer {
+  /// Behind the glyphs.
+  background,
+
+  /// In front of the glyphs, and clipped and scrolled with the text.
+  foreground,
+
+  /// In the [Overlay]: over everything else in the route, and not clipped
+  /// with the text. It follows the text when the text moves.
+  overlay,
+}
+
+/// Stage 3 of the text plugin design, way S3: a plugin that builds widgets
+/// and places them on ranges of a text, without changing the text.
+///
+/// This is a small version of the design on the `text-plugin-with-widget`
+/// branch, rebuilt on the inline-span prototype. It needs
+/// [TextDecorationLayer.widget]: the widget that owns the delegates of a text
+/// is also the host of these widgets.
+mixin TextWidgetPlugin on TextPlugin {
+  /// Returns the widgets for [layer] of the text of [delegate].
+  ///
+  /// Each widget has to be a [TextPositioned]. The plugin gives a range, and
+  /// the framework reads the layout of the text. The plugin does not see it.
+  Iterable<Widget> buildTextWidgets(
+    BuildContext context,
+    TextDelegate delegate,
+    TextWidgetLayer layer,
+  );
+}
+
+/// Parent data of a child of the host of a [TextWidgetPlugin].
+class TextWidgetParentData extends ContainerBoxParentData<RenderBox> {
+  /// The range that the child is placed on. Null for the text itself.
+  TextRange? range;
+
+  /// Whether the child covers the bounding box of [range] exactly.
+  bool fill = true;
+
+  /// The point of the bounding box of [range] that [followerAnchor] is lined
+  /// up with.
+  Alignment targetAnchor = Alignment.bottomLeft;
+
+  /// The point of the child that is lined up with [targetAnchor].
+  Alignment followerAnchor = Alignment.topLeft;
+
+  /// A shift after the anchors are lined up.
+  Offset shift = Offset.zero;
+
+  /// Whether the child has a place. False until the text has a layout.
+  bool placed = false;
+}
+
+/// Places [child] on a range of the text of a [TextWidgetPlugin].
+class TextPositioned extends ParentDataWidget<TextWidgetParentData> {
+  /// Lines up [followerAnchor] of [child] with [targetAnchor] of the bounding
+  /// box of [range], then shifts the child by [offset].
+  const TextPositioned({
+    super.key,
+    required this.range,
+    this.targetAnchor = Alignment.bottomLeft,
+    this.followerAnchor = Alignment.topLeft,
+    this.offset = Offset.zero,
+    required super.child,
+  }) : fill = false;
+
+  /// Sizes and positions [child] to cover the bounding box of [range].
+  const TextPositioned.fill({super.key, required this.range, required super.child})
+    : fill = true,
+      targetAnchor = Alignment.topLeft,
+      followerAnchor = Alignment.topLeft,
+      offset = Offset.zero;
+
+  /// The range, in [TextDelegate.text].
+  final TextRange range;
+
+  /// Whether the child covers the bounding box of the range.
+  final bool fill;
+
+  /// The point of the bounding box of [range] that the child is lined up
+  /// with.
+  final Alignment targetAnchor;
+
+  /// The point of the child that is lined up with [targetAnchor].
+  final Alignment followerAnchor;
+
+  /// A shift after the anchors are lined up.
+  final Offset offset;
+
+  @override
+  void applyParentData(RenderObject renderObject) {
+    final parentData = renderObject.parentData! as TextWidgetParentData;
+    parentData
+      ..range = range
+      ..fill = fill
+      ..targetAnchor = targetAnchor
+      ..followerAnchor = followerAnchor
+      ..shift = offset;
+    // The text may have a new layout even if the range is the same, so the
+    // child is always placed again.
+    renderObject.parent?.markNeedsLayout();
+  }
+
+  @override
+  Type get debugTypicalAncestorWidgetClass => TextWidgetPlugin;
+}
+
+class _TextWidgetHostBody extends MultiChildRenderObjectWidget {
+  _TextWidgetHostBody({
+    super.key,
+    required this.delegates,
+    required List<Widget> background,
+    required Widget text,
+    required List<Widget> foreground,
+  }) : backgroundCount = background.length,
+       super(children: <Widget>[...background, text, ...foreground]);
+
+  final TextDelegateSet delegates;
+  final int backgroundCount;
+
+  @override
+  _RenderTextWidgetHost createRenderObject(BuildContext context) {
+    return _RenderTextWidgetHost(delegates: delegates, textIndex: backgroundCount);
+  }
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderTextWidgetHost renderObject) {
+    renderObject
+      ..delegates = delegates
+      ..textIndex = backgroundCount;
+  }
+}
+
+class _TextWidgetOverlayBody extends MultiChildRenderObjectWidget {
+  const _TextWidgetOverlayBody({required this.delegates, required this.hostKey, super.children});
+
+  final TextDelegateSet delegates;
+  final GlobalKey hostKey;
+
+  @override
+  _RenderTextWidgetHost createRenderObject(BuildContext context) {
+    return _RenderTextWidgetHost(delegates: delegates, textIndex: -1, hostKey: hostKey);
+  }
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderTextWidgetHost renderObject) {
+    renderObject
+      ..delegates = delegates
+      ..hostKey = hostKey;
+  }
+}
+
+// Lays out the text and the widgets that plugins place on it.
+//
+// With a [textIndex], the child at that index is the text, and this box has
+// its size. The children before it are behind the text, the ones after it in
+// front. Without one ([textIndex] is -1) this is the overlay layer: it has no
+// size, and its children are placed relative to the box of [hostKey].
+class _RenderTextWidgetHost extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, TextWidgetParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, TextWidgetParentData> {
+  _RenderTextWidgetHost({required this.delegates, required this.textIndex, this.hostKey});
+
+  TextDelegateSet delegates;
+  int textIndex;
+  GlobalKey? hostKey;
+
+  bool get _isOverlay => textIndex < 0;
+
+  RenderBox? get _text {
+    if (_isOverlay) {
+      return null;
+    }
+    RenderBox? child = firstChild;
+    for (var i = 0; i < textIndex && child != null; i += 1) {
+      child = childAfter(child);
+    }
+    return child;
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! TextWidgetParentData) {
+      child.parentData = TextWidgetParentData();
+    }
+  }
+
+  @override
+  double computeMinIntrinsicWidth(double height) => _text?.getMinIntrinsicWidth(height) ?? 0;
+
+  @override
+  double computeMaxIntrinsicWidth(double height) => _text?.getMaxIntrinsicWidth(height) ?? 0;
+
+  @override
+  double computeMinIntrinsicHeight(double width) => _text?.getMinIntrinsicHeight(width) ?? 0;
+
+  @override
+  double computeMaxIntrinsicHeight(double width) => _text?.getMaxIntrinsicHeight(width) ?? 0;
+
+  @override
+  double? computeDistanceToActualBaseline(TextBaseline baseline) {
+    return _text?.getDistanceToActualBaseline(baseline);
+  }
+
+  @override
+  Size computeDryLayout(covariant BoxConstraints constraints) {
+    return _text?.getDryLayout(constraints) ?? constraints.smallest;
+  }
+
+  // The rectangle of a range, in the coordinates of this box. This is the one
+  // place where the widgets layer reads the layout of the text. A plugin only
+  // gives the range.
+  Rect? _rectFor(TextRange range) {
+    final TextDelegateHostMixin? text = delegates.host;
+    if (text == null || !text.attached) {
+      return null;
+    }
+    final Rect? rect = text.debugRectForUndecoratedRange(range);
+    if (rect == null) {
+      return null;
+    }
+    final RenderObject? reference = _isOverlay ? hostKey?.currentContext?.findRenderObject() : this;
+    if (reference == null) {
+      return null;
+    }
+    return MatrixUtils.transformRect(text.getTransformTo(reference), rect);
+  }
+
+  @override
+  void performLayout() {
+    final RenderBox? text = _text;
+    if (text != null) {
+      text.layout(constraints, parentUsesSize: true);
+      (text.parentData! as TextWidgetParentData).offset = Offset.zero;
+      size = text.size;
+    } else {
+      size = constraints.smallest;
+    }
+    RenderBox? child = firstChild;
+    while (child != null) {
+      final parentData = child.parentData! as TextWidgetParentData;
+      if (!identical(child, text)) {
+        final TextRange? range = parentData.range;
+        final Rect? rect = range == null ? null : _rectFor(range);
+        if (rect == null) {
+          child.layout(BoxConstraints.tight(Size.zero));
+          parentData.placed = false;
+        } else if (parentData.fill) {
+          child.layout(BoxConstraints.tight(rect.size));
+          parentData.offset = rect.topLeft;
+          parentData.placed = true;
+        } else {
+          child.layout(const BoxConstraints(), parentUsesSize: true);
+          parentData.offset =
+              rect.topLeft +
+              parentData.targetAnchor.alongSize(rect.size) -
+              parentData.followerAnchor.alongSize(child.size) +
+              parentData.shift;
+          parentData.placed = true;
+        }
+      }
+      child = parentData.nextSibling;
+    }
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    RenderBox? child = firstChild;
+    final RenderBox? text = _text;
+    while (child != null) {
+      final parentData = child.parentData! as TextWidgetParentData;
+      if (identical(child, text) || parentData.placed) {
+        context.paintChild(child, parentData.offset + offset);
+      }
+      child = parentData.nextSibling;
+    }
+  }
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    // The overlay layer has no size. Its children are where the text is.
+    if (_isOverlay) {
+      return hitTestChildren(result, position: position);
+    }
+    return super.hitTest(result, position: position);
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    final RenderBox? text = _text;
+    RenderBox? child = lastChild;
+    while (child != null) {
+      final parentData = child.parentData! as TextWidgetParentData;
+      if (identical(child, text) || parentData.placed) {
+        final bool isHit = result.addWithPaintOffset(
+          offset: parentData.offset,
+          position: position,
+          hitTest: (BoxHitTestResult result, Offset transformed) {
+            return child!.hitTest(result, position: transformed);
+          },
+        );
+        if (isHit) {
+          return true;
+        }
+      }
+      child = parentData.previousSibling;
+    }
+    return false;
   }
 }

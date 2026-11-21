@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -281,7 +282,9 @@ class ReadAloudPlugin extends TextPlugin with ChangeNotifier {
     final TextDelegate? active = currentWord?.delegate;
     final TextDelegate? previous = _decoratedDelegate;
     _decoratedDelegate = active;
-    if (previous != null && previous != active && _delegates.contains(previous)) {
+    if (previous != null &&
+        previous != active &&
+        _delegates.contains(previous)) {
       previous.markNeedsDecoration();
     }
     if (active != null && _delegates.contains(active)) {

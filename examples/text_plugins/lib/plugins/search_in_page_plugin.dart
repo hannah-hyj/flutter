@@ -159,7 +159,8 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     final List<TextDelegate> ordered = _matchesByDelegate.keys.toList();
     TextDelegate.sortInDocumentOrder(ordered);
     _matches = <SearchMatch>[
-      for (final TextDelegate delegate in ordered) ..._matchesByDelegate[delegate]!,
+      for (final TextDelegate delegate in ordered)
+        ..._matchesByDelegate[delegate]!,
     ];
   }
 
@@ -200,7 +201,10 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     if (_matches.isEmpty) {
       return;
     }
-    _setActiveMatch(_matches[(activeMatchIndex + 1) % _matches.length], explicit: true);
+    _setActiveMatch(
+      _matches[(activeMatchIndex + 1) % _matches.length],
+      explicit: true,
+    );
     scrollToActiveMatch();
     _notify();
   }
@@ -292,7 +296,8 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
       _matchesByDelegate[delegate] = newMatches;
     }
     _orderDirty = true;
-    if (_activeMatch?.delegate == delegate && !newMatches.contains(_activeMatch)) {
+    if (_activeMatch?.delegate == delegate &&
+        !newMatches.contains(_activeMatch)) {
       _activeMatch = null;
     }
     if (!_reconcileScheduled) {
@@ -389,7 +394,9 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     ];
   }
 
-  late final TextStyle _matchStyle = TextStyle(backgroundColor: matchHighlightColor);
+  late final TextStyle _matchStyle = TextStyle(
+    backgroundColor: matchHighlightColor,
+  );
   late final TextStyle _activeStyle = TextStyle(
     backgroundColor: activeMatchBackgroundColor,
     decoration: TextDecoration.combine(<TextDecoration>[

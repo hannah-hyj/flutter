@@ -140,7 +140,7 @@ class DecoratedTextSpan {
   /// An offset inside a replaced range maps to the offset of the placeholder.
   int toDecoratedOffset(int offset) {
     var shift = 0;
-    for (final edit in _edits) {
+    for (final TextRange edit in _edits) {
       if (edit.isCollapsed) {
         if (edit.start > offset) {
           break;
@@ -167,7 +167,7 @@ class DecoratedTextSpan {
   /// which it was inserted.
   int toOriginalOffset(int offset) {
     var shift = 0;
-    for (final edit in _edits) {
+    for (final TextRange edit in _edits) {
       final int decoratedStart = edit.start + shift;
       if (decoratedStart > offset) {
         break;
@@ -222,7 +222,7 @@ DecoratedTextSpan decorateTextSpan(InlineSpan span, List<TextSpanDecoration> dec
 class _Decorator {
   _Decorator(List<TextSpanDecoration> decorations) {
     // Replacements: a later decoration wins over an earlier one it overlaps.
-    for (var i = decorations.length - 1; i >= 0; i -= 1) {
+    for (int i = decorations.length - 1; i >= 0; i -= 1) {
       final TextSpanDecoration decoration = decorations[i];
       final TextRange range = decoration.range;
       if (!range.isValid || !range.isNormalized) {
@@ -370,7 +370,7 @@ class _Decorator {
       final int length = span is PlaceholderSpan ? 1 : span.toPlainText().length;
       final int start = _offset;
       final int end = start + length;
-      final bool replaced = _replacementCovering(start, end) != null;
+      final replaced = _replacementCovering(start, end) != null;
       if (!replaced && _noInsertionIn(start, end)) {
         _offset = end;
         return <InlineSpan>[span];
@@ -400,10 +400,10 @@ class _Decorator {
             pieces.add(_piece(span, text, start, start, end, atomic: true));
           }
         } else {
-          int pieceStart = start;
+          var pieceStart = start;
           int cutIndex = _lowerBound(start + 1);
           while (pieceStart < end) {
-            int pieceEnd = end;
+            var pieceEnd = end;
             if (cutIndex < _cuts.length && _cuts[cutIndex] < end) {
               pieceEnd = _cuts[cutIndex];
               cutIndex += 1;
@@ -529,7 +529,7 @@ class _Decorator {
         semanticsLabel = atomic || range.start >= start ? decoration.semanticsLabel : '';
       }
     }
-    final bool ownRecognizer = recognizer != null;
+    final ownRecognizer = recognizer != null;
     return TextSpan(
       text: start == spanStart && end == spanStart + text.length
           ? text

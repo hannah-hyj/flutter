@@ -352,9 +352,7 @@ Future<void> _runPage(int count, _Kind kind, Variant? variant) async {
     final _Timing next = await _measure(_runs, (int run) {
       search.nextMatch();
     });
-    _report(
-      '$label: P2b next match: $next [per run: ${counters()} / $_runs]',
-    );
+    _report('$label: P2b next match: $next [per run: ${counters()} / $_runs]');
 
     // P3. A keystroke that matches nothing, before and after.
     search.query = 'qqqq';
@@ -489,7 +487,9 @@ Future<void> _runAll() async {
         : 'prototype: $branchLabel, mode: ${kProfileMode ? 'profile' : 'release'}, '
               '${kIsWeb ? 'web' : defaultTargetPlatform.name}',
   );
-  _report('each frame time is the average of $_runs frames unless it says otherwise');
+  _report(
+    'each frame time is the average of $_runs frames unless it says otherwise',
+  );
   for (final int count in _pageSizes) {
     await _runPage(count, _Kind.noScope, null);
     await _runPage(count, _Kind.emptyScope, null);

@@ -94,7 +94,11 @@ const Map<String, StockTickerInfo> kDefaultStockTickers =
 
 @immutable
 class _TickerOccurrence {
-  const _TickerOccurrence({required this.range, required this.info, required this.text});
+  const _TickerOccurrence({
+    required this.range,
+    required this.info,
+    required this.text,
+  });
 
   final TextRange range;
   final StockTickerInfo info;
@@ -185,7 +189,8 @@ class StockTickerPlugin extends TextPlugin {
 
   @override
   List<TextSpanDecoration> buildDecorations(TextDelegate delegate) {
-    final List<_TickerOccurrence>? occurrences = _occurrencesByDelegate[delegate];
+    final List<_TickerOccurrence>? occurrences =
+        _occurrencesByDelegate[delegate];
     if (occurrences == null) {
       return const <TextSpanDecoration>[];
     }

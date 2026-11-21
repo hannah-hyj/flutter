@@ -534,8 +534,10 @@ class TextDelegateSet {
     required InlineSpan span,
     required ui.TextDirection textDirection,
     bool isEditable = false,
+    bool allowReplacements = true,
   }) {
     assert(!_disposed);
+    _allowReplacements = allowReplacements;
     _updating = true;
     try {
       _update(plugins, span, textDirection, isEditable);
@@ -545,6 +547,7 @@ class TextDelegateSet {
   }
 
   bool _updating = false;
+  bool _allowReplacements = true;
 
   void _update(
     List<TextPlugin> plugins,
@@ -650,7 +653,7 @@ class TextDelegateSet {
         continue;
       }
       decorations ??= <TextSpanDecoration>[];
-      if (_isEditable) {
+      if (!_allowReplacements) {
         // The text of a text field has to stay the same string, or the caret
         // and the selection are wrong. So a replacement is dropped.
         decorations.addAll(
@@ -819,8 +822,9 @@ mixin TextDelegateHostMixin on RenderBox {
       sorted,
       compare: (TextPlugin a, TextPlugin b) => a.paintOrder.compareTo(b.paintOrder),
     );
-    final TextDelegateSet set = _ownSet ??= TextDelegateSet(onNeedsDecoration: _scheduleOwnDecorations)
-      .._host = this;
+    final TextDelegateSet set = _ownSet ??= TextDelegateSet(
+      onNeedsDecoration: _scheduleOwnDecorations,
+    ).._host = this;
     set.update(
       plugins: sorted,
       span: textSpan,

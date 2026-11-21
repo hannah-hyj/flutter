@@ -302,11 +302,13 @@ void main() {
 
       final TextDelegate topDelegate = plugin.matches.first.delegate;
       final TextDelegate bottomDelegate = plugin.matches.last.delegate;
-      RenderParagraph paragraphOf(String text) => tester.renderObject<RenderParagraph>(
-        find.byWidgetPredicate(
-          (Widget widget) => widget is RichText && widget.text.toPlainText() == text,
-        ),
-      );
+      RenderParagraph paragraphOf(String text) =>
+          tester.renderObject<RenderParagraph>(
+            find.byWidgetPredicate(
+              (Widget widget) =>
+                  widget is RichText && widget.text.toPlainText() == text,
+            ),
+          );
       final RenderParagraph top = paragraphOf('Top Flutter item');
       final InlineSpan initialTopSpan = top.debugDecoratedText;
       expect(initialTopSpan, isNot(same(topDelegate.textSpan)));

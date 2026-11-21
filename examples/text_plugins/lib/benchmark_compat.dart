@@ -30,8 +30,16 @@ class Variant {
 const List<Variant> variants = <Variant>[
   Variant('A widget layer', layer: TextDecorationLayer.widget),
   Variant('B render layer', layer: TextDecorationLayer.render),
-  Variant('A widget layer, notify', layer: TextDecorationLayer.widget, notify: true),
-  Variant('B render layer, notify', layer: TextDecorationLayer.render, notify: true),
+  Variant(
+    'A widget layer, notify',
+    layer: TextDecorationLayer.widget,
+    notify: true,
+  ),
+  Variant(
+    'B render layer, notify',
+    layer: TextDecorationLayer.render,
+    notify: true,
+  ),
 ];
 
 Widget wrapScope({

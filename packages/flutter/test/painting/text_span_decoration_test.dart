@@ -135,7 +135,7 @@ void main() {
       ]);
       final List<InlineSpan> pieces = (result.span as TextSpan).children!;
       expect(pieces, hasLength(3));
-      for (final piece in pieces.cast<TextSpan>()) {
+      for (final TextSpan piece in pieces.cast<TextSpan>()) {
         expect(piece.recognizer, same(tap));
         expect(piece.mouseCursor, SystemMouseCursors.help);
       }
