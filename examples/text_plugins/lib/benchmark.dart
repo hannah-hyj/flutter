@@ -23,6 +23,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
 import 'benchmark_compat.dart';
@@ -480,6 +482,281 @@ Future<void> _runTyping(Variant? variant) async {
   focusNode.dispose();
 }
 
+// ---------------------------------------------------------------------------
+// Realistic cases. The cases above are stress cases: thousands of texts are
+// mounted, and a thousand of them change in one frame. The cases below are
+// sized like an app.
+// ---------------------------------------------------------------------------
+
+String _sentence(int index) {
+  final word = index % 10 == 0 ? _query : 'Nothing';
+  return 'Item $index: the quick brown fox jumps over the lazy dog. '
+      '$word appears in this sentence.';
+}
+
+/// R1. A lazy list of 10,000 items. Only the items on screen are built, which
+/// is how a long page is written in an app.
+Future<void> _runLazyList(Variant? variant) async {
+  final SearchInPagePlugin? search = variant == null ? null : makeSearch(variant);
+  final controller = ScrollController();
+  Widget body = ListView.builder(
+    controller: controller,
+    itemCount: 10000,
+    itemBuilder: (BuildContext context, int index) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+        child: Text(_sentence(index)),
+      );
+    },
+  );
+  if (search != null) {
+    body = wrapScope(plugins: <TextPlugin>[search], variant: variant!, child: body);
+  }
+  await _mount(_shell(body));
+  final label = 'R1 lazy list of 10000 items, ${variant == null ? 'no plugin' : '[${variant.label}]'}';
+  if (search != null) {
+    search.query = _query;
+    _settle();
+    final _Timing keystroke = await _measure(_runs * 5, (int run) {
+      search.query = run.isEven ? 'Flutte' : _query;
+    });
+    _report('$label: keystroke, ${search.matches.length} matches on screen: $keystroke');
+    final _Timing next = await _measure(_runs * 5, (int run) {
+      search.nextMatch();
+    });
+    _report('$label: next match: $next');
+    search.query = _query;
+    _settle();
+  }
+  // Scroll by 120 pixels a frame, which brings new items in on every frame.
+  var offset = 0.0;
+  final _Timing scroll = await _measure(200, (int run) {
+    offset += 120;
+    controller.jumpTo(offset);
+  });
+  _report('$label: scroll 120 px in a frame: ${scroll.frame.toStringAsFixed(3)} ms');
+  await _unmount();
+  search?.dispose();
+  controller.dispose();
+}
+
+String _longParagraph(int index) {
+  final word = index % 20 == 0 ? _query : 'Nothing';
+  final buffer = StringBuffer('Section $index. ');
+  for (var i = 0; i < 8; i++) {
+    buffer.write('The quick brown fox jumps over the lazy dog and then rests. ');
+  }
+  buffer.write('$word appears here.');
+  return buffer.toString();
+}
+
+/// R2. An article: 300 paragraphs of about 500 characters, all mounted.
+Future<void> _runArticle(Variant? variant) async {
+  final SearchInPagePlugin? search = variant == null ? null : makeSearch(variant);
+  Widget body = SingleChildScrollView(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (var i = 0; i < 300; i++) RepaintBoundary(child: Text(_longParagraph(i))),
+      ],
+    ),
+  );
+  if (search != null) {
+    body = wrapScope(plugins: <TextPlugin>[search], variant: variant!, child: body);
+  }
+  await _mount(_shell(body));
+  final label = 'R2 article of 300 paragraphs, ${variant == null ? 'no plugin' : '[${variant.label}]'}';
+  if (search == null) {
+    final _Timing idle = await _measure(_runs, (int run) {});
+    _report('$label: idle frame: ${idle.frame.toStringAsFixed(3)} ms');
+  } else {
+    search.query = _query;
+    _settle();
+    final _Timing rare = await _measure(_runs * 2, (int run) {
+      search.query = run.isEven ? 'Flutte' : _query;
+    });
+    _report('$label: keystroke, rare word, ${search.matches.length} matches in 15 texts: $rare');
+    search.query = 'fox';
+    _settle();
+    final _Timing common = await _measure(_runs * 2, (int run) {
+      search.query = run.isEven ? 'fo' : 'fox';
+    });
+    _report(
+      '$label: keystroke, common word, ${search.matches.length} matches in 300 texts: $common',
+    );
+    final _Timing next = await _measure(_runs * 2, (int run) {
+      search.nextMatch();
+    });
+    _report('$label: next match: $next');
+  }
+  await _unmount();
+  search?.dispose();
+}
+
+/// R3. One text whose highlighted word moves, for texts of different length.
+Future<void> _runLength(int words, Variant variant) async {
+  final String text = List<String>.generate(words, (int i) => 'word$i').join(' ');
+  final plugin = KaraokePlugin();
+  await _mount(
+    _shell(
+      wrapScope(
+        plugins: <TextPlugin>[plugin],
+        variant: variant,
+        child: SingleChildScrollView(child: RepaintBoundary(child: Text(text))),
+      ),
+    ),
+  );
+  final _Timing step = await _measure(200, (int run) {
+    plugin.step();
+  });
+  _report(
+    'R3 moving word in one text of $words words (${text.length} characters), '
+    '[${variant.label}]: ${step.frame.toStringAsFixed(3)} ms',
+  );
+  await _unmount();
+}
+
+/// R5. A highlight that is animated: its color changes on every frame, on
+/// [count] texts at once.
+Future<void> _runPulse(int count, Variant variant) async {
+  final plugin = PulsePlugin();
+  await _mount(
+    _shell(
+      wrapScope(
+        plugins: <TextPlugin>[plugin],
+        variant: variant,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              for (var i = 0; i < count; i++) RepaintBoundary(child: Text(_sentence(i))),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+  final _Timing tick = await _measure(200, (int run) {
+    plugin.tick();
+  });
+  _report(
+    'R5 animated highlight on $count texts, [${variant.label}]: '
+    '${tick.frame.toStringAsFixed(3)} ms a frame',
+  );
+  await _unmount();
+}
+
+/// R6. A mouse drag that selects across 40 paragraphs, one pointer move a
+/// frame.
+Future<void> _runSelectionDrag(String label, VoidCallback setup) async {
+  setup();
+  final focusNode = FocusNode();
+  await _mount(
+    _shell(
+      Overlay(
+        initialEntries: <OverlayEntry>[
+          OverlayEntry(
+            builder: (BuildContext context) {
+              return SelectableRegion(
+                focusNode: focusNode,
+                selectionControls: emptyTextSelectionControls,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    for (var i = 0; i < 40; i++) RepaintBoundary(child: Text(_sentence(i))),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    ),
+  );
+  const start = Offset(20, 8);
+  var time = Duration.zero;
+  GestureBinding.instance.handlePointerEvent(
+    const PointerAddedEvent(pointer: 7, kind: PointerDeviceKind.mouse, position: start),
+  );
+  GestureBinding.instance.handlePointerEvent(
+    const PointerDownEvent(
+      pointer: 7,
+      kind: PointerDeviceKind.mouse,
+      position: start,
+      buttons: kPrimaryButton,
+    ),
+  );
+  _pumpFrame();
+  _settle();
+  const steps = 100;
+  final _Timing drag = await _measure(steps, (int run) {
+    time += const Duration(milliseconds: 16);
+    GestureBinding.instance.handlePointerEvent(
+      PointerMoveEvent(
+        pointer: 7,
+        kind: PointerDeviceKind.mouse,
+        timeStamp: time,
+        position: start + Offset(3.0 * (run + 1), 5.0 * (run + 1)),
+        delta: const Offset(3, 5),
+        buttons: kPrimaryButton,
+      ),
+    );
+  });
+  // Count the paragraphs that have a selection, to know that the drag did
+  // select.
+  var selected = 0;
+  void visit(RenderObject object) {
+    if (object is RenderParagraph && object.selections.any((TextSelection s) => !s.isCollapsed)) {
+      selected += 1;
+    }
+    object.visitChildren(visit);
+  }
+
+  RendererBinding.instance.renderViews.first.visitChildren(visit);
+  GestureBinding.instance.handlePointerEvent(
+    PointerUpEvent(
+      pointer: 7,
+      kind: PointerDeviceKind.mouse,
+      timeStamp: time,
+      position: start + const Offset(3.0 * steps, 5.0 * steps),
+    ),
+  );
+  GestureBinding.instance.handlePointerEvent(
+    const PointerRemovedEvent(pointer: 7, kind: PointerDeviceKind.mouse),
+  );
+  _report(
+    'R6 selection drag across 40 paragraphs, $label: $drag a pointer move, '
+    '$selected paragraphs selected at the end',
+  );
+  await _unmount();
+  focusNode.dispose();
+}
+
+Future<void> _runRealistic() async {
+  final List<Variant> precise = variants.take(2).toList();
+  await _runLazyList(null);
+  for (final variant in precise) {
+    await _runLazyList(variant);
+  }
+  await _runArticle(null);
+  for (final variant in precise) {
+    await _runArticle(variant);
+  }
+  for (final words in <int>[10, 50, 200, 1000]) {
+    for (final variant in precise) {
+      await _runLength(words, variant);
+    }
+  }
+  for (final count in <int>[10, 40]) {
+    for (final variant in precise) {
+      await _runPulse(count, variant);
+    }
+  }
+  for (final (String label, VoidCallback setup) in selectionModes) {
+    await _runSelectionDrag(label, setup);
+  }
+}
+
 Future<void> _runAll() async {
   _report(
     kDebugMode
@@ -490,6 +767,14 @@ Future<void> _runAll() async {
   _report(
     'each frame time is the average of $_runs frames unless it says otherwise',
   );
+  const which = String.fromEnvironment('BENCH');
+  if (which != 'stress') {
+    await _runRealistic();
+  }
+  if (which == 'realistic') {
+    _report('done');
+    return;
+  }
   for (final int count in _pageSizes) {
     await _runPage(count, _Kind.noScope, null);
     await _runPage(count, _Kind.emptyScope, null);

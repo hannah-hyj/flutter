@@ -112,3 +112,61 @@ String counters() {
   _builderBuilds = TextPluginSpanBuilder.debugBuildCount;
   return result;
 }
+
+/// Highlights the first word of every text, with a color that changes on
+/// every [tick]. This is an animated highlight, such as a fade or a pulse.
+class PulsePlugin extends TextPlugin {
+  final Set<TextDelegate> _delegates = <TextDelegate>{};
+  int _tick = 0;
+
+  @override
+  void didAddText(TextDelegate delegate) => _delegates.add(delegate);
+
+  @override
+  void didRemoveText(TextDelegate delegate) => _delegates.remove(delegate);
+
+  void tick() {
+    _tick += 1;
+    for (final TextDelegate delegate in _delegates) {
+      delegate.markNeedsDecoration();
+    }
+  }
+
+  @override
+  List<TextSpanDecoration> buildDecorations(TextDelegate delegate) {
+    final int end = delegate.text.indexOf(' ');
+    if (end <= 0) {
+      return const <TextSpanDecoration>[];
+    }
+    return <TextSpanDecoration>[
+      TextSpanDecoration(
+        range: TextRange(start: 0, end: end),
+        style: TextStyle(backgroundColor: Color.fromARGB(40 + _tick % 200, 255, 152, 0)),
+      ),
+    ];
+  }
+}
+
+/// The ways to show the selection of static text on this branch.
+final List<(String, VoidCallback)> selectionModes = <(String, VoidCallback)>[
+  (
+    'built-in highlight',
+    () {
+      debugSelectionHighlightAsTextPlugin = false;
+    },
+  ),
+  (
+    'span plugin, A widget layer',
+    () {
+      debugSelectionHighlightAsTextPlugin = true;
+      debugDefaultTextDecorationLayer = TextDecorationLayer.widget;
+    },
+  ),
+  (
+    'span plugin, B render layer',
+    () {
+      debugSelectionHighlightAsTextPlugin = true;
+      debugDefaultTextDecorationLayer = TextDecorationLayer.render;
+    },
+  ),
+];

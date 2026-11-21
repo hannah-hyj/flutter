@@ -84,3 +84,61 @@ class _KaraokePainter extends TextPluginPainter {
 
 /// What the framework did since the last call, for the report.
 String counters() => '';
+
+/// Highlights the first word of every text, with a color that changes on
+/// every [tick]. This is an animated highlight, such as a fade or a pulse.
+class PulsePlugin extends TextPlugin {
+  final Set<TextDelegate> _delegates = <TextDelegate>{};
+  int _tick = 0;
+
+  @override
+  void didAddText(TextDelegate delegate) {
+    _delegates.add(delegate);
+    _update(delegate);
+  }
+
+  @override
+  void didRemoveText(TextDelegate delegate) => _delegates.remove(delegate);
+
+  void _update(TextDelegate delegate) {
+    final int end = delegate.text.indexOf(' ');
+    if (end > 0) {
+      delegate.backgroundPainter = _PulsePainter(
+        TextRange(start: 0, end: end),
+        Color.fromARGB(40 + _tick % 200, 255, 152, 0),
+      );
+    }
+  }
+
+  void tick() {
+    _tick += 1;
+    _delegates.forEach(_update);
+  }
+}
+
+class _PulsePainter extends TextPluginPainter {
+  _PulsePainter(this.range, this.color);
+
+  final TextRange range;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, TextLayout layout) {
+    final paint = Paint()..color = color;
+    for (final TextBox box in layout.getBoxesForSelection(
+      TextSelection(baseOffset: range.start, extentOffset: range.end),
+    )) {
+      canvas.drawRect(box.toRect(), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_PulsePainter oldPainter) =>
+      oldPainter.range != range || oldPainter.color != color;
+}
+
+/// The ways to show the selection of static text on this branch. A
+/// SelectableRegion of the painter prototype always uses its painter plugin.
+final List<(String, VoidCallback)> selectionModes = <(String, VoidCallback)>[
+  ('painter plugin', () {}),
+];
