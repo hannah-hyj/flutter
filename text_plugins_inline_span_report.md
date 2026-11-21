@@ -56,7 +56,7 @@ The short version of the trade:
 - **The span approach is the smaller idea with the larger reach.** A plugin author learns one data class. The same mechanism restyles glyphs, makes a range tappable and puts a chip in the line. It reuses what the framework already does for the composing underline and for spell check.
 - **The painter is the safer and cheaper mechanism for decoration.** It cannot break the app's text, it draws any shape, and it costs 3 to 18 times less for a new highlight, and 1.3 to 4 times less for a change of color only. It does nothing beyond decoration, so stages 2 and 3 are separate designs.
 
-At the size of what is on a screen, the cost difference is real in ratio and small in milliseconds. It becomes a dropped frame when a few hundred texts change in the same frame. For find-in-page that happens in one situation: the whole page is mounted (the page is not lazy, or the search turned on eager loading of offscreen text) *and* the query is common, as it is after the first one or two typed letters. [Section 4](#4-performance) has the numbers and one measured way to soften it.
+A text that gets a new highlight costs about 230 µs with a span and about 25 µs with a painter, for a paragraph of 500 characters. At the size of what is on a screen, the cost difference is real in ratio and small in milliseconds. It becomes a dropped frame when a few hundred texts change in the same frame. For find-in-page that happens in one situation: the whole page is mounted (the page is not lazy, or the search turned on eager loading of offscreen text) *and* the query is common, as it is after the first one or two typed letters. About 70 such paragraphs fill a 60 Hz frame. [Section 4.6](#46-when-does-it-matter) has the cost per text, how likely a dropped frame is in each situation, and one measured way to soften it.
 
 ---
 
@@ -549,12 +549,62 @@ None of this exists today. With all of it, a highlight through a span would be a
 
 ### 4.6 When does it matter?
 
-The span approach misses a 60 Hz frame when roughly 70 paragraphs of 500 characters, or 250 short ones, get a *new* highlight in the same frame. What counts is the number of texts and their length, not the number of matches ([Section 4.8](#48-by-the-number-of-matches)). On a lazy list that cannot happen, because only what is on screen exists. It can happen in two ways:
+#### The cost for each text that changes
 
-1. The page is a `Column` in a `SingleChildScrollView`, which is how short and medium pages are usually written.
-2. The search plugin asked for offscreen content (`needsOffscreenContent`), which makes lazy lists build up to a million pixels of content. Find-in-page does this on purpose, so that it can count and reach matches that are off screen. So the feature that the MVP exists for is the one that turns a lazy page into a fully mounted one.
+The cost of a change is close to proportional to the number of texts that change, so the tables above can be read as a cost per text. The number of matches in a text hardly counts for the span approach ([Section 4.8](#48-by-the-number-of-matches)).
 
-And the query has to match most of the page, which is what the first one or two typed letters do.
+| One text that changes | Painter | Span, new highlight | Span, highlight the engine has seen, or color only | From |
+| :-- | --: | --: | --: | :-- |
+| A short text of one line (about 80 characters) | 14 to 23 µs | 70 to 80 µs | 25 to 36 µs | Lazy list, stress pages, animated highlight |
+| A paragraph of about 500 characters | 17 to 28 µs | 230 to 250 µs | about 95 µs | Article, Section 4.8 |
+| One long text, for each 1,000 characters | about 16 µs | about 300 µs | not measured | The moving word |
+
+These are the times of a case divided by the number of texts that changed. They include the share of the plugin's scan and of the frame. The third column needs the engine's cache, which holds 128 paragraphs.
+
+#### How many texts fill a frame
+
+Dividing a frame by the cost per text gives the number of texts that can get a new highlight in one frame. These are extrapolations, not measurements, on an Apple M1 Pro, with the frame doing nothing else.
+
+| Texts that get a new highlight in the same frame | Span, 60 Hz (16.6 ms) | Span, 120 Hz (8.3 ms) | Painter, 60 Hz |
+| :-- | --: | --: | --: |
+| Paragraphs of about 500 characters | about 70 | about 35 | 600 to 1,000 |
+| Short texts of one line | 200 to 240 | 100 to 120 | 700 to 1,200 |
+| One long text | about 50,000 characters | about 25,000 characters | about 1,000,000 characters |
+
+In matches: the lowest number that misses a frame is about 70, if each match is in a different paragraph of 500 characters and all of them are mounted. If the matches are close together it takes thousands. One paragraph with 1,000 matches was at the limit (17 ms, a third of it a defect of the prototype).
+
+#### How likely is a dropped frame
+
+This is a judgement from the numbers above, case by case. It was not measured in a real app.
+
+| Situation | Texts that change in one frame | Span | Dropped frame at 60 Hz? |
+| :-- | :-- | :-- | :-- |
+| Search in a lazy list, a chat or a feed, without offscreen content | At most what is on screen, 10 to 40 | 0.3 to 3 ms | No |
+| **Find-in-page that mounts offscreen content, on a page of more than about 70 paragraphs, while the user types the first letters** | Most of the page | 16 ms and up, 70 ms for 300 paragraphs | **Yes, likely each time** |
+| The same on a page that is not lazy (a `Column` in a scroll view) | Most of the page | The same | **Yes, likely each time** |
+| The same, later letters of the query, when few texts still match | The texts that still match | 0.2 ms a paragraph | No, unless 70 or more paragraphs still match |
+| Next or previous match | Two | 0.1 to 0.4 ms | No. Yes if the match is in a text of 25,000 characters or more |
+| A word that moves through one text (read aloud) | One | 0.06 to 5 ms | No. Yes for a text of more than about 50,000 characters, at 120 Hz about 25,000 |
+| An animated highlight, color only, on what is on screen | 10 to 40 | 0.3 to 1 ms a frame | No |
+| Spell check or search highlights in a field while the user types | One | The same as without a plugin | No |
+| Selection drag with the selection highlight as a plugin | The texts that the pointer passes | 0.1 ms | No |
+
+Two things make the two "yes" rows likely rather than rare, when their conditions hold:
+
+1. **The first letters of a query match almost everything.** A single letter such as `e` is in nearly every paragraph of an English page. So the first query change gives a new highlight to nearly every mounted text.
+2. **A text that loses its matches changes too.** When the second letter narrows the query, every text that matched the first letter gets different highlights or none. Removing the highlights is a change of the span as well. Its cost was not measured apart. It may be lower, because the engine may still have the text without highlights in its cache.
+
+And the conditions are not unusual. A page written as a `Column` in a scroll view is common for short and medium pages. And the search plugin asks for offscreen content (`needsOffscreenContent`) on purpose, so that it can count and reach matches that are off screen, which makes a lazy list build up to a million pixels of content. So the feature that the MVP exists for is the one that turns a lazy page into a fully mounted one.
+
+Three things that move the thresholds:
+
+- **A slower device.** The thresholds divide by how much slower the device is. On a phone that is four times slower, about 18 paragraphs would fill a 60 Hz frame, which is close to what fits on a screen. No such device was measured.
+- **Other work in the same frame.** The thresholds give the whole frame to the highlight.
+- **A highlight that the engine has seen.** Typing a letter and deleting it costs about half, as long as fewer than 128 texts are involved.
+
+With the painter none of the rows is a dropped frame up to about 600 paragraphs that change at once.
+
+#### Spreading the work
 
 The work can be spread. The span search plugin has an option to give new decorations to at most N texts in a frame. This was measured with the old text, which for this case gives the same times:
 
