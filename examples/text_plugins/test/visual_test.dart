@@ -23,15 +23,18 @@ import 'package:text_plugins/plugins/search_in_page_plugin.dart';
 import 'package:text_plugins/plugins/spellcheck_linter_plugin.dart';
 import 'package:text_plugins/plugins/stock_ticker_plugin.dart';
 
-const String _prefix = String.fromEnvironment('VISUAL_PREFIX', defaultValue: 'span');
+const String _prefix = String.fromEnvironment(
+  'VISUAL_PREFIX',
+  defaultValue: 'span',
+);
 
 Future<void> _loadRoboto() async {
   final String root = Platform.environment['FLUTTER_ROOT']!;
   final loader = FontLoader('Roboto')
     ..addFont(
-      File(
-        '$root/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf',
-      ).readAsBytes().then((Uint8List bytes) => ByteData.sublistView(bytes)),
+      File('$root/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf')
+          .readAsBytes()
+          .then((Uint8List bytes) => ByteData.sublistView(bytes)),
     );
   await loader.load();
 }
@@ -43,7 +46,10 @@ Widget _row(String label, Widget child) {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         TextPluginScope.none(
-          child: Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF757575))),
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF757575)),
+          ),
         ),
         const SizedBox(height: 3),
         child,
@@ -53,14 +59,17 @@ Widget _row(String label, Widget child) {
 }
 
 void main() {
+  // Real file access does not complete inside the fake clock of testWidgets.
+  setUpAll(_loadRoboto);
+
   testWidgets('stage 1 plugins, rendered', (WidgetTester tester) async {
-    await _loadRoboto();
     tester.view.physicalSize = const Size(1280, 1120);
     tester.view.devicePixelRatio = 2;
     addTearDown(tester.view.reset);
 
     final search = SearchInPagePlugin()..query = 'flutter';
-    final wrapped = SearchInPagePlugin()..query = 'wraps over the end of the line and goes';
+    final wrapped = SearchInPagePlugin()
+      ..query = 'wraps over the end of the line and goes';
     final field = SearchInPagePlugin()..query = 'field';
     final spellcheck = SpellcheckLinterPlugin();
     final ticker = StockTickerPlugin();
@@ -69,7 +78,9 @@ void main() {
     addTearDown(wrapped.dispose);
     addTearDown(field.dispose);
     addTearDown(readAloud.dispose);
-    final controller = TextEditingController(text: 'A text field with a match in the field.');
+    final controller = TextEditingController(
+      text: 'A text field with a match in the field.',
+    );
     final focusNode = FocusNode();
     addTearDown(controller.dispose);
     addTearDown(focusNode.dispose);
@@ -137,14 +148,18 @@ void main() {
                       'spell check: two errors, one style suggestion',
                       TextPluginScope(
                         plugin: spellcheck,
-                        child: const Text('Please recieve the seperate package and utilize it.'),
+                        child: const Text(
+                          'Please recieve the seperate package and utilize it.',
+                        ),
                       ),
                     ),
                     _row(
                       'stock tickers: two up, two down',
                       TextPluginScope(
                         plugin: ticker,
-                        child: const Text('Buy GOOG and AAPL, sell TSLA and MSFT today.'),
+                        child: const Text(
+                          'Buy GOOG and AAPL, sell TSLA and MSFT today.',
+                        ),
                       ),
                     ),
                     _row(
@@ -153,14 +168,17 @@ void main() {
                         plugin: readAloud,
                         child: const SizedBox(
                           width: 420,
-                          child: Text('The quick brown fox jumps over the lazy dog, twice a day.'),
+                          child: Text(
+                            'The quick brown fox jumps over the lazy dog, twice a day.',
+                          ),
                         ),
                       ),
                     ),
                     _row(
                       'search over styled text: a match across bold, italic and a larger size',
                       TextPluginScope(
-                        plugin: SearchInPagePlugin()..query = 'bold italic large',
+                        plugin: SearchInPagePlugin()
+                          ..query = 'bold italic large',
                         child: const Text.rich(
                           TextSpan(
                             text: 'Plain ',
@@ -175,7 +193,10 @@ void main() {
                                 style: TextStyle(fontStyle: FontStyle.italic),
                               ),
                               TextSpan(text: ' '),
-                              TextSpan(text: 'large', style: TextStyle(fontSize: 30)),
+                              TextSpan(
+                                text: 'large',
+                                style: TextStyle(fontSize: 30),
+                              ),
                               TextSpan(text: ' plain.'),
                             ],
                           ),
@@ -199,6 +220,9 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
 
-    await expectLater(find.byKey(key), matchesGoldenFile('visual/${_prefix}_stage1.png'));
+    await expectLater(
+      find.byKey(key),
+      matchesGoldenFile('visual/${_prefix}_stage1.png'),
+    );
   });
 }

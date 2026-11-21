@@ -142,3 +142,6 @@ class _PulsePainter extends TextPluginPainter {
 final List<(String, VoidCallback)> selectionModes = <(String, VoidCallback)>[
   ('painter plugin', () {}),
 ];
+
+/// Not available on the painter branch.
+SearchInPagePlugin? makeBatchedSearch(int perFrame) => null;

@@ -497,7 +497,9 @@ String _sentence(int index) {
 /// R1. A lazy list of 10,000 items. Only the items on screen are built, which
 /// is how a long page is written in an app.
 Future<void> _runLazyList(Variant? variant) async {
-  final SearchInPagePlugin? search = variant == null ? null : makeSearch(variant);
+  final SearchInPagePlugin? search = variant == null
+      ? null
+      : makeSearch(variant);
   final controller = ScrollController();
   Widget body = ListView.builder(
     controller: controller,
@@ -510,17 +512,24 @@ Future<void> _runLazyList(Variant? variant) async {
     },
   );
   if (search != null) {
-    body = wrapScope(plugins: <TextPlugin>[search], variant: variant!, child: body);
+    body = wrapScope(
+      plugins: <TextPlugin>[search],
+      variant: variant!,
+      child: body,
+    );
   }
   await _mount(_shell(body));
-  final label = 'R1 lazy list of 10000 items, ${variant == null ? 'no plugin' : '[${variant.label}]'}';
+  final label =
+      'R1 lazy list of 10000 items, ${variant == null ? 'no plugin' : '[${variant.label}]'}';
   if (search != null) {
     search.query = _query;
     _settle();
     final _Timing keystroke = await _measure(_runs * 5, (int run) {
       search.query = run.isEven ? 'Flutte' : _query;
     });
-    _report('$label: keystroke, ${search.matches.length} matches on screen: $keystroke');
+    _report(
+      '$label: keystroke, ${search.matches.length} matches on screen: $keystroke',
+    );
     final _Timing next = await _measure(_runs * 5, (int run) {
       search.nextMatch();
     });
@@ -534,7 +543,9 @@ Future<void> _runLazyList(Variant? variant) async {
     offset += 120;
     controller.jumpTo(offset);
   });
-  _report('$label: scroll 120 px in a frame: ${scroll.frame.toStringAsFixed(3)} ms');
+  _report(
+    '$label: scroll 120 px in a frame: ${scroll.frame.toStringAsFixed(3)} ms',
+  );
   await _unmount();
   search?.dispose();
   controller.dispose();
@@ -544,7 +555,9 @@ String _longParagraph(int index) {
   final word = index % 20 == 0 ? _query : 'Nothing';
   final buffer = StringBuffer('Section $index. ');
   for (var i = 0; i < 8; i++) {
-    buffer.write('The quick brown fox jumps over the lazy dog and then rests. ');
+    buffer.write(
+      'The quick brown fox jumps over the lazy dog and then rests. ',
+    );
   }
   buffer.write('$word appears here.');
   return buffer.toString();
@@ -552,20 +565,28 @@ String _longParagraph(int index) {
 
 /// R2. An article: 300 paragraphs of about 500 characters, all mounted.
 Future<void> _runArticle(Variant? variant) async {
-  final SearchInPagePlugin? search = variant == null ? null : makeSearch(variant);
+  final SearchInPagePlugin? search = variant == null
+      ? null
+      : makeSearch(variant);
   Widget body = SingleChildScrollView(
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        for (var i = 0; i < 300; i++) RepaintBoundary(child: Text(_longParagraph(i))),
+        for (var i = 0; i < 300; i++)
+          RepaintBoundary(child: Text(_longParagraph(i))),
       ],
     ),
   );
   if (search != null) {
-    body = wrapScope(plugins: <TextPlugin>[search], variant: variant!, child: body);
+    body = wrapScope(
+      plugins: <TextPlugin>[search],
+      variant: variant!,
+      child: body,
+    );
   }
   await _mount(_shell(body));
-  final label = 'R2 article of 300 paragraphs, ${variant == null ? 'no plugin' : '[${variant.label}]'}';
+  final label =
+      'R2 article of 300 paragraphs, ${variant == null ? 'no plugin' : '[${variant.label}]'}';
   if (search == null) {
     final _Timing idle = await _measure(_runs, (int run) {});
     _report('$label: idle frame: ${idle.frame.toStringAsFixed(3)} ms');
@@ -575,7 +596,9 @@ Future<void> _runArticle(Variant? variant) async {
     final _Timing rare = await _measure(_runs * 2, (int run) {
       search.query = run.isEven ? 'Flutte' : _query;
     });
-    _report('$label: keystroke, rare word, ${search.matches.length} matches in 15 texts: $rare');
+    _report(
+      '$label: keystroke, rare word, ${search.matches.length} matches in 15 texts: $rare',
+    );
     search.query = 'fox';
     _settle();
     final _Timing common = await _measure(_runs * 2, (int run) {
@@ -595,7 +618,10 @@ Future<void> _runArticle(Variant? variant) async {
 
 /// R3. One text whose highlighted word moves, for texts of different length.
 Future<void> _runLength(int words, Variant variant) async {
-  final String text = List<String>.generate(words, (int i) => 'word$i').join(' ');
+  final String text = List<String>.generate(
+    words,
+    (int i) => 'word$i',
+  ).join(' ');
   final plugin = KaraokePlugin();
   await _mount(
     _shell(
@@ -629,7 +655,8 @@ Future<void> _runPulse(int count, Variant variant) async {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              for (var i = 0; i < count; i++) RepaintBoundary(child: Text(_sentence(i))),
+              for (var i = 0; i < count; i++)
+                RepaintBoundary(child: Text(_sentence(i))),
             ],
           ),
         ),
@@ -663,7 +690,8 @@ Future<void> _runSelectionDrag(String label, VoidCallback setup) async {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    for (var i = 0; i < 40; i++) RepaintBoundary(child: Text(_sentence(i))),
+                    for (var i = 0; i < 40; i++)
+                      RepaintBoundary(child: Text(_sentence(i))),
                   ],
                 ),
               );
@@ -676,7 +704,11 @@ Future<void> _runSelectionDrag(String label, VoidCallback setup) async {
   const start = Offset(20, 8);
   var time = Duration.zero;
   GestureBinding.instance.handlePointerEvent(
-    const PointerAddedEvent(pointer: 7, kind: PointerDeviceKind.mouse, position: start),
+    const PointerAddedEvent(
+      pointer: 7,
+      kind: PointerDeviceKind.mouse,
+      position: start,
+    ),
   );
   GestureBinding.instance.handlePointerEvent(
     const PointerDownEvent(
@@ -706,7 +738,8 @@ Future<void> _runSelectionDrag(String label, VoidCallback setup) async {
   // select.
   var selected = 0;
   void visit(RenderObject object) {
-    if (object is RenderParagraph && object.selections.any((TextSelection s) => !s.isCollapsed)) {
+    if (object is RenderParagraph &&
+        object.selections.any((TextSelection s) => !s.isCollapsed)) {
       selected += 1;
     }
     object.visitChildren(visit);
@@ -732,6 +765,67 @@ Future<void> _runSelectionDrag(String label, VoidCallback setup) async {
   focusNode.dispose();
 }
 
+/// R2b. The common-word keystroke of the article, with a search plugin that
+/// spreads the new decorations over frames. Reports the longest frame and how
+/// many frames it takes until every highlight is there.
+Future<void> _runArticleBatched(int perFrame, Variant variant) async {
+  // Nullable on the painter branch, where there is no such plugin.
+  // ignore: unnecessary_nullable_for_final_variable_declarations
+  final SearchInPagePlugin? search = makeBatchedSearch(perFrame);
+  if (search == null) {
+    return;
+  }
+  await _mount(
+    _shell(
+      wrapScope(
+        plugins: <TextPlugin>[search],
+        variant: variant,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              for (var i = 0; i < 300; i++)
+                RepaintBoundary(child: Text(_longParagraph(i))),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+  search.query = 'fox';
+  _settle();
+  var longest = 0.0;
+  var frames = 0;
+  var total = 0.0;
+  const runs = 10;
+  for (var run = 0; run < runs; run++) {
+    search.query = run.isEven ? 'fo' : 'fox';
+    for (var i = 0; i < 100; i++) {
+      final int before = _binding.frameWatch.elapsedMicroseconds;
+      _pumpFrame();
+      final double frame =
+          (_binding.frameWatch.elapsedMicroseconds - before) / 1000.0;
+      frames += 1;
+      total += frame;
+      if (frame > longest) {
+        longest = frame;
+      }
+      if (!_binding.hasScheduledFrame) {
+        break;
+      }
+    }
+    await Future<void>.delayed(Duration.zero);
+  }
+  _report(
+    'R2b article, common word, at most $perFrame texts a frame, [${variant.label}]: '
+    'longest frame ${longest.toStringAsFixed(3)} ms, '
+    '${(frames / runs).toStringAsFixed(1)} frames and '
+    '${(total / runs).toStringAsFixed(3)} ms in total for a keystroke',
+  );
+  await _unmount();
+  search.dispose();
+}
+
 Future<void> _runRealistic() async {
   final List<Variant> precise = variants.take(2).toList();
   await _runLazyList(null);
@@ -741,6 +835,9 @@ Future<void> _runRealistic() async {
   await _runArticle(null);
   for (final variant in precise) {
     await _runArticle(variant);
+  }
+  for (final perFrame in <int>[25, 50]) {
+    await _runArticleBatched(perFrame, precise.last);
   }
   for (final words in <int>[10, 50, 200, 1000]) {
     for (final variant in precise) {

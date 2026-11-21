@@ -704,6 +704,43 @@ void main() {
         expect(identical(before, after), layer == TextDecorationLayer.render);
       });
 
+      testWidgets('what code outside of the plugin sees: RichText.text and RenderParagraph.text', (
+        WidgetTester tester,
+      ) async {
+        final plugin = _WordPlugin('world');
+        await tester.pumpWidget(
+          _app(TextPluginScope(plugin: plugin, child: const Text('hello world'))),
+        );
+        // A finder by text still works in both options.
+        expect(find.text('hello world'), findsOneWidget);
+        final RichText widget = tester.widget(find.byType(RichText));
+        final RenderParagraph paragraph = tester.renderObject(find.byType(RichText));
+        // Text wraps its string in one span with the default style.
+        int leaves(InlineSpan span) {
+          var count = 0;
+          span.visitChildren((InlineSpan child) {
+            if (child is TextSpan && child.text != null) {
+              count += 1;
+            }
+            return true;
+          });
+          return count;
+        }
+
+        if (layer == TextDecorationLayer.widget) {
+          // Option A: the widget and the render object hold the decorated
+          // span. A test or a tool that reads the span tree sees the pieces.
+          expect(leaves(widget.text), 2);
+          expect(leaves(paragraph.text), 2);
+        } else {
+          // Option B: both hold the span of the app. Only the text painter
+          // has the pieces.
+          expect(leaves(widget.text), 1);
+          expect(leaves(paragraph.text), 1);
+          expect(leaves(paragraph.debugDecoratedText), 2);
+        }
+      });
+
       testWidgets('H16: a RichText that is created directly', (WidgetTester tester) async {
         final plugin = _WordPlugin('hello');
         await tester.pumpWidget(

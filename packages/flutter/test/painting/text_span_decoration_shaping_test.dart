@@ -93,7 +93,7 @@ void main() {
     expect(split, joined);
   });
 
-  test('Arabic: a font-weight split inside a word', () {
+  test('Arabic: a split that changes the font size inside a word breaks the joining', () {
     if (!hasArabic) {
       markTestSkipped('Arial Unicode is not installed');
       return;
@@ -102,11 +102,12 @@ void main() {
     const word = '\u0645\u0631\u062D\u0628\u0627';
     const whole = TextSpan(text: word, style: style);
     final double joined = _layout(whole).width;
-    final double split = _layout(
-      _split(whole, 3, 5, const TextStyle(fontSize: 101)),
-    ).width;
+    final double split = _layout(_split(whole, 3, 5, const TextStyle(fontSize: 101))).width;
     // ignore: avoid_print
     print('SHAPING arabic, size split: joined=$joined, split=$split');
+    // A decoration that changes the font (size, weight, family) starts a new
+    // shaping run. The letters on both sides of it are no longer joined.
+    expect(split, isNot(joined));
   });
 
   test('a combining mark: a split between the letter and its mark', () {
@@ -149,6 +150,9 @@ void main() {
     final double split = _layout(_split(whole, 0, 2)).width;
     // ignore: avoid_print
     print('SHAPING emoji family: one glyph=$one, a single man=$man, color split=$split');
+    // The family is one glyph, and a color split inside it keeps it one.
+    expect(one, man);
+    expect(split, one);
   });
 
   test('a surrogate pair: a range that ends in the middle of it', () {
@@ -160,21 +164,34 @@ void main() {
     const text = 'a\u{1F600}b';
     const whole = TextSpan(text: text, style: style);
     final double plain = _layout(whole).width;
-    Object? error;
-    double? split;
-    String? splitText;
-    try {
-      final InlineSpan span = _split(whole, 0, 2);
-      splitText = span.toPlainText();
-      split = _layout(span).width;
-    } on Object catch (e) {
-      error = e;
-    }
-    // ignore: avoid_print
-    print(
-      'SHAPING surrogate pair: plain=$plain, split=$split, '
-      'same string=${splitText == text}, error=$error',
+
+    // What a span boundary inside the pair does, without the merge: the two
+    // halves are two broken characters, and the emoji is gone. There is no
+    // error, and the plain text is the same string.
+    const broken = TextSpan(
+      style: style,
+      children: <InlineSpan>[
+        TextSpan(text: 'a\uD83D', style: _red),
+        TextSpan(text: '\uDE00b'),
+      ],
     );
+    expect(broken.toPlainText(), text);
+    final double brokenWidth = _layout(broken).width;
+    // ignore: avoid_print
+    print('SHAPING surrogate pair: plain=$plain, a span boundary inside the pair=$brokenWidth');
+    expect(brokenWidth, isNot(plain));
+
+    // The merge moves such a cut to after the pair.
+    final InlineSpan span = _split(whole, 0, 2);
+    expect(_layout(span).width, plain);
+    final texts = <String>[];
+    span.visitChildren((InlineSpan child) {
+      if (child is TextSpan && child.text != null) {
+        texts.add(child.text!);
+      }
+      return true;
+    });
+    expect(texts, <String>['a\u{1F600}', 'b']);
   });
 
   test('a split inside a word does not add a place where the line can break', () {

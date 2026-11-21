@@ -407,6 +407,19 @@ class _Decorator {
             if (cutIndex < _cuts.length && _cuts[cutIndex] < end) {
               pieceEnd = _cuts[cutIndex];
               cutIndex += 1;
+              // A range of a plugin can end between the two code units of a
+              // surrogate pair. A span that ends there would be drawn as two
+              // broken characters, so the cut moves to after the pair.
+              final int local = pieceEnd - start;
+              if (local > 0 &&
+                  local < text.length &&
+                  (text.codeUnitAt(local) & 0xFC00) == 0xDC00 &&
+                  (text.codeUnitAt(local - 1) & 0xFC00) == 0xD800) {
+                pieceEnd += 1;
+                while (cutIndex < _cuts.length && _cuts[cutIndex] <= pieceEnd) {
+                  cutIndex += 1;
+                }
+              }
             }
             _emitInsertionsUpTo(pieceStart, pieces);
             _emitReplacementsStartingIn(pieceStart, pieceEnd, pieces);

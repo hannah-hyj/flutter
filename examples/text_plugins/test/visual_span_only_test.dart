@@ -22,9 +22,9 @@ Future<void> _loadRoboto() async {
   for (final file in <String>['Roboto-Regular.ttf', 'Roboto-Bold.ttf']) {
     final loader = FontLoader('Roboto')
       ..addFont(
-        File(
-          '$root/bin/cache/artifacts/material_fonts/$file',
-        ).readAsBytes().then((Uint8List bytes) => ByteData.sublistView(bytes)),
+        File('$root/bin/cache/artifacts/material_fonts/$file')
+            .readAsBytes()
+            .then((Uint8List bytes) => ByteData.sublistView(bytes)),
       );
     await loader.load();
   }
@@ -60,7 +60,10 @@ class _KaraokePlugin extends TextPlugin {
     return <TextSpanDecoration>[
       TextSpanDecoration(
         range: TextRange(start: 0, end: spoken),
-        style: const TextStyle(color: Color(0xFFD81B60), fontWeight: FontWeight.bold),
+        style: const TextStyle(
+          color: Color(0xFFD81B60),
+          fontWeight: FontWeight.bold,
+        ),
       ),
     ];
   }
@@ -73,7 +76,10 @@ Widget _row(String label, Widget child) {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         TextPluginScope.none(
-          child: Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF757575))),
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF757575)),
+          ),
         ),
         const SizedBox(height: 3),
         child,
@@ -83,8 +89,10 @@ Widget _row(String label, Widget child) {
 }
 
 void main() {
+  // Real file access does not complete inside the fake clock of testWidgets.
+  setUpAll(_loadRoboto);
+
   testWidgets('what only a span can do, rendered', (WidgetTester tester) async {
-    await _loadRoboto();
     tester.view.physicalSize = const Size(1280, 1000);
     tester.view.devicePixelRatio = 2;
     addTearDown(tester.view.reset);
@@ -126,7 +134,9 @@ void main() {
                       'the glyphs themselves: color and weight of the spoken words',
                       TextPluginScope(
                         plugin: _KaraokePlugin(19),
-                        child: const Text('The quick brown fox jumps over the lazy dog.'),
+                        child: const Text(
+                          'The quick brown fox jumps over the lazy dog.',
+                        ),
                       ),
                     ),
                     _row(
@@ -139,13 +149,18 @@ void main() {
                             backgroundColor: Color(0xFF1A237E),
                           ),
                         ),
-                        child: const Text('A match is easier to read when the match inverts.'),
+                        child: const Text(
+                          'A match is easier to read when the match inverts.',
+                        ),
                       ),
                     ),
                     _row(
                       'a rounded background from a stroked Paint',
                       TextPluginScope(
-                        plugin: _StylePlugin('rounded', TextStyle(background: rounded)),
+                        plugin: _StylePlugin(
+                          'rounded',
+                          TextStyle(background: rounded),
+                        ),
                         child: const SizedBox(
                           width: 330,
                           child: Text(
@@ -158,14 +173,18 @@ void main() {
                       'stock tickers as inline badge widgets',
                       TextPluginScope(
                         plugin: StockTickerPlugin(badges: true),
-                        child: const Text('Buy GOOG and AAPL, sell TSLA and MSFT today.'),
+                        child: const Text(
+                          'Buy GOOG and AAPL, sell TSLA and MSFT today.',
+                        ),
                       ),
                     ),
                     _row(
                       'a spoiler, hidden: the || take no room',
                       TextPluginScope(
                         plugin: spoiler,
-                        child: const Text('The butler ||did it|| in the library.'),
+                        child: const Text(
+                          'The butler ||did it|| in the library.',
+                        ),
                       ),
                     ),
                     _row(
@@ -183,7 +202,9 @@ void main() {
                             color: Color(0xFF9E9E9E),
                           ),
                         ),
-                        child: const Text('A review plugin can shrink deleted words in place.'),
+                        child: const Text(
+                          'A review plugin can shrink deleted words in place.',
+                        ),
                       ),
                     ),
                   ],
@@ -195,6 +216,9 @@ void main() {
       ),
     );
     await tester.pump();
-    await expectLater(find.byKey(key), matchesGoldenFile('visual/span_only.png'));
+    await expectLater(
+      find.byKey(key),
+      matchesGoldenFile('visual/span_only.png'),
+    );
   });
 }

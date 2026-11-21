@@ -141,7 +141,9 @@ class PulsePlugin extends TextPlugin {
     return <TextSpanDecoration>[
       TextSpanDecoration(
         range: TextRange(start: 0, end: end),
-        style: TextStyle(backgroundColor: Color.fromARGB(40 + _tick % 200, 255, 152, 0)),
+        style: TextStyle(
+          backgroundColor: Color.fromARGB(40 + _tick % 200, 255, 152, 0),
+        ),
       ),
     ];
   }
@@ -170,3 +172,9 @@ final List<(String, VoidCallback)> selectionModes = <(String, VoidCallback)>[
     },
   ),
 ];
+
+/// A search plugin that gives new decorations to at most [perFrame] texts in
+/// one frame.
+SearchInPagePlugin makeBatchedSearch(int perFrame) {
+  return SearchInPagePlugin(decorationsPerFrame: perFrame);
+}

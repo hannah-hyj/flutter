@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 /// Represents a single search match within a [TextDelegate].
@@ -50,6 +51,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
     this.activeMatchBorderColor = const Color(0xFFE65100),
     this._eagerLoadOffscreenText = false,
     this.notifyToRedecorate = false,
+    this.decorationsPerFrame,
   });
 
   /// Background highlight color for all matches.
@@ -72,6 +74,32 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
 
   @override
   bool get notifiesDecorationChanges => notifyToRedecorate;
+
+  /// Experiment only. If not null, at most this many texts get new
+  /// decorations in one frame. The others wait for the next frames, so a
+  /// query that changes hundreds of texts shows its highlights over several
+  /// short frames instead of in one long frame.
+  final int? decorationsPerFrame;
+
+  final Set<TextDelegate> _pending = <TextDelegate>{};
+  bool _pendingScheduled = false;
+
+  void _flushPending(Duration timeStamp) {
+    _pendingScheduled = false;
+    var count = 0;
+    while (_pending.isNotEmpty && count < decorationsPerFrame!) {
+      final TextDelegate delegate = _pending.first;
+      _pending.remove(delegate);
+      if (_delegates.contains(delegate)) {
+        delegate.markNeedsDecoration();
+        count += 1;
+      }
+    }
+    if (_pending.isNotEmpty && !_pendingScheduled) {
+      _pendingScheduled = true;
+      SchedulerBinding.instance.scheduleFrameCallback(_flushPending);
+    }
+  }
 
   final Set<TextDelegate> _delegates = <TextDelegate>{};
   final Map<TextDelegate, List<SearchMatch>> _matchesByDelegate =
@@ -124,8 +152,17 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   }
 
   void _redecorate(TextDelegate delegate) {
-    if (!notifyToRedecorate && _delegates.contains(delegate)) {
+    if (notifyToRedecorate || !_delegates.contains(delegate)) {
+      return;
+    }
+    if (decorationsPerFrame == null) {
       delegate.markNeedsDecoration();
+      return;
+    }
+    _pending.add(delegate);
+    if (!_pendingScheduled) {
+      _pendingScheduled = true;
+      SchedulerBinding.instance.scheduleFrameCallback(_flushPending);
     }
   }
 
@@ -275,6 +312,7 @@ class SearchInPagePlugin extends TextPlugin with ChangeNotifier {
   @override
   void didRemoveText(TextDelegate delegate) {
     _delegates.remove(delegate);
+    _pending.remove(delegate);
     if (_delegates.isEmpty) {
       _hasExplicitActiveMatch = false;
     }

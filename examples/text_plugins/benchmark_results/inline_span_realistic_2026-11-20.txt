@@ -1,32 +1,34 @@
 prototype: span, mode: profile, macOS
 each frame time is the average of 20 frames unless it says otherwise
-R1 lazy list of 10000 items, no plugin: scroll 120 px in a frame: 0.545 ms
-R1 lazy list of 10000 items, [A widget layer]: keystroke, 4 matches on screen: 0.369 ms (0.029 change + 0.340 frame)
-R1 lazy list of 10000 items, [A widget layer]: next match: 0.157 ms (0.007 change + 0.150 frame)
-R1 lazy list of 10000 items, [A widget layer]: scroll 120 px in a frame: 0.588 ms
-R1 lazy list of 10000 items, [B render layer]: keystroke, 4 matches on screen: 0.299 ms (0.026 change + 0.274 frame)
-R1 lazy list of 10000 items, [B render layer]: next match: 0.146 ms (0.006 change + 0.139 frame)
-R1 lazy list of 10000 items, [B render layer]: scroll 120 px in a frame: 0.476 ms
-R2 article of 300 paragraphs, no plugin: idle frame: 0.006 ms
-R2 article of 300 paragraphs, [A widget layer]: keystroke, rare word, 15 matches in 15 texts: 3.453 ms (0.576 change + 2.877 frame)
-R2 article of 300 paragraphs, [A widget layer]: keystroke, common word, 2400 matches in 300 texts: 61.913 ms (0.857 change + 61.056 frame)
-R2 article of 300 paragraphs, [A widget layer]: next match: 0.205 ms (0.009 change + 0.196 frame)
-R2 article of 300 paragraphs, [B render layer]: keystroke, rare word, 15 matches in 15 texts: 3.290 ms (0.554 change + 2.736 frame)
-R2 article of 300 paragraphs, [B render layer]: keystroke, common word, 2400 matches in 300 texts: 59.949 ms (0.859 change + 59.090 frame)
-R2 article of 300 paragraphs, [B render layer]: next match: 0.220 ms (0.012 change + 0.209 frame)
-R3 moving word in one text of 10 words (59 characters), [A widget layer]: 0.084 ms
-R3 moving word in one text of 10 words (59 characters), [B render layer]: 0.108 ms
-R3 moving word in one text of 50 words (339 characters), [A widget layer]: 0.196 ms
-R3 moving word in one text of 50 words (339 characters), [B render layer]: 0.194 ms
-R3 moving word in one text of 200 words (1489 characters), [A widget layer]: 0.595 ms
-R3 moving word in one text of 200 words (1489 characters), [B render layer]: 0.583 ms
-R3 moving word in one text of 1000 words (7889 characters), [A widget layer]: 2.565 ms
-R3 moving word in one text of 1000 words (7889 characters), [B render layer]: 2.442 ms
-R5 animated highlight on 10 texts, [A widget layer]: 0.596 ms a frame
-R5 animated highlight on 10 texts, [B render layer]: 0.572 ms a frame
-R5 animated highlight on 40 texts, [A widget layer]: 2.118 ms a frame
-R5 animated highlight on 40 texts, [B render layer]: 2.113 ms a frame
-R6 selection drag across 40 paragraphs, built-in highlight: 0.108 ms (0.071 change + 0.037 frame) a pointer move, 32 paragraphs selected at the end
-R6 selection drag across 40 paragraphs, span plugin, A widget layer: 0.217 ms (0.076 change + 0.141 frame) a pointer move, 32 paragraphs selected at the end
-R6 selection drag across 40 paragraphs, span plugin, B render layer: 0.224 ms (0.081 change + 0.143 frame) a pointer move, 32 paragraphs selected at the end
+R1 lazy list of 10000 items, no plugin: scroll 120 px in a frame: 0.492 ms
+R1 lazy list of 10000 items, [A widget layer]: keystroke, 4 matches on screen: 0.252 ms (0.022 change + 0.230 frame)
+R1 lazy list of 10000 items, [A widget layer]: next match: 0.123 ms (0.004 change + 0.119 frame)
+R1 lazy list of 10000 items, [A widget layer]: scroll 120 px in a frame: 0.466 ms
+R1 lazy list of 10000 items, [B render layer]: keystroke, 4 matches on screen: 0.224 ms (0.018 change + 0.205 frame)
+R1 lazy list of 10000 items, [B render layer]: next match: 0.127 ms (0.005 change + 0.122 frame)
+R1 lazy list of 10000 items, [B render layer]: scroll 120 px in a frame: 0.495 ms
+R2 article of 300 paragraphs, no plugin: idle frame: 0.004 ms
+R2 article of 300 paragraphs, [A widget layer]: keystroke, rare word, 15 matches in 15 texts: 3.382 ms (0.570 change + 2.812 frame)
+R2 article of 300 paragraphs, [A widget layer]: keystroke, common word, 2400 matches in 300 texts: 63.379 ms (0.879 change + 62.499 frame)
+R2 article of 300 paragraphs, [A widget layer]: next match: 0.201 ms (0.007 change + 0.194 frame)
+R2 article of 300 paragraphs, [B render layer]: keystroke, rare word, 15 matches in 15 texts: 3.081 ms (0.527 change + 2.554 frame)
+R2 article of 300 paragraphs, [B render layer]: keystroke, common word, 2400 matches in 300 texts: 59.071 ms (1.033 change + 58.038 frame)
+R2 article of 300 paragraphs, [B render layer]: next match: 0.188 ms (0.007 change + 0.180 frame)
+R2b article, common word, at most 25 texts a frame, [B render layer]: longest frame 5.892 ms, 13.0 frames and 59.861 ms in total for a keystroke
+R2b article, common word, at most 50 texts a frame, [B render layer]: longest frame 11.717 ms, 7.0 frames and 62.175 ms in total for a keystroke
+R3 moving word in one text of 10 words (59 characters), [A widget layer]: 0.061 ms
+R3 moving word in one text of 10 words (59 characters), [B render layer]: 0.060 ms
+R3 moving word in one text of 50 words (339 characters), [A widget layer]: 0.155 ms
+R3 moving word in one text of 50 words (339 characters), [B render layer]: 0.141 ms
+R3 moving word in one text of 200 words (1489 characters), [A widget layer]: 0.500 ms
+R3 moving word in one text of 200 words (1489 characters), [B render layer]: 0.528 ms
+R3 moving word in one text of 1000 words (7889 characters), [A widget layer]: 2.563 ms
+R3 moving word in one text of 1000 words (7889 characters), [B render layer]: 2.525 ms
+R5 animated highlight on 10 texts, [A widget layer]: 0.490 ms a frame
+R5 animated highlight on 10 texts, [B render layer]: 0.485 ms a frame
+R5 animated highlight on 40 texts, [A widget layer]: 2.051 ms a frame
+R5 animated highlight on 40 texts, [B render layer]: 2.034 ms a frame
+R6 selection drag across 40 paragraphs, built-in highlight: 0.068 ms (0.044 change + 0.023 frame) a pointer move, 32 paragraphs selected at the end
+R6 selection drag across 40 paragraphs, span plugin, A widget layer: 0.150 ms (0.054 change + 0.097 frame) a pointer move, 32 paragraphs selected at the end
+R6 selection drag across 40 paragraphs, span plugin, B render layer: 0.124 ms (0.047 change + 0.077 frame) a pointer move, 32 paragraphs selected at the end
 done
