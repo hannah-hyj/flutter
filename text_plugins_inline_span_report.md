@@ -56,7 +56,7 @@ The short version of the trade:
 - **The span approach is the smaller idea with the larger reach.** A plugin author learns one data class. The same mechanism restyles glyphs, makes a range tappable and puts a chip in the line. It reuses what the framework already does for the composing underline and for spell check.
 - **The painter is the safer and cheaper mechanism for decoration.** It cannot break the app's text, it draws any shape, and it costs 3 to 18 times less for a new highlight, and 1.3 to 4 times less for a change of color only. It does nothing beyond decoration, so stages 2 and 3 are separate designs.
 
-A text that gets a new highlight costs about 230 µs with a span and about 25 µs with a painter, for a paragraph of 500 characters. At the size of what is on a screen, the cost difference is real in ratio and small in milliseconds. It becomes a dropped frame when a few hundred texts change in the same frame. For find-in-page that happens in one situation: the whole page is mounted (the page is not lazy, or the search turned on eager loading of offscreen text) *and* the query is common, as it is after the first one or two typed letters. About 70 such paragraphs fill a 60 Hz frame. [Section 4.6](#46-when-does-it-matter) has the cost per text, how likely a dropped frame is in each situation, and one measured way to soften it.
+A text that gets a new highlight costs about 230 µs with a span and about 25 µs with a painter, for a paragraph of 500 characters. At the size of what is on a screen, the cost difference is real in ratio and small in milliseconds. It becomes a dropped frame when a few hundred texts change in the same frame. For find-in-page that happens in one situation: the whole page is mounted (the page is not lazy, or the search turned on eager loading of offscreen text) *and* the query is common, as it is after the first one or two typed letters. About 70 such paragraphs fill a 60 Hz frame. Two things would lower the cost of the span approach, and neither is in Flutter today: a fix of the paragraph cache of SkParagraph ([flutter/flutter#197244](https://github.com/flutter/flutter/issues/197244), an estimated factor of 2 to 2.5), and the framework painting background highlights itself (tried: 69 ms become 11 ms, [Section 4.9](#49-experiment-the-framework-paints-the-highlight)). [Section 4.6](#46-when-does-it-matter) has the cost per text, how likely a dropped frame is in each situation, and one measured way to soften it.
 
 ---
 
@@ -313,7 +313,7 @@ Every item points at a test, a measurement or an image.
 
 | # | Con | Evidence |
 | :-- | :-- | :-- |
-| S-1 | **Every change costs a new `ui.Paragraph` for that text**, and a change of ranges also a layout of its render object, 3 to 18 times the cost of a repaint for a new highlight, and the cost grows with the length of the text. About 70 µs for a sentence, 230 µs for a paragraph of 500 characters, 2.4 ms for 8,000 characters. Almost all of it is engine time. A change of color only is cheaper, about 25 µs for a sentence, because the engine finds the shaping in its cache | [Section 4](#4-performance) |
+| S-1 | **Every change costs a new `ui.Paragraph` for that text**, and a change of ranges also a layout of its render object, 3 to 18 times the cost of a repaint for a new highlight, and the cost grows with the length of the text. About 70 µs for a sentence, 230 µs for a paragraph of 500 characters, 2.4 ms for 8,000 characters. Almost all of it is engine time, and the largest part is a missed cache hit in SkParagraph that is reported as [flutter/flutter#197244](https://github.com/flutter/flutter/issues/197244) (a fix would roughly halve these numbers, [Section 4.5](#45-what-each-part-of-the-cost-would-take-to-remove)). A change of color only is cheaper, about 25 µs for a sentence, because the engine finds the shaping in its cache | [Section 4](#4-performance) |
 | S-2 | **A frame is dropped when a few hundred texts change together.** 300 paragraphs of 500 characters: 68 to 75 ms, whether they hold 300 matches or 2,400. 1,000 short paragraphs: 82 ms. One paragraph of 24,000 characters with 1,000 matches: 17 ms, also for "next match". Budget: 16.6 ms | [Section 4.1](#41-every-case-time-dart-side-engine-side) |
 | S-3 | **An animated highlight builds the paragraph again on every frame.** The render object only repaints, but `TextPainter.paint` creates a new `ui.Paragraph` and lays it out first, because there is no way to change the paint of an existing one. The engine's cache saves the shaping, not the rest. 40 texts: 1.0 ms a frame against 0.26 | [Sections 4.2](#42-the-cases-in-which-the-span-approach-is-slower-where-the-engine-time-goes) and [4.3](#43-the-frame-phases) |
 | S-4 | **Shapes are limited to what a style can say.** Flat boxes of the run height. No padding, no rounded fill, no box around a paragraph. A rounded *border* is possible with a stroked `Paint` | Images 2 and 3 |
@@ -533,6 +533,17 @@ The third property is why the first runs of this benchmark were too slow for col
 
 So the earlier numbers for a color-only change were about twice too high, and the numbers for a new highlight were right.
 
+**The first property is reported as an engine bug**, [flutter/flutter#197244](https://github.com/flutter/flutter/issues/197244), with a reproduction that uses `dart:ui` only ([paragraph_cache_repro.dart](./examples/text_plugins/lib/paragraph_cache_repro.dart)). `Paragraph.layout` for one paragraph of about 500 characters, profile mode:
+
+| What is laid out | Microseconds |
+| :-- | --: |
+| The same paragraph again | 15.9 |
+| The same word highlighted, another color | 13.3 |
+| The same color, another word highlighted | **152.2** |
+| A text that was never laid out | 153.7 |
+
+A background color on another word costs as much as a text that the engine has never seen. The shaper does not need this: it joins neighboring blocks of the same font before it shapes (`OneLineShaper::iterateThroughFontStyles`), and nothing that the cache stores is indexed by block. So the key could be built from the joined blocks. That is a reading of the source, and the fix was not tried.
+
 The first property is why a query change is expensive. It also shows in the rows "highlights shown before" of Section 4.1: when the user types a letter and deletes it, both highlights are in the cache, and the query change costs 1.8 to 2.4 times the painter instead of 4.2 to 4.4. A page with more than 128 texts that change gets nothing from the cache at all.
 
 ### 4.5 What each part of the cost would take to remove
@@ -546,7 +557,18 @@ The first property is why a query change is expensive. It also shows in the rows
 | A layout pass of the render tree for a change that is paint only | 2 ms here, 7 ms at N=10,000 | A comparison that knows the decoration did not change text or fonts. The `AttributedText` proposal has a normal form. The prototype could also say so itself, since it knows what it added | Framework |
 | Drawing a new paragraph costs more than drawing the same one again | 7 ms | Follows from the two above | |
 
-None of this exists today, except the last row as an experiment. With all of it, a highlight through a span would be a change of paint on an existing paragraph, which is what a painter is. Without it, the costs in Section 4.1 are what a plugin gets.
+None of this exists today, except the last row as an experiment. The first row is reported as [flutter/flutter#197244](https://github.com/flutter/flutter/issues/197244).
+
+**How much the engine fix would help.** If a new highlight became a cache hit, a query change would cost what the rows "highlights shown before" cost today, because those are cache hits: about 95 µs for a paragraph of 500 characters instead of about 230, and 36 µs for a short text instead of 72. That is a factor of 2 to 2.5, not a factor of 8, because the framework still creates a new `ui.Paragraph` for each text, and the engine still builds it, breaks its lines and draws it for the first time. Extrapolated, not measured:
+
+| 300 paragraphs get new highlights | Milliseconds |
+| :-- | --: |
+| Today (measured) | 69 |
+| With the cache fix, if every paragraph is a hit (extrapolated from 95 µs a paragraph) | about 28 |
+| The framework paints the background (measured, Section 4.9) | 11 |
+| Painter (measured) | 8 |
+
+For every paragraph to be a hit, the cache also has to hold them: it has 128 entries today, and it does not store a paragraph that looks like the one stored last (properties 2 and 3 of Section 4.4). With the fix and without a larger cache, about 128 of the 300 would be hits. The threshold of Section 4.6 would move from about 70 paragraphs in a frame to about 170, if the cache is large enough. With all of it, a highlight through a span would be a change of paint on an existing paragraph, which is what a painter is. Without it, the costs in Section 4.1 are what a plugin gets.
 
 ### 4.6 When does it matter?
 
@@ -694,7 +716,7 @@ What it does not show:
 - **Only a background color is covered.** An underline, a wavy underline and a strike-through could be drawn by the framework in the same way, with code that does not exist yet. A color of the glyphs cannot, without a function of the engine that changes the paint of a range of an existing paragraph. A change of font, weight or size is a layout by nature.
 - **It gives up S+4.** A match across bold, italic and a larger size is drawn box by box again, as with the painter. In the image of this run that row is still drawn by the engine, because it is the active match.
 - **It is a second mechanism inside the first.** A plugin author sees one API, but `TextStyle(backgroundColor: ...)` costs a repaint and `TextStyle(backgroundColor: ..., fontWeight: ...)` costs a paragraph. That cliff is not visible in the API. A separate field for paint-only decorations would make it visible.
-- **This is the framework half of the idea.** The same effect inside the engine (a paragraph whose paint can be changed, or a shaping cache that ignores where runs of the same font begin and end) would cover glyph color too and keep S+4. It was not tried.
+- **This is the framework half of the idea.** The same effect inside the engine (a paragraph whose paint can be changed, or a shaping cache that ignores where runs of the same font begin and end) would cover glyph color too and keep S+4. It was not tried. The cache part is reported as [flutter/flutter#197244](https://github.com/flutter/flutter/issues/197244), and Section 4.5 estimates what it would give.
 - One run for each number. Only the article was run, not the other cases.
 
 ---
@@ -974,5 +996,6 @@ The plan set a timebox of 10 hours. The work was done by an agent in four sittin
 | Third round: where the time of a change goes, CPU samples of every case on both branches, the paragraph cache, third revision | 19:10 | 20:30 |
 | The API section, the cases by number of matches | 20:31 | 21:05 |
 | 2026-11-23: the framework paints the background (Section 4.9) | 11:06 | 11:20 |
+| 2026-11-23: reproduction of the cache miss with `dart:ui` only, issue 197244 | 12:01 | 12:20 |
 
 About three and a half hours in total. What is missing in [Section 12](#12-what-was-not-done-and-where-this-report-can-be-wrong) was not attempted, not cut for time.
