@@ -1,0 +1,5 @@
+loop	ms a round	samples	Dart side ms	engine side ms	Dart: the plugin	Dart: text plugin machinery of the framework	Dart: the rest of the framework	Dart VM: allocation, GC, stubs	Engine: building a paragraph (ParagraphBuilder)	Engine: ui.Paragraph.layout (shaping, line breaking)	Engine: drawing the text (ui.Paragraph.paint)	Engine: paragraph queries (boxes of a range and others)	Engine: everything else (display list, layers, memory)	phase: build	phase: layout	phase: paint	phase: composite	phase: semantics	phase: frame start	outside of a frame
+R2 article keystroke rare word	1.3541	3426	0.846	0.508	0.671	0.008	0.123	0.045	0.037	0.191	0.147	0.022	0.111	0.000	0.269	0.269	0.098	0.000	0.016	0.702
+R2 article keystroke rare word, highlights seen before	1.3044	3541	0.832	0.472	0.659	0.013	0.120	0.040	0.044	0.116	0.162	0.022	0.128	0.000	0.204	0.282	0.112	0.000	0.021	0.686
+R2 article keystroke common word	11.1798	3460	3.205	7.974	1.231	0.782	0.546	0.646	0.100	0.258	2.856	2.391	2.368	0.000	0.423	8.162	1.034	0.000	0.378	1.183
+R2 article next match	0.4601	3646	0.125	0.335	0.011	0.006	0.084	0.023	0.025	0.203	0.028	0.020	0.059	0.000	0.265	0.086	0.070	0.000	0.011	0.028

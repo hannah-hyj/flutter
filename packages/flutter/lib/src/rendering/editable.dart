@@ -2692,6 +2692,7 @@ class RenderEditable extends RenderBox
       context.paintChild(backgroundChild, offset);
     }
 
+    paintFrameworkHighlights(context.canvas, offset);
     _textPainter.paint(context.canvas, effectiveOffset);
     paintInlineChildren(context, effectiveOffset);
 

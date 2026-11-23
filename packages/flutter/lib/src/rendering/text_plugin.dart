@@ -39,6 +39,19 @@ TextDecorationLayer debugDefaultTextDecorationLayer =
     ? TextDecorationLayer.render
     : TextDecorationLayer.widget;
 
+/// Whether a decoration that only sets a background color is painted by the
+/// render object of the text, instead of being put into the span.
+///
+/// Experiment only. With this, such a decoration does not change the span
+/// that the text painter has. The paragraph of the engine is kept, and the
+/// render object draws a rectangle for each box of the range, behind the
+/// glyphs. Every other decoration still goes into the span.
+///
+/// The initial value can be chosen with
+/// `--dart-define=TEXT_HIGHLIGHT_PAINT=framework`.
+bool debugPaintHighlightsInFramework =
+    const String.fromEnvironment('TEXT_HIGHLIGHT_PAINT') == 'framework';
+
 /// An interface for plugins that read and decorate the text rendered by
 /// [RenderParagraph] and [RenderEditable] (such as via [Text], [RichText],
 /// and [EditableText] widgets) within a [TextPluginScope].
@@ -664,6 +677,26 @@ class TextDelegateSet {
       }
     }
     decorations ??= const <TextSpanDecoration>[];
+    var highlights = const <TextSpanDecoration>[];
+    if (debugPaintHighlightsInFramework && decorations.isNotEmpty) {
+      final rest = <TextSpanDecoration>[];
+      final painted = <TextSpanDecoration>[];
+      for (final TextSpanDecoration decoration in decorations) {
+        (_isBackgroundOnly(decoration) ? painted : rest).add(decoration);
+      }
+      decorations = rest;
+      highlights = painted;
+    }
+    if (!listEquals(_frameworkHighlights, highlights)) {
+      _frameworkHighlights = highlights;
+      debugFrameworkHighlightChangeCount += 1;
+      // The span is the same, so the paragraph is. Only the rectangles are
+      // drawn again.
+      final TextDelegateHostMixin? host = _host;
+      if (host != null && host.attached) {
+        host.markNeedsPaint();
+      }
+    }
     final DecoratedTextSpan? last = _decorated;
     if (last != null && identical(_decoratedFrom, span) && listEquals(_decorations, decorations)) {
       return last;
@@ -676,6 +709,41 @@ class TextDelegateSet {
 
   /// The result of the last call to [decorate].
   DecoratedTextSpan? get decorated => _decorated;
+
+  List<TextSpanDecoration> _frameworkHighlights = const <TextSpanDecoration>[];
+
+  /// The decorations that the render object paints itself, see
+  /// [debugPaintHighlightsInFramework].
+  @visibleForTesting
+  List<TextSpanDecoration> get debugFrameworkHighlights => _frameworkHighlights;
+
+  /// How many times the decorations that the render object paints itself
+  /// changed, for tests and benchmarks.
+  static int debugFrameworkHighlightChangeCount = 0;
+
+  TextStyle? _lastCheckedStyle;
+  bool _lastCheckedStyleIsBackgroundOnly = false;
+
+  bool _isBackgroundOnly(TextSpanDecoration decoration) {
+    final TextStyle? style = decoration.style;
+    if (style == null ||
+        style.backgroundColor == null ||
+        decoration.recognizer != null ||
+        decoration.mouseCursor != null ||
+        decoration.onEnter != null ||
+        decoration.onExit != null ||
+        decoration.semanticsLabel != null ||
+        decoration.replacement != null) {
+      return false;
+    }
+    // A plugin uses a few styles for many ranges.
+    if (identical(style, _lastCheckedStyle)) {
+      return _lastCheckedStyleIsBackgroundOnly;
+    }
+    _lastCheckedStyle = style;
+    return _lastCheckedStyleIsBackgroundOnly =
+        style == TextStyle(backgroundColor: style.backgroundColor);
+  }
 
   TextRange _toDecoratedRange(TextRange range) {
     final DecoratedTextSpan? decorated = _decorated;
@@ -942,6 +1010,31 @@ mixin TextDelegateHostMixin on RenderBox {
   @protected
   void didLayoutTextDelegates() {
     _hasValidLayout = true;
+  }
+
+  /// Paints the decorations that are not in the span, see
+  /// [debugPaintHighlightsInFramework]. Call this right before the text is
+  /// painted, with the offset that [getBoxesForSelection] is relative to.
+  @protected
+  void paintFrameworkHighlights(Canvas canvas, Offset offset) {
+    final TextDelegateSet? set = _activeSet;
+    if (set == null || set._frameworkHighlights.isEmpty) {
+      return;
+    }
+    final paint = Paint();
+    for (final TextSpanDecoration highlight in set._frameworkHighlights) {
+      final TextRange range = set._toDecoratedRange(highlight.range);
+      if (!range.isValid || range.isCollapsed) {
+        continue;
+      }
+      paint.color = highlight.style!.backgroundColor!;
+      final List<ui.TextBox> boxes = getBoxesForSelection(
+        TextSelection(baseOffset: range.start, extentOffset: range.end),
+      );
+      for (final box in boxes) {
+        canvas.drawRect(box.toRect().shift(offset), paint);
+      }
+    }
   }
 
   Rect? _rectForRange(TextRange range) {

@@ -541,11 +541,12 @@ The first property is why a query change is expensive. It also shows in the rows
 | :-- | :-- | :-- | :-- |
 | Shaping a text whose characters and fonts did not change | 44 of 69 ms | A cache key that ignores where runs with the same font begin and end. The range change then costs what "shown before" costs | Engine, `ParagraphCache` |
 | The same, when more than 128 texts change | | A larger cache, or one per paragraph object | Engine |
+| All of the above, for a background color | 69 ms become 11 ms | The framework draws the highlight itself and does not put it into the span. Tried: [Section 4.9](#49-experiment-the-framework-paints-the-highlight) | Framework |
 | Building the paragraph and breaking its lines again for a change of paint | 6 ms, and most of the animated highlight | A way to change the paint of a range of an existing paragraph. SkParagraph has `updateForegroundPaint(from, to, paint)` and `updateBackgroundPaint(from, to, paint)` in `Paragraph.h`. Nothing in Flutter's engine calls them and `dart:ui` does not expose them. There is no such function for underlines | Engine and `dart:ui` |
 | A layout pass of the render tree for a change that is paint only | 2 ms here, 7 ms at N=10,000 | A comparison that knows the decoration did not change text or fonts. The `AttributedText` proposal has a normal form. The prototype could also say so itself, since it knows what it added | Framework |
 | Drawing a new paragraph costs more than drawing the same one again | 7 ms | Follows from the two above | |
 
-None of this exists today. With all of it, a highlight through a span would be a change of paint on an existing paragraph, which is what a painter is. Without it, the costs in Section 4.1 are what a plugin gets.
+None of this exists today, except the last row as an experiment. With all of it, a highlight through a span would be a change of paint on an existing paragraph, which is what a painter is. Without it, the costs in Section 4.1 are what a plugin gets.
 
 ### 4.6 When does it matter?
 
@@ -655,6 +656,46 @@ What this says:
 - **One paragraph with 1,000 matches costs 17 ms, one frame.** It is one text, so the engine shapes 24,000 characters once (6.2 ms). The rest is building and drawing a paragraph of about 2,000 style runs.
 - **In that paragraph, "next match" costs the same 16 ms as a new query.** Only two matches change color, but the unit of work is the whole text: all of its decorations are merged again and the paragraph is created again. The layout phase is 0, the time is in the paint phase, where `TextPainter.paint` creates the paragraph. The engine shaped the text again each time, so its cache did not help. The likely reason is the third rule of [Section 4.4](#44-the-engines-paragraph-cache): the paragraph begins with the same 40 characters as the one stored last, which is itself. This was read from the code, not tested. With the painter the same click costs 1.8 ms, and in the article, where the two matches are in short paragraphs, it costs 0.2 to 0.4 ms with spans.
 - **A third of the 17 ms is a defect of the prototype, not of the approach.** `_Decorator._piece` in the merge looks at every decoration of the text for every piece of it, which is quadratic in the number of decorations in one text: 2,000 pieces times 1,000 decorations. That is the 4.2 to 5.7 ms in the first column. A merge that walks the sorted decorations once would remove most of it. It was not fixed. It does not show in the other cases, which have at most eight decorations in a text. The engine part, 10.7 ms, would stay.
+
+### 4.9 Experiment: the framework paints the highlight
+
+Section 4.5 says that the cost goes away if a highlight does not become a new paragraph. This was tried in the simplest form, on 2026-11-23, after a review comment that the framework could paint highlights itself.
+
+**What was built.** Behind a flag (`debugPaintHighlightsInFramework`, or `--dart-define=TEXT_HIGHLIGHT_PAINT=framework`), a decoration that sets nothing but a background color is not put into the span. `TextDelegateSet.decorate` keeps it in a list. `RenderParagraph` and `RenderEditable` ask the paragraph they already have for the boxes of each range and draw a rectangle for each, right before they paint the text. A change of such a decoration marks the render object as needing paint, and nothing else. Every other decoration (an underline, a weight, a recognizer, a replacement) goes into the span as before. The plugin API and the plugins are unchanged. It is 95 lines, and it is tested in both options (measured in Option B only).
+
+**Result.** The article, 300 paragraphs of 500 characters, Option B, milliseconds for one round:
+
+| Case | Painter | Span | Span, framework paints the background |
+| :-- | --: | --: | --: |
+| **Search query changes by one letter, common word: all 300 texts change, about 2,400 matches** | **8.26** | **68.70** | **11.18** |
+| Search query changes by one letter, rare word: 15 texts change | 0.81 | 3.45 | 1.35 |
+| The same, highlights shown before | 0.78 | 1.42 | 1.30 |
+| Next match | 0.144 | 0.244 | 0.460 |
+
+Where the time of the common-word case goes:
+
+| | Dart side | Build paragraph | `Paragraph.layout` | Draw text | Range queries | Other engine |
+| :-- | --: | --: | --: | --: | --: | --: |
+| Painter | 2.26 | 0 | 0 | 2.22 | 2.03 | 1.75 |
+| Span | 4.53 | 6.08 | 44.04 | 9.49 | 1.10 | 3.47 |
+| Span, framework paints the background | 3.21 | 0.10 | 0.26 | 2.86 | 2.39 | 2.37 |
+
+Files: [cpu_framework_highlights](./examples/text_plugins/benchmark_results/cpu_framework_highlights/). Tests: `text_plugin_framework_highlight_test.dart`, 10 tests. Image: `test/visual/span_framework_stage1.png`, next to `span_stage1.png`.
+
+What this says:
+
+- **It works.** The 69 ms become 11 ms, against 8 ms for the painter. The paragraph is not built and not laid out. The profile has the shape of the painter's profile: drawing the same glyphs again, and asking for the boxes of the matches.
+- **The remaining 3 ms over the painter** are on the Dart side (the plugin still builds a list of 2,400 decorations and the framework compares it with the last one) and in the one text that has the active match, which still goes through the span because its style has an underline and an overline.
+- **It looks the same.** The two images differ in one place that could be found by eye: a highlight that ends at the end of a line includes the trailing space when the framework draws it.
+- **"Next match" got slower**, 0.46 ms against 0.24. Before, the two texts whose match changes between normal and active changed only in color, which is a repaint. Now the normal match is not in the span and the active one is, so the span of both texts changes in structure, which is a layout. A plugin that kept the active match a background color too, or a fast path that covered underlines, would not have this.
+
+What it does not show:
+
+- **Only a background color is covered.** An underline, a wavy underline and a strike-through could be drawn by the framework in the same way, with code that does not exist yet. A color of the glyphs cannot, without a function of the engine that changes the paint of a range of an existing paragraph. A change of font, weight or size is a layout by nature.
+- **It gives up S+4.** A match across bold, italic and a larger size is drawn box by box again, as with the painter. In the image of this run that row is still drawn by the engine, because it is the active match.
+- **It is a second mechanism inside the first.** A plugin author sees one API, but `TextStyle(backgroundColor: ...)` costs a repaint and `TextStyle(backgroundColor: ..., fontWeight: ...)` costs a paragraph. That cliff is not visible in the API. A separate field for paint-only decorations would make it visible.
+- **This is the framework half of the idea.** The same effect inside the engine (a paragraph whose paint can be changed, or a shaping cache that ignores where runs of the same font begin and end) would cover glyph color too and keep S+4. It was not tried.
+- One run for each number. Only the article was run, not the other cases.
 
 ---
 
@@ -932,5 +973,6 @@ The plan set a timebox of 10 hours. The work was done by an agent in four sittin
 | Second round: app-size benchmark on both branches, images, shaping tests, batching, second revision | 16:16 | 17:00 |
 | Third round: where the time of a change goes, CPU samples of every case on both branches, the paragraph cache, third revision | 19:10 | 20:30 |
 | The API section, the cases by number of matches | 20:31 | 21:05 |
+| 2026-11-23: the framework paints the background (Section 4.9) | 11:06 | 11:20 |
 
 About three and a half hours in total. What is missing in [Section 12](#12-what-was-not-done-and-where-this-report-can-be-wrong) was not attempted, not cut for time.

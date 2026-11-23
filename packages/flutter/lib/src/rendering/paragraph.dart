@@ -1130,6 +1130,7 @@ class RenderParagraph extends RenderBox
       return true;
     }());
 
+    paintFrameworkHighlights(context.canvas, offset);
     _textPainter.paint(context.canvas, offset);
 
     paintInlineChildren(context, offset);
